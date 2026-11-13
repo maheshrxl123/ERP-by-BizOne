@@ -1,6 +1,6 @@
 {
-  "name": "Supabase Workspace",
-  "description": "Connect and manage Supabase organizations, PostgreSQL projects, schemas, and live SQL queries.",
+  "name": "BizOne ERP",
+  "description": "BizOne ERP gives a small business fast billing, party khata (credit ledger), stock, purchases, payments, expenses, GST, and reports on a phone-first interface. Business-type **packs** add the fields and rules each trade needs: Kirana, Medical Store, Clothing, Hardware, General Retail, Wholesale, Service. An optional **AI Agent** works with the owner's own API key and model.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

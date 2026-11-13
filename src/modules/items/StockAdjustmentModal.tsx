@@ -6,6 +6,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { todayLocalIso } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import { convertToBaseQty, formatStockQty } from '../../core/units';
 import type {
@@ -36,9 +37,7 @@ export function StockAdjustmentModal({
   const [qtyStr, setQtyStr] = useState('1');
   const [unitId, setUnitId] = useState('');
   const [reason, setReason] = useState('');
-  const [movementDate, setMovementDate] = useState(() =>
-    new Date().toISOString().slice(0, 10)
-  );
+  const [movementDate, setMovementDate] = useState(() => todayLocalIso());
   const [idempKey, setIdempKey] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +48,7 @@ export function StockAdjustmentModal({
     setQtyStr('1');
     setUnitId(item.base_unit_id);
     setReason('');
-    setMovementDate(new Date().toISOString().slice(0, 10));
+    setMovementDate(todayLocalIso());
     setIdempKey(crypto.randomUUID());
     setError(null);
   }, [open, item]);

@@ -7,7 +7,11 @@ import { hasCapability } from '../core/permissions';
 import { supabase } from '../core/supabase';
 import type { AppDestination } from '../modules/dashboard/HomeScreen';
 import type { ItemFilterTab } from '../modules/items/ItemsScreen';
-import type { ItemCatalogRecord, PartyBalanceRecord } from '../types/bizone';
+import type {
+  BillRecord,
+  ItemCatalogRecord,
+  PartyBalanceRecord,
+} from '../types/bizone';
 
 interface GlobalSearchModalProps {
   open: boolean;
@@ -18,12 +22,15 @@ interface GlobalSearchModalProps {
     opts?: {
       partyId?: string | null;
       itemId?: string | null;
+      billId?: string | null;
       itemFilter?: ItemFilterTab | null;
       action?:
         | 'add-party'
         | 'add-item'
         | 'receive-payment'
         | 'give-payment'
+        | 'new-bill'
+        | 'new-quotation'
         | null;
     }
   ) => void;
@@ -38,7 +45,10 @@ export function GlobalSearchModal({
   const [query, setQuery] = useState('');
   const [parties, setParties] = useState<PartyBalanceRecord[]>([]);
   const [catalogItems, setCatalogItems] = useState<ItemCatalogRecord[]>([]);
+  const [bills, setBills] = useState<BillRecord[]>([]);
 
+  const canSearchBills =
+    isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills');
   const canSearchParties =
     isModuleEnabled('parties') && hasCapability(profile?.role, 'parties');
   const canSearchItems =
@@ -49,6 +59,20 @@ export function GlobalSearchModal({
   useEffect(() => {
     if (!open) return;
     setQuery('');
+    if (canSearchBills) {
+      supabase
+        .from('bill_list_view')
+        .select('*')
+        .order('bill_date', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(100)
+        .then(({ data }) => {
+          setBills((data as BillRecord[] | null) ?? []);
+        });
+    } else {
+      setBills([]);
+    }
+
     if (canSearchParties) {
       supabase
         .from('party_balances')
@@ -82,7 +106,7 @@ export function GlobalSearchModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, canSearchParties, canSearchItems]);
+  }, [open, onClose, canSearchBills, canSearchParties, canSearchItems]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -111,6 +135,23 @@ export function GlobalSearchModal({
         action: () => onNavigate('help'),
       },
     ];
+
+    if (canSearchBills) {
+      items.push({
+        id: 'dest-bills',
+        title: t('bills.title'),
+        subtitle: t('bills.subtitle'),
+        action: () => onNavigate('bills'),
+      });
+      for (const b of bills) {
+        items.push({
+          id: `bill-${b.id}`,
+          title: b.bill_number || `Draft · ${b.party_name}`,
+          subtitle: `${b.party_name}${b.party_phone ? ` · ${b.party_phone}` : ''} · ${formatINR(Number(b.grand_total))} · ${b.payment_status.toUpperCase()}`,
+          action: () => onNavigate('bills', undefined, { billId: b.id }),
+        });
+      }
+    }
 
     if (canSearchItems) {
       items.push({
@@ -227,8 +268,10 @@ export function GlobalSearchModal({
   }, [
     query,
     staff,
+    bills,
     parties,
     catalogItems,
+    canSearchBills,
     canSearchParties,
     canSearchItems,
     isModuleEnabled,

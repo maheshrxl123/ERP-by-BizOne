@@ -27,6 +27,14 @@ export interface BusinessRecord {
   invoice_next_number: number;
   invoice_terms: string;
   tax_mode: 'inclusive' | 'exclusive';
+  default_print_layout?: PrintLayoutType;
+  show_upi_qr_on_invoice?: boolean;
+  quotation_prefix?: string;
+  quotation_next_number?: number;
+  credit_note_prefix?: string;
+  credit_note_next_number?: number;
+  cashier_max_discount_pct?: number;
+  allow_cashier_price_override?: boolean;
   onboarding_completed: boolean;
   onboarding_steps: OnboardingSteps;
   created_at: string;
@@ -398,6 +406,152 @@ export interface StockLedgerEntryRecord {
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;
+}
+
+export type PrintLayoutType = 'a4' | 'a5' | 'thermal_80';
+export type BillDocType =
+  | 'tax_invoice'
+  | 'bill_of_supply'
+  | 'quotation'
+  | 'credit_note';
+export type BillStatus = 'draft' | 'issued' | 'voided' | 'converted';
+export type BillPaymentStatus =
+  | 'draft'
+  | 'unpaid'
+  | 'partial'
+  | 'paid'
+  | 'voided'
+  | 'converted'
+  | 'issued'
+  | 'credited';
+
+export interface BillBusinessSnapshot {
+  name?: string;
+  gst_registered?: boolean;
+  gstin?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  address?: string | null;
+  state_code?: string | null;
+  upi_id?: string | null;
+  logo_file_id?: string | null;
+  upi_qr_file_id?: string | null;
+  show_upi_qr_on_invoice?: boolean;
+  default_print_layout?: PrintLayoutType;
+}
+
+export interface BillRecord {
+  id: string;
+  bill_number: string | null;
+  doc_type: BillDocType;
+  status: BillStatus;
+  payment_status: BillPaymentStatus;
+  source_bill_id: string | null;
+  source_bill_number?: string | null;
+  converted_from_quotation_id: string | null;
+  converted_to_bill_id: string | null;
+  converted_to_bill_number?: string | null;
+  party_id: string | null;
+  party_name: string;
+  party_phone: string | null;
+  party_gstin: string | null;
+  party_address: string | null;
+  place_of_supply_state_code: string | null;
+  is_interstate: boolean;
+  bill_date: string;
+  due_date: string | null;
+  valid_until: string | null;
+  gst_applied: boolean;
+  subtotal_taxable: number;
+  discount_total: number;
+  cgst_total: number;
+  sgst_total: number;
+  igst_total: number;
+  tax_total: number;
+  extra_charges: number;
+  auto_round_off: boolean;
+  round_off: number;
+  grand_total: number;
+  paid_amount: number;
+  credited_amount: number;
+  balance_due: number;
+  notes: string | null;
+  terms: string | null;
+  business_snapshot: BillBusinessSnapshot;
+  void_reason: string | null;
+  voided_at: string | null;
+  voided_by: string | null;
+  return_reason: string | null;
+  issued_at: string | null;
+  created_at: string;
+  updated_at: string;
+  line_count?: number;
+  active_share_count?: number;
+}
+
+export interface BillLineRecord {
+  id: string;
+  bill_id: string;
+  line_no: number;
+  item_id: string;
+  source_bill_line_id: string | null;
+  item_name: string;
+  sku: string | null;
+  hsn_code: string | null;
+  entered_qty: number;
+  entered_unit_id: string;
+  entered_unit_code: string;
+  conversion_factor: number;
+  base_qty: number;
+  catalog_unit_price: number;
+  unit_price: number;
+  discount_pct: number;
+  tax_inclusive: boolean;
+  gst_rate: number;
+  gross_amount: number;
+  discount_amount: number;
+  taxable_amount: number;
+  cgst_amount: number;
+  sgst_amount: number;
+  igst_amount: number;
+  tax_amount: number;
+  line_total: number;
+}
+
+export interface BillShareLinkRecord {
+  id: string;
+  bill_id: string;
+  token: string;
+  expires_at: string | null;
+  is_revoked: boolean;
+  revoked_at: string | null;
+  view_count: number;
+  last_viewed_at: string | null;
+  created_at: string;
+}
+
+export interface BillingSummary {
+  today_sales: number;
+  today_returns: number;
+  today_net_sales: number;
+  month_sales: number;
+  total_unpaid_amount: number;
+  unpaid_bills_count: number;
+  open_quotations_count: number;
+  drafts_count: number;
+}
+
+export interface PublicSharedBillPayload {
+  bill: Omit<BillRecord, 'voided_at' | 'voided_by' | 'converted_from_quotation_id' | 'converted_to_bill_id'>;
+  lines: Array<Omit<BillLineRecord, 'bill_id' | 'item_id' | 'source_bill_line_id' | 'entered_unit_id' | 'conversion_factor' | 'base_qty' | 'catalog_unit_price'>>;
+  assets: {
+    logoUrl: string | null;
+    upiQrUrl: string | null;
+    showUpiQr: boolean;
+    defaultPrintLayout: PrintLayoutType;
+    upiId: string | null;
+  };
+  expiresAt: string | null;
 }
 
 

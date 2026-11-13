@@ -74,8 +74,16 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const [upiQrImages, setUpiQrImages] = useState<UploadedImageItem[]>([]);
   const [invoicePrefix, setInvoicePrefix] = useState('INV-');
   const [invoiceNext, setInvoiceNext] = useState(1);
+  const [quotationPrefix, setQuotationPrefix] = useState('QTN-');
+  const [quotationNext, setQuotationNext] = useState(1);
+  const [creditNotePrefix, setCreditNotePrefix] = useState('CN-');
+  const [creditNoteNext, setCreditNoteNext] = useState(1);
   const [invoiceTerms, setInvoiceTerms] = useState('');
   const [taxMode, setTaxMode] = useState<'inclusive' | 'exclusive'>('exclusive');
+  const [defaultPrintLayout, setDefaultPrintLayout] = useState<'a4' | 'a5' | 'thermal_80'>('a4');
+  const [showUpiQrOnInvoice, setShowUpiQrOnInvoice] = useState(true);
+  const [cashierMaxDiscountPct, setCashierMaxDiscountPct] = useState('10');
+  const [allowCashierPriceOverride, setAllowCashierPriceOverride] = useState(false);
   const [savingBiz, setSavingBiz] = useState(false);
 
   // S4 Modules state
@@ -123,8 +131,16 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
       setFyStartMonth(business.fy_start_month || 4);
       setInvoicePrefix(business.invoice_prefix || 'INV-');
       setInvoiceNext(business.invoice_next_number || 1);
+      setQuotationPrefix(business.quotation_prefix || 'QTN-');
+      setQuotationNext(business.quotation_next_number || 1);
+      setCreditNotePrefix(business.credit_note_prefix || 'CN-');
+      setCreditNoteNext(business.credit_note_next_number || 1);
       setInvoiceTerms(business.invoice_terms || '');
       setTaxMode(business.tax_mode || 'exclusive');
+      setDefaultPrintLayout(business.default_print_layout || 'a4');
+      setShowUpiQrOnInvoice(business.show_upi_qr_on_invoice ?? true);
+      setCashierMaxDiscountPct(String(business.cashier_max_discount_pct ?? 10));
+      setAllowCashierPriceOverride(Boolean(business.allow_cashier_price_override));
 
       setLogoImages(
         business.logo_file_id
@@ -236,6 +252,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         p_invoice_next_number: Math.max(1, Number(invoiceNext) || 1),
         p_invoice_terms: invoiceTerms,
         p_tax_mode: taxMode,
+        p_default_print_layout: defaultPrintLayout,
+        p_show_upi_qr_on_invoice: showUpiQrOnInvoice,
+        p_quotation_prefix: quotationPrefix.trim() || 'QTN-',
+        p_quotation_next_number: Math.max(1, Number(quotationNext) || 1),
+        p_credit_note_prefix: creditNotePrefix.trim() || 'CN-',
+        p_credit_note_next_number: Math.max(1, Number(creditNoteNext) || 1),
+        p_cashier_max_discount_pct: Math.min(100, Math.max(0, Number(cashierMaxDiscountPct || 0))),
+        p_allow_cashier_price_override: allowCashierPriceOverride,
       });
       if (error) throw error;
       await refreshWorkspace();
@@ -643,13 +667,21 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         <RequireRole roles={['owner']}>
         <form
           onSubmit={handleSaveBusiness}
-          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-5"
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-6"
         >
-          <h2 className="text-base font-semibold">
-            {t('settings.tabs.invoice')}
-          </h2>
+          <div className="border-b border-[var(--border)] pb-3">
+            <h2 className="text-base font-semibold">
+              {t('settings.tabs.invoice')}
+            </h2>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              {language === 'hi'
+                ? 'इनवॉइस, कोटेशन, क्रेडिट नोट नंबरिंग, प्रिंट लेआउट, यूपीआई क्यूआर और कैशियर छूट नियम सेट करें।'
+                : 'Configure FY numbering series, default print layout, UPI QR display, and cashier discount/rate limits.'}
+            </p>
+          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Series Prefixes & Next Numbers */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label htmlFor="inv-prefix" className="block text-sm font-medium mb-1.5">
                 Invoice Prefix
@@ -665,7 +697,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
             </div>
             <div>
               <label htmlFor="inv-next" className="block text-sm font-medium mb-1.5">
-                Next Number
+                Invoice Next No.
               </label>
               <input
                 id="inv-next"
@@ -692,6 +724,165 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                 <option value="inclusive">Tax Inclusive (MRP / Final Rate)</option>
               </select>
             </div>
+
+            <div>
+              <label htmlFor="qtn-prefix" className="block text-sm font-medium mb-1.5">
+                Quotation Prefix
+              </label>
+              <input
+                id="qtn-prefix"
+                type="text"
+                required
+                value={quotationPrefix}
+                onChange={(e) => setQuotationPrefix(e.target.value)}
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <div>
+              <label htmlFor="qtn-next" className="block text-sm font-medium mb-1.5">
+                Quotation Next No.
+              </label>
+              <input
+                id="qtn-next"
+                type="number"
+                min={1}
+                value={quotationNext}
+                onChange={(e) => setQuotationNext(Number(e.target.value))}
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <div>
+              <label htmlFor="inv-print-layout" className="block text-sm font-medium mb-1.5">
+                Default Print Layout
+              </label>
+              <select
+                id="inv-print-layout"
+                value={defaultPrintLayout}
+                onChange={(e) =>
+                  setDefaultPrintLayout(e.target.value as 'a4' | 'a5' | 'thermal_80')
+                }
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              >
+                <option value="a4">A4 Standard Tax Invoice</option>
+                <option value="a5">A5 Half-Page Compact</option>
+                <option value="thermal_80">80mm Thermal POS Receipt</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="cn-prefix" className="block text-sm font-medium mb-1.5">
+                Credit Note Prefix
+              </label>
+              <input
+                id="cn-prefix"
+                type="text"
+                required
+                value={creditNotePrefix}
+                onChange={(e) => setCreditNotePrefix(e.target.value)}
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <div>
+              <label htmlFor="cn-next" className="block text-sm font-medium mb-1.5">
+                Credit Note Next No.
+              </label>
+              <input
+                id="cn-next"
+                type="number"
+                min={1}
+                value={creditNoteNext}
+                onChange={(e) => setCreditNoteNext(Number(e.target.value))}
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <div>
+              <label htmlFor="inv-upi-id" className="block text-sm font-medium mb-1.5">
+                UPI ID (for Dynamic QR & Links)
+              </label>
+              <input
+                id="inv-upi-id"
+                type="text"
+                value={upiId}
+                onChange={(e) => setUpiId(e.target.value)}
+                placeholder="shopname@upi"
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+          </div>
+
+          {/* UPI QR Management */}
+          <div className="pt-4 border-t border-[var(--border)] space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">UPI QR Code on Invoices</h3>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Show your uploaded static QR or dynamic bill-amount UPI QR on printed & shared invoices.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showUpiQrOnInvoice}
+                  onChange={(e) => setShowUpiQrOnInvoice(e.target.checked)}
+                  className="w-4 h-4 accent-[var(--primary-dark)]"
+                />
+                <span>Show UPI QR on invoices & share links</span>
+              </label>
+            </div>
+
+            <ImageUpload
+              label="Uploaded UPI QR Image (Optional)"
+              purpose="upi_qr"
+              multiple={false}
+              value={upiQrImages}
+              onChange={setUpiQrImages}
+              onUploaded={async (items) => {
+                await persistBusinessMedia(
+                  logoImages[0]?.fileId ?? business?.logo_file_id ?? null,
+                  items[0]?.fileId ?? null
+                );
+              }}
+              onRemoved={async () => {
+                await persistBusinessMedia(
+                  logoImages[0]?.fileId ?? business?.logo_file_id ?? null,
+                  null
+                );
+              }}
+              entityType="business"
+              entityId="1"
+              helperText="If no static image is uploaded, BizOne renders a scannable dynamic UPI QR from your UPI ID above."
+            />
+          </div>
+
+          {/* Counter Override Controls */}
+          <div className="pt-4 border-t border-[var(--border)] grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+            <div>
+              <label htmlFor="cashier-max-disc" className="block text-sm font-medium mb-1.5">
+                Cashier / Accountant Max Line Discount (%)
+              </label>
+              <input
+                id="cashier-max-disc"
+                type="number"
+                inputMode="decimal"
+                min={0}
+                max={100}
+                step="0.01"
+                value={cashierMaxDiscountPct}
+                onChange={(e) => setCashierMaxDiscountPct(e.target.value)}
+                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <label className="flex items-center gap-2.5 min-h-[44px] cursor-pointer pt-5">
+              <input
+                type="checkbox"
+                checked={allowCashierPriceOverride}
+                onChange={(e) => setAllowCashierPriceOverride(e.target.checked)}
+                className="w-4 h-4 accent-[var(--primary-dark)]"
+              />
+              <span className="text-sm font-medium">
+                Allow Cashiers to lower item price below catalog rate
+              </span>
+            </label>
           </div>
 
           <div>

@@ -45,7 +45,7 @@ export function ItemsScreen({
   initialAction,
   onActionConsumed,
 }: ItemsScreenProps) {
-  const { profile, signedUrlCache, getSignedUrl, t } = useApp();
+  const { profile, signedUrlCache, getSignedUrl, showToast, t } = useApp();
 
   const canEdit = hasCapability(profile?.role, 'items');
   const canAdjust = hasCapability(profile?.role, 'stock_adjustment');
@@ -104,6 +104,9 @@ export function ItemsScreen({
 
       if (sumRes.error) throw sumRes.error;
       if (itemsRes.error) throw itemsRes.error;
+      if (catRes.error) throw catRes.error;
+      if (brandRes.error) throw brandRes.error;
+      if (unitRes.error) throw unitRes.error;
 
       const list = (itemsRes.data as ItemCatalogRecord[] | null) ?? [];
       setSummary((sumRes.data as InventorySummary | null) ?? null);
@@ -112,9 +115,9 @@ export function ItemsScreen({
       setBrands((brandRes.data as BrandRecord[] | null) ?? []);
       setUnits((unitRes.data as ItemUnitRecord[] | null) ?? []);
 
-      // Hydrate primary image thumbnails lazily
+      // Hydrate primary image thumbnails lazily (AppProvider ref short-circuits cached IDs)
       for (const item of list.slice(0, 40)) {
-        if (item.primary_image_file_id && !signedUrlCache[item.primary_image_file_id]) {
+        if (item.primary_image_file_id) {
           void getSignedUrl(item.primary_image_file_id);
         }
       }
@@ -125,7 +128,7 @@ export function ItemsScreen({
     } finally {
       setLoading(false);
     }
-  }, [getSignedUrl, signedUrlCache]);
+  }, [getSignedUrl]);
 
   useEffect(() => {
     void loadInventory();
@@ -154,12 +157,20 @@ export function ItemsScreen({
   }, [initialAction, canEdit, onActionConsumed]);
 
   const openQuickAdjust = async (item: ItemCatalogRecord) => {
-    const { data } = await supabase
-      .from('unit_conversions')
-      .select('*, item_units(*)')
-      .eq('item_id', item.id);
-    setQuickAdjustConvs((data as UnitConversionRecord[] | null) ?? []);
-    setQuickAdjustItem(item);
+    try {
+      const { data, error } = await supabase
+        .from('unit_conversions')
+        .select('*, item_units(*)')
+        .eq('item_id', item.id);
+      if (error) throw error;
+      setQuickAdjustConvs((data as UnitConversionRecord[] | null) ?? []);
+      setQuickAdjustItem(item);
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to load item units.',
+        'error'
+      );
+    }
   };
 
   const filteredItems = useMemo(() => {

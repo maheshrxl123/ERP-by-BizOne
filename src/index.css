@@ -44,6 +44,30 @@
     display: none !important;
   }
 
+  body:has(.print-modal-root) #root {
+    display: none !important;
+  }
+
+  .print-modal-root,
+  .print-modal-overlay,
+  .print-modal-dialog,
+  .print-modal-body {
+    position: static !important;
+    inset: auto !important;
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
   .print-surface {
     position: static !important;
     max-width: none !important;
@@ -55,6 +79,18 @@
     color: #0f172a !important;
     padding: 0 !important;
     margin: 0 !important;
+  }
+
+  .print-surface.print-layout-thermal_80 {
+    width: 80mm !important;
+    max-width: 80mm !important;
+    margin: 0 auto !important;
+    font-size: 11px !important;
+  }
+
+  .print-surface.print-layout-a5 {
+    max-width: 148mm !important;
+    margin: 0 auto !important;
   }
 }
 

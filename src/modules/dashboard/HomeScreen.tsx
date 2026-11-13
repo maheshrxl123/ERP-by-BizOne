@@ -19,6 +19,7 @@ import { formatDateTime, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import type {
+  BillingSummary,
   InventorySummary,
   KhataTotalsSummary,
 } from '../../types/bizone';
@@ -44,12 +45,15 @@ interface HomeScreenProps {
     opts?: {
       partyId?: string | null;
       itemId?: string | null;
+      billId?: string | null;
       itemFilter?: ItemFilterTab | null;
       action?:
         | 'add-party'
         | 'add-item'
         | 'receive-payment'
         | 'give-payment'
+        | 'new-bill'
+        | 'new-quotation'
         | null;
     }
   ) => void;
@@ -73,10 +77,13 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
   const [dismissing, setDismissing] = useState(false);
   const [khataSummary, setKhataSummary] = useState<KhataTotalsSummary | null>(null);
   const [invSummary, setInvSummary] = useState<InventorySummary | null>(null);
+  const [billSummary, setBillSummary] = useState<BillingSummary | null>(null);
 
   const isOwner = profile?.role === 'owner';
   const enabledCount = modules.filter((m) => m.enabled).length;
   const packInfo = BUSINESS_PACKS.find((p) => p.key === business?.pack);
+  const canSeeBills =
+    isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills');
   const canSeeParties =
     isModuleEnabled('parties') && hasCapability(profile?.role, 'parties');
   const canSeeItems =
@@ -125,6 +132,26 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
       active = false;
     };
   }, [canSeeItems]);
+
+  useEffect(() => {
+    if (!canSeeBills) {
+      setBillSummary(null);
+      return;
+    }
+    let active = true;
+    supabase
+      .from('billing_summary_view')
+      .select('*')
+      .maybeSingle()
+      .then(({ data }) => {
+        if (active && data) {
+          setBillSummary(data as BillingSummary);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [canSeeBills]);
 
   const steps = business?.onboarding_steps ?? {
     logo: false,
@@ -220,14 +247,16 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => onNavigate('bills')}
-            className="h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 transition-opacity"
-          >
-            <IconReceipt size={18} stroke={2} />
-            <span>{t('quick.newBill')}</span>
-          </button>
+          {canSeeBills && (
+            <button
+              type="button"
+              onClick={() => onNavigate('bills', undefined, { action: 'new-bill' })}
+              className="h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 transition-opacity"
+            >
+              <IconReceipt size={18} stroke={2} />
+              <span>{t('quick.newBill')}</span>
+            </button>
+          )}
           {canEditItems && (
             <button
               type="button"
@@ -246,14 +275,18 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
         aria-label="Daily business metrics"
         className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4"
       >
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
+        <button
+          type="button"
+          onClick={() => canSeeBills && onNavigate('bills')}
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors"
+        >
           <p className="text-xs font-medium text-[var(--text-muted)]">
             {t('home.todaySales')}
           </p>
           <p className="mt-2 text-xl sm:text-2xl font-semibold tabular-nums text-[var(--text)]">
-            {formatINR(0)}
+            {formatINR(Number(billSummary?.today_sales ?? 0))}
           </p>
-        </div>
+        </button>
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <p className="text-xs font-medium text-[var(--text-muted)]">

@@ -469,6 +469,7 @@ export function PaymentsScreen({
                         <p className="text-xs text-[var(--text-muted)] tabular-nums">
                           {pay.payment_number} · {formatDate(pay.payment_date)} ·{' '}
                           {t(`payments.modes.${pay.mode}`)}
+                          {pay.status === 'reversed' ? ` · ${t('payments.reversed')}` : ''}
                         </p>
                       </div>
                       <p

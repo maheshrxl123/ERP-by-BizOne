@@ -9,6 +9,8 @@ export type UserRole =
 export type Capability =
   | 'create_bills'
   | 'void_bill'
+  | 'override_price_discount'
+  | 'sales_return'
   | 'payments'
   | 'parties'
   | 'items'
@@ -25,6 +27,8 @@ const ROLE_MATRIX: Record<UserRole, Capability[]> = {
   owner: [
     'create_bills',
     'void_bill',
+    'override_price_discount',
+    'sales_return',
     'payments',
     'parties',
     'items',
@@ -40,6 +44,8 @@ const ROLE_MATRIX: Record<UserRole, Capability[]> = {
   manager: [
     'create_bills',
     'void_bill',
+    'override_price_discount',
+    'sales_return',
     'payments',
     'parties',
     'items',
@@ -51,7 +57,14 @@ const ROLE_MATRIX: Record<UserRole, Capability[]> = {
     'export_data',
     'backup',
   ],
-  cashier: ['create_bills', 'payments', 'parties', 'expenses', 'reports'],
+  cashier: [
+    'create_bills',
+    'sales_return',
+    'payments',
+    'parties',
+    'expenses',
+    'reports',
+  ],
   storekeeper: ['items', 'stock_adjustment', 'purchases', 'reports'],
   accountant: [
     'create_bills',

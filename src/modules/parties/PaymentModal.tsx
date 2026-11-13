@@ -6,7 +6,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
-import { formatDate, formatINR } from '../../core/format';
+import { formatDate, formatINR, todayLocalIso } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type {
   OpenObligationRecord,
@@ -22,12 +22,6 @@ interface PaymentModalProps {
   initialDirection?: PaymentDirection;
   onClose: () => void;
   onSaved: (payment: PaymentRecord) => void;
-}
-
-function todayIso(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
 const PAYMENT_MODES: PaymentMode[] = [
@@ -53,7 +47,7 @@ export function PaymentModal({
   const [direction, setDirection] = useState<PaymentDirection>(initialDirection);
   const [amount, setAmount] = useState('');
   const [mode, setMode] = useState<PaymentMode>('cash');
-  const [paymentDate, setPaymentDate] = useState(todayIso());
+  const [paymentDate, setPaymentDate] = useState(todayLocalIso());
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -68,10 +62,11 @@ export function PaymentModal({
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
     setErrorMsg(null);
     setDirection(initialDirection);
     setMode('cash');
-    setPaymentDate(todayIso());
+    setPaymentDate(todayLocalIso());
     setReferenceNo('');
     setNotes('');
     setAutoAllocate(true);
@@ -95,10 +90,18 @@ export function PaymentModal({
         .select('*')
         .eq('is_active', true)
         .order('name')
-        .then(({ data }) => {
+        .then(({ data, error }) => {
+          if (!active) return;
+          if (error) {
+            setErrorMsg(error.message);
+            return;
+          }
           setParties((data as PartyBalanceRecord[] | null) ?? []);
         });
     }
+    return () => {
+      active = false;
+    };
   }, [open, lockedParty, initialDirection]);
 
   const activeParty = useMemo(() => {
@@ -111,22 +114,31 @@ export function PaymentModal({
       setOpenObligations([]);
       return;
     }
+    let active = true;
     setLoadingObligations(true);
     void (async () => {
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('party_open_obligations')
           .select('*')
           .eq('party_id', selectedPartyId)
           .eq('direction_needed', direction)
           .order('entry_date', { ascending: true })
           .order('created_at', { ascending: true });
+        if (!active) return;
+        if (error) {
+          setErrorMsg(error.message);
+          return;
+        }
         setOpenObligations((data as OpenObligationRecord[] | null) ?? []);
         setManualAmounts({});
       } finally {
-        setLoadingObligations(false);
+        if (active) setLoadingObligations(false);
       }
     })();
+    return () => {
+      active = false;
+    };
   }, [open, selectedPartyId, direction]);
 
   const numericAmount = useMemo(() => {
@@ -249,7 +261,7 @@ export function PaymentModal({
         p_direction: direction,
         p_amount: numericAmount,
         p_mode: mode,
-        p_payment_date: paymentDate || todayIso(),
+        p_payment_date: paymentDate || todayLocalIso(),
         p_reference_no: referenceNo.trim() || null,
         p_notes: notes.trim() || null,
         p_allocations: manualPayload,

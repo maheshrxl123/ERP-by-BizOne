@@ -33,6 +33,7 @@ import {
   HomeScreen,
   type AppDestination,
 } from '../modules/dashboard/HomeScreen';
+import { BillsScreen } from '../modules/bills/BillsScreen';
 import { HelpScreen } from '../modules/help/HelpScreen';
 import { ItemsScreen, type ItemFilterTab } from '../modules/items/ItemsScreen';
 import { PartiesScreen } from '../modules/parties/PartiesScreen';
@@ -62,9 +63,16 @@ export function AppShell() {
   const [settingsTab, setSettingsTab] = useState<SettingsTabKey>('business');
   const [navPartyId, setNavPartyId] = useState<string | null>(null);
   const [navItemId, setNavItemId] = useState<string | null>(null);
+  const [navBillId, setNavBillId] = useState<string | null>(null);
   const [navItemFilter, setNavItemFilter] = useState<ItemFilterTab | null>(null);
   const [navAction, setNavAction] = useState<
-    'add-party' | 'add-item' | 'receive-payment' | 'give-payment' | null
+    | 'add-party'
+    | 'add-item'
+    | 'receive-payment'
+    | 'give-payment'
+    | 'new-bill'
+    | 'new-quotation'
+    | null
   >(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -103,18 +111,22 @@ export function AppShell() {
       opts?: {
         partyId?: string | null;
         itemId?: string | null;
+        billId?: string | null;
         itemFilter?: ItemFilterTab | null;
         action?:
           | 'add-party'
           | 'add-item'
           | 'receive-payment'
           | 'give-payment'
+          | 'new-bill'
+          | 'new-quotation'
           | null;
       }
     ) => {
       setDest(next);
       setNavPartyId(opts?.partyId ?? null);
       setNavItemId(opts?.itemId ?? null);
+      setNavBillId(opts?.billId ?? null);
       setNavItemFilter(opts?.itemFilter ?? null);
       setNavAction(opts?.action ?? null);
       if (next === 'settings' && nextSettingsTab) {
@@ -132,6 +144,7 @@ export function AppShell() {
   const clearNavIntent = useCallback(() => {
     setNavPartyId(null);
     setNavItemId(null);
+    setNavBillId(null);
     setNavItemFilter(null);
     setNavAction(null);
   }, []);
@@ -485,7 +498,26 @@ export function AppShell() {
           {dest === 'settings' && <SettingsScreen initialTab={settingsTab} />}
           {dest === 'help' && <HelpScreen />}
           {dest === 'bills' && (
-            <ModulePhasePlaceholder moduleKey="billing" onNavigate={navigate} />
+            <RequireModule moduleKey="billing" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'cashier', 'accountant']}
+                onNavigate={navigate}
+              >
+                <BillsScreen
+                  initialBillId={navBillId}
+                  initialPartyId={navPartyId}
+                  initialAction={
+                    navAction === 'new-bill' || navAction === 'new-quotation'
+                      ? navAction
+                      : null
+                  }
+                  onActionConsumed={clearNavIntent}
+                  onOpenParty={(pid) =>
+                    navigate('parties', undefined, { partyId: pid })
+                  }
+                />
+              </RequireRole>
+            </RequireModule>
           )}
           {dest === 'parties' && (
             <RequireModule moduleKey="parties" onNavigate={navigate}>
@@ -504,6 +536,15 @@ export function AppShell() {
                   }
                   onActionConsumed={clearNavIntent}
                   onOpenPayments={() => navigate('payments')}
+                  onNewBill={(pid) =>
+                    navigate('bills', undefined, {
+                      partyId: pid,
+                      action: 'new-bill',
+                    })
+                  }
+                  onOpenBill={(bid) =>
+                    navigate('bills', undefined, { billId: bid })
+                  }
                 />
               </RequireRole>
             </RequireModule>
@@ -678,7 +719,9 @@ export function AppShell() {
                       key={action.id}
                       type="button"
                       onClick={() => {
-                        if (action.id === 'parties') {
+                        if (action.id === 'bills') {
+                          navigate('bills', undefined, { action: 'new-bill' });
+                        } else if (action.id === 'parties') {
                           navigate('parties', undefined, { action: 'add-party' });
                         } else if (action.id === 'items') {
                           navigate('items', undefined, { action: 'add-item' });

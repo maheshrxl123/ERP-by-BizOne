@@ -12,13 +12,15 @@ import {
   IconMapPin,
   IconPhone,
   IconPlus,
+  IconReceipt,
   IconRefresh,
   IconRestore,
   IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
-import { formatDate, formatINR } from '../../core/format';
+import { formatDate, formatINR, todayLocalIso } from '../../core/format';
+import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import type {
   BalanceDirection,
@@ -38,20 +40,18 @@ interface PartyDetailViewProps {
   partyId: string;
   onBack: () => void;
   onUpdated?: () => void;
+  onNewBill?: (partyId: string) => void;
+  onOpenBill?: (billId: string) => void;
 }
 
 type LedgerFilter = 'all' | 'dues' | 'payments' | 'reversals';
-
-function todayIso(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
-}
 
 export function PartyDetailView({
   partyId,
   onBack,
   onUpdated,
+  onNewBill,
+  onOpenBill,
 }: PartyDetailViewProps) {
   const { profile, isModuleEnabled, language, showToast, t } = useApp();
 
@@ -76,7 +76,7 @@ export function PartyDetailView({
   const [dueOpen, setDueOpen] = useState(false);
   const [dueDir, setDueDir] = useState<BalanceDirection>('to_receive');
   const [dueAmount, setDueAmount] = useState('');
-  const [dueDate, setDueDate] = useState(todayIso());
+  const [dueDate, setDueDate] = useState(todayLocalIso());
   const [duePayByDate, setDuePayByDate] = useState('');
   const [dueNote, setDueNote] = useState('');
   const [dueIdempKey, setDueIdempKey] = useState('');
@@ -93,6 +93,8 @@ export function PartyDetailView({
   const [reversalReason, setReversalReason] = useState('');
   const [reversing, setReversing] = useState(false);
 
+  const billingEnabled =
+    isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills');
   const paymentsEnabled = isModuleEnabled('payments');
   const canReverse =
     paymentsEnabled &&
@@ -141,7 +143,10 @@ export function PartyDetailView({
 
       if (balRes.error) throw balRes.error;
       if (!balRes.data) throw new Error('Party not found or access denied.');
+      if (addrRes.error) throw addrRes.error;
+      if (obRes.error) throw obRes.error;
       if (ledRes.error) throw ledRes.error;
+      if (payRes.error) throw payRes.error;
 
       setParty(balRes.data as PartyBalanceRecord);
       setAddresses((addrRes.data as PartyAddressRecord[] | null) ?? []);
@@ -201,7 +206,7 @@ export function PartyDetailView({
   const openAddDueModal = () => {
     setDueDir(party?.party_type === 'supplier' ? 'to_give' : 'to_receive');
     setDueAmount('');
-    setDueDate(todayIso());
+    setDueDate(todayLocalIso());
     setDuePayByDate('');
     setDueNote('');
     setDueIdempKey(`due_${crypto.randomUUID()}`);
@@ -227,7 +232,7 @@ export function PartyDetailView({
         p_party_id: partyId,
         p_direction: dueDir,
         p_amount: amt,
-        p_entry_date: dueDate || todayIso(),
+        p_entry_date: dueDate || todayLocalIso(),
         p_due_date: duePayByDate || null,
         p_note: dueNote.trim() || null,
         p_idempotency_key: dueIdempKey,
@@ -557,6 +562,17 @@ export function PartyDetailView({
           </>
         )}
 
+        {billingEnabled && party.is_active && onNewBill && (
+          <button
+            type="button"
+            onClick={() => onNewBill(party.party_id)}
+            className="h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95"
+          >
+            <IconReceipt size={18} stroke={2} />
+            <span>{t('bills.newBill')}</span>
+          </button>
+        )}
+
         {party.is_active && (
           <button
             type="button"
@@ -720,7 +736,20 @@ export function PartyDetailView({
                         </td>
                         <td className="py-3 px-4">
                           <div className="font-medium text-sm">
-                            {entry.reference_no || entry.entry_type}
+                            {billingEnabled &&
+                            entry.source_table === 'bills' &&
+                            entry.source_id &&
+                            onOpenBill ? (
+                              <button
+                                type="button"
+                                onClick={() => onOpenBill(entry.source_id!)}
+                                className="text-[var(--primary-dark)] hover:underline text-left"
+                              >
+                                {entry.reference_no || entry.entry_type}
+                              </button>
+                            ) : (
+                              <span>{entry.reference_no || entry.entry_type}</span>
+                            )}
                             {entry.is_reversed
                               ? ` · ${t('payments.reversed')}`
                               : ''}
@@ -796,9 +825,22 @@ export function PartyDetailView({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-sm font-semibold truncate">
-                          {entry.reference_no || entry.entry_type}
-                        </p>
+                        {billingEnabled &&
+                        entry.source_table === 'bills' &&
+                        entry.source_id &&
+                        onOpenBill ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenBill(entry.source_id!)}
+                            className="text-sm font-semibold truncate text-[var(--primary-dark)] hover:underline text-left block"
+                          >
+                            {entry.reference_no || entry.entry_type}
+                          </button>
+                        ) : (
+                          <p className="text-sm font-semibold truncate">
+                            {entry.reference_no || entry.entry_type}
+                          </p>
+                        )}
                         <p className="text-xs text-[var(--text-muted)] tabular-nums">
                           {formatDate(entry.entry_date)}
                           {entry.is_reversed ? ` · ${t('payments.reversed')}` : ''}

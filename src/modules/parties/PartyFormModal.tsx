@@ -8,7 +8,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
-import { isValidGstin } from '../../core/format';
+import { isValidGstin, todayLocalIso } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type {
   BalanceDirection,
@@ -25,11 +25,6 @@ interface PartyFormModalProps {
   onSaved: (party: PartyRecord) => void;
 }
 
-function todayIso(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
-}
 
 const EMPTY_ADDRESS: PartyAddressRecord = {
   label: 'Primary',
@@ -56,7 +51,7 @@ export function PartyFormModal({
   const [gstin, setGstin] = useState('');
   const [openingBalance, setOpeningBalance] = useState('0');
   const [openingDir, setOpeningDir] = useState<BalanceDirection>('to_receive');
-  const [openingDate, setOpeningDate] = useState(todayIso());
+  const [openingDate, setOpeningDate] = useState(todayLocalIso());
   const [creditLimit, setCreditLimit] = useState('0');
   const [creditDays, setCreditDays] = useState('0');
   const [notes, setNotes] = useState('');
@@ -77,7 +72,7 @@ export function PartyFormModal({
       setGstin(editingParty.gstin ?? '');
       setOpeningBalance(String(editingParty.opening_balance ?? 0));
       setOpeningDir(editingParty.opening_balance_type ?? 'to_receive');
-      setOpeningDate(editingParty.opening_balance_date || todayIso());
+      setOpeningDate(editingParty.opening_balance_date || todayLocalIso());
       setCreditLimit(String(editingParty.credit_limit ?? 0));
       setCreditDays(String(editingParty.credit_days ?? 0));
       setNotes(editingParty.notes ?? '');
@@ -113,7 +108,7 @@ export function PartyFormModal({
       setGstin('');
       setOpeningBalance('0');
       setOpeningDir('to_receive');
-      setOpeningDate(todayIso());
+      setOpeningDate(todayLocalIso());
       setCreditLimit('0');
       setCreditDays('0');
       setNotes('');
@@ -234,7 +229,7 @@ export function PartyFormModal({
         p_gstin: cleanGstin || null,
         p_opening_balance: obVal,
         p_opening_balance_type: openingDir,
-        p_opening_balance_date: openingDate || todayIso(),
+        p_opening_balance_date: openingDate || todayLocalIso(),
         p_credit_limit: clVal,
         p_credit_days: cdVal,
         p_notes: notes.trim() || null,

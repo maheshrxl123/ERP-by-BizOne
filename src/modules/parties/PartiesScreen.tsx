@@ -29,6 +29,8 @@ interface PartiesScreenProps {
   initialAction?: 'add-party' | 'receive-payment' | 'give-payment' | null;
   onActionConsumed?: () => void;
   onOpenPayments?: () => void;
+  onNewBill?: (partyId: string) => void;
+  onOpenBill?: (billId: string) => void;
 }
 
 export function PartiesScreen({
@@ -36,6 +38,8 @@ export function PartiesScreen({
   initialAction,
   onActionConsumed,
   onOpenPayments,
+  onNewBill,
+  onOpenBill,
 }: PartiesScreenProps) {
   const { isModuleEnabled, language, t } = useApp();
 
@@ -130,6 +134,8 @@ export function PartiesScreen({
           void loadParties();
         }}
         onUpdated={() => void loadParties()}
+        onNewBill={onNewBill}
+        onOpenBill={onOpenBill}
       />
     );
   }

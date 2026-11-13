@@ -142,3 +142,48 @@ export function escapeCsvCell(value: string | number | null | undefined): string
   return str;
 }
 
+export function toLocalIsoDate(date: Date = new Date()): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function todayLocalIso(): string {
+  return toLocalIsoDate(new Date());
+}
+
+export function addDaysLocalIso(baseIso: string, days: number): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(baseIso.trim());
+  const base = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date();
+  base.setDate(base.getDate() + Math.trunc(days));
+  return toLocalIsoDate(base);
+}
+
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand when Clipboard API is blocked by iframe policy
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.className = 'sr-only';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+

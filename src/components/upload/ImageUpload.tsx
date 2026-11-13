@@ -309,12 +309,11 @@ export function ImageUpload({
       />
 
       {uploading && (
-        <div className="w-full h-1.5 rounded-full bg-[var(--surface-muted)] overflow-hidden">
-          <div
-            className="h-full bg-[var(--primary)] transition-all duration-150"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <progress
+          value={progress}
+          max={100}
+          className="w-full h-1.5 rounded-full overflow-hidden accent-[var(--primary)] bg-[var(--surface-muted)]"
+        />
       )}
 
       {value.length === 0 ? (

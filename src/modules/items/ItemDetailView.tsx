@@ -63,6 +63,7 @@ export function ItemDetailView({
   const [editOpen, setEditOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
@@ -93,6 +94,9 @@ export function ItemDetailView({
       ]);
 
       if (itemRes.error) throw itemRes.error;
+      if (convRes.error) throw convRes.error;
+      if (imgRes.error) throw imgRes.error;
+      if (ledgerRes.error) throw ledgerRes.error;
       const loadedItem = (itemRes.data as ItemCatalogRecord | null) ?? null;
       const loadedImages = (imgRes.data as ItemImageRecord[] | null) ?? [];
 
@@ -109,9 +113,7 @@ export function ItemDetailView({
       setActiveFileId(primary);
 
       for (const img of loadedImages) {
-        if (!signedUrlCache[img.file_id]) {
-          void getSignedUrl(img.file_id);
-        }
+        void getSignedUrl(img.file_id);
       }
     } catch (err) {
       showToast(
@@ -121,14 +123,15 @@ export function ItemDetailView({
     } finally {
       setLoading(false);
     }
-  }, [itemId, signedUrlCache, getSignedUrl, showToast]);
+  }, [itemId, getSignedUrl, showToast]);
 
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
 
   const handleToggleArchive = async () => {
-    if (!item || !canEdit) return;
+    if (!item || !canEdit || archiving) return;
+    setArchiving(true);
     try {
       const { error } = await supabase.rpc('archive_item', {
         p_item_id: item.id,
@@ -146,6 +149,8 @@ export function ItemDetailView({
         err instanceof Error ? err.message : 'Unable to update item status.',
         'error'
       );
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -236,8 +241,9 @@ export function ItemDetailView({
               </button>
               <button
                 type="button"
+                disabled={archiving}
                 onClick={handleToggleArchive}
-                className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
+                className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)] disabled:opacity-50"
               >
                 {item.is_active ? (
                   <>

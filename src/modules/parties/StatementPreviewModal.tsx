@@ -6,8 +6,15 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../../app/AppProvider';
-import { escapeCsvCell, formatDate, formatINR } from '../../core/format';
+import {
+  copyToClipboard,
+  escapeCsvCell,
+  formatDate,
+  formatINR,
+  toLocalIsoDate,
+} from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type { PartyAddressRecord, PartyStatementData } from '../../types/bizone';
 
@@ -18,11 +25,6 @@ interface StatementPreviewModalProps {
   partyGstin?: string | null;
   defaultAddress?: PartyAddressRecord | null;
   onClose: () => void;
-}
-
-function toIsoDate(d: Date): string {
-  const offset = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - offset).toISOString().slice(0, 10);
 }
 
 export function StatementPreviewModal({
@@ -87,22 +89,22 @@ export function StatementPreviewModal({
       return;
     }
     if (preset === 'thisMonth') {
-      setFromDate(toIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)));
-      setToDate(toIsoDate(now));
+      setFromDate(toLocalIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setToDate(toLocalIsoDate(now));
       return;
     }
     if (preset === 'lastMonth') {
       const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const end = new Date(now.getFullYear(), now.getMonth(), 0);
-      setFromDate(toIsoDate(start));
-      setToDate(toIsoDate(end));
+      setFromDate(toLocalIsoDate(start));
+      setToDate(toLocalIsoDate(end));
       return;
     }
     const fyStartMonth = (business?.fy_start_month ?? 4) - 1;
     const fyYear =
       now.getMonth() >= fyStartMonth ? now.getFullYear() : now.getFullYear() - 1;
-    setFromDate(toIsoDate(new Date(fyYear, fyStartMonth, 1)));
-    setToDate(toIsoDate(now));
+    setFromDate(toLocalIsoDate(new Date(fyYear, fyStartMonth, 1)));
+    setToDate(toLocalIsoDate(now));
   };
 
   const formatSignedLabel = (val: number) => {
@@ -162,10 +164,16 @@ export function StatementPreviewModal({
   const handleCopySummary = async () => {
     const txt = buildSummaryText();
     if (!txt) return;
-    await navigator.clipboard.writeText(txt);
+    const ok = await copyToClipboard(txt);
     showToast(
-      language === 'hi' ? 'स्टेटमेंट सारांश कॉपी किया गया।' : 'Statement summary copied.',
-      'success'
+      ok
+        ? language === 'hi'
+          ? 'स्टेटमेंट सारांश कॉपी किया गया।'
+          : 'Statement summary copied.'
+        : language === 'hi'
+          ? 'क्लिपबोर्ड अनुमति नहीं मिली।'
+          : 'Clipboard permission denied.',
+      ok ? 'success' : 'error'
     );
   };
 
@@ -186,18 +194,19 @@ export function StatementPreviewModal({
     await handleCopySummary();
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={onClose}
-    >
+  return createPortal(
+    <div className="print-modal-root">
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('parties.statementTitle')}
-        className="print-surface w-full sm:max-w-4xl max-h-[94vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
-        onClick={(e) => e.stopPropagation()}
+        className="print-modal-overlay fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+        onClick={onClose}
       >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('parties.statementTitle')}
+          className="print-modal-dialog print-surface w-full sm:max-w-4xl max-h-[94vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)]"
+          onClick={(e) => e.stopPropagation()}
+        >
         {/* Top Modal Controls */}
         <div className="no-print sticky top-0 z-10 px-5 py-4 border-b border-[var(--border)] bg-[var(--surface)] flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{t('parties.statementTitle')}</h2>
@@ -483,5 +492,7 @@ export function StatementPreviewModal({
         </div>
       </div>
     </div>
+    </div>,
+    document.body
   );
 }

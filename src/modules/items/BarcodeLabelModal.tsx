@@ -1,5 +1,6 @@
 import { IconBarcode, IconPrinter, IconX } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useApp } from '../../app/AppProvider';
 import { formatINR } from '../../core/format';
 import type { ItemCatalogRecord } from '../../types/bizone';
@@ -24,6 +25,18 @@ export function BarcodeLabelModal({
   );
   const [copies, setCopies] = useState(6);
 
+  useEffect(() => {
+    if (!open) return;
+    if (initialItemId && items.some((i) => i.id === initialItemId)) {
+      setSelectedId(initialItemId);
+      return;
+    }
+    setSelectedId((prev) => {
+      if (prev && items.some((i) => i.id === prev)) return prev;
+      return items.find((i) => i.is_active)?.id || items[0]?.id || '';
+    });
+  }, [open, initialItemId, items]);
+
   const selectedItem = useMemo(
     () => items.find((i) => i.id === selectedId) || items[0] || null,
     [items, selectedId]
@@ -37,18 +50,19 @@ export function BarcodeLabelModal({
     selectedItem?.sku ||
     (selectedItem ? selectedItem.id.slice(0, 10).toUpperCase() : '00000000');
 
-  return (
-    <div
-      className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-0 md:p-4"
-      onClick={onClose}
-    >
+  return createPortal(
+    <div className="print-modal-root">
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('items.barcodeLabels')}
-        className="w-full md:max-w-2xl max-h-[90vh] rounded-t-2xl md:rounded-2xl bg-[var(--surface)] border border-[var(--border)] flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
+        className="print-modal-overlay fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-0 md:p-4"
+        onClick={onClose}
       >
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('items.barcodeLabels')}
+          className="print-modal-dialog w-full md:max-w-2xl max-h-[90vh] rounded-t-2xl md:rounded-2xl bg-[var(--surface)] border border-[var(--border)] flex flex-col overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
         <div className="no-print px-5 py-4 border-b border-[var(--border)] flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <IconBarcode size={20} stroke={2} />
@@ -64,7 +78,7 @@ export function BarcodeLabelModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="print-modal-body flex-1 overflow-y-auto p-5 space-y-4">
           <div className="no-print grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="sm:col-span-1">
               <label className="block text-xs font-medium mb-1">Item</label>
@@ -115,7 +129,7 @@ export function BarcodeLabelModal({
               Add an item first to preview printable barcode labels.
             </p>
           ) : (
-            <div className="printable-statement p-4 rounded-xl border border-[var(--border)] bg-white text-black">
+            <div className="print-surface p-4 rounded-xl border border-[var(--border)] bg-white text-black">
               <div
                 className={`grid gap-3 ${
                   labelSize === '50x25' ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-2 sm:grid-cols-4'
@@ -137,12 +151,13 @@ export function BarcodeLabelModal({
                       className="h-7 w-full mx-auto flex items-stretch justify-center gap-[1.5px] py-1"
                     >
                       {codeValue.split('').map((ch, cIdx) => {
-                        const w = (ch.charCodeAt(0) % 3) + 1;
+                        const wMod = ch.charCodeAt(0) % 3;
+                        const wClass =
+                          wMod === 0 ? 'w-[1px]' : wMod === 1 ? 'w-[2px]' : 'w-[3px]';
                         return (
                           <span
                             key={cIdx}
-                            className="bg-black inline-block"
-                            style={{ width: `${w}px` }}
+                            className={`bg-black inline-block ${wClass}`}
                           />
                         );
                       })}
@@ -186,5 +201,7 @@ export function BarcodeLabelModal({
         </div>
       </div>
     </div>
+    </div>,
+    document.body
   );
 }

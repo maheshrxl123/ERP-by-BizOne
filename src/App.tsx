@@ -8,6 +8,7 @@ import { AppProvider, useApp } from './app/AppProvider';
 import { AppShell } from './app/AppShell';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator';
 import { AuthScreens } from './modules/auth/AuthScreens';
+import { PublicBillShareView } from './modules/bills/PublicBillShareView';
 
 function ToastStack() {
   const { toasts, dismissToast } = useApp();
@@ -100,6 +101,15 @@ function RootRouter() {
 }
 
 export default function App() {
+  const shareToken =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('share')?.trim() || ''
+      : '';
+
+  if (shareToken) {
+    return <PublicBillShareView shareToken={shareToken} />;
+  }
+
   return (
     <AppProvider>
       <OfflineIndicator />

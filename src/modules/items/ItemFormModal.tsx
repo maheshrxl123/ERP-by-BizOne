@@ -99,8 +99,18 @@ export function ItemFormModal({
     [units]
   );
 
+  const initStampRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initStampRef.current = null;
+      return;
+    }
+
+    const nextStamp = `${item?.id ?? 'new'}:${item?.version ?? 0}`;
+    if (initStampRef.current === nextStamp) return;
+    initStampRef.current = nextStamp;
+
     uploadedDuringSessionRef.current = new Set();
     setError(null);
     setInlineAddType(null);
@@ -186,6 +196,21 @@ export function ItemFormModal({
     initialImages,
     signedUrlCache,
   ]);
+
+  useEffect(() => {
+    if (!open) return;
+    setImages((prev) => {
+      let changed = false;
+      const next = prev.map((img) => {
+        if (!img.url && signedUrlCache[img.fileId]) {
+          changed = true;
+          return { ...img, url: signedUrlCache[img.fileId] };
+        }
+        return img;
+      });
+      return changed ? next : prev;
+    });
+  }, [open, signedUrlCache]);
 
   if (!open) return null;
 

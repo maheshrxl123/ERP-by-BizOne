@@ -1,0 +1,45 @@
+/* BizOne ERP Design Tokens (PRD Section 5.2) */
+
+:root {
+  --primary: #0EA5E9;
+  --primary-dark: #075985;
+  --primary-soft: #E0F2FE;
+  --on-primary: #0F172A;
+  --bg: #F8FAFC;
+  --surface: #FFFFFF;
+  --surface-muted: #F1F5F9;
+  --text: #0F172A;
+  --text-muted: #64748B;
+  --border: #E2E8F0;
+  --receive: #16A34A;
+  --receive-text: #15803D;
+  --receive-soft: #DCFCE7;
+  --give: #DC2626;
+  --give-soft: #FEE2E2;
+  --warning: #EAB308;
+  --warning-text: #854D0E;
+  --warning-soft: #FEF9C3;
+  --info: #0EA5E9;
+}
+
+.dark {
+  --primary: #38BDF8;
+  --primary-dark: #7DD3FC;
+  --primary-soft: #0C4A6E;
+  --on-primary: #0F172A;
+  --bg: #0B1120;
+  --surface: #111827;
+  --surface-muted: #1E293B;
+  --text: #F1F5F9;
+  --text-muted: #94A3B8;
+  --border: #1F2937;
+  --receive: #4ADE80;
+  --receive-text: #4ADE80;
+  --receive-soft: #052E16;
+  --give: #F87171;
+  --give-soft: #450A0A;
+  --warning: #FACC15;
+  --warning-text: #FACC15;
+  --warning-soft: #422006;
+  --info: #38BDF8;
+}

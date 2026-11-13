@@ -1,0 +1,6 @@
+{
+  "name": "Supabase Workspace",
+  "description": "Connect and manage Supabase organizations, PostgreSQL projects, schemas, and live SQL queries.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

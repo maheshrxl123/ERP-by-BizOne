@@ -2,6 +2,9 @@ import {
   IconAlertTriangle,
   IconChartBar,
   IconCheck,
+  IconCopy,
+  IconLoader2,
+  IconMessage,
   IconPlayerPlay,
   IconPlus,
   IconRefresh,
@@ -25,10 +28,18 @@ import type {
   AiPlaybookRecord,
 } from '../../types/bizone';
 
-type AiTab = 'chat' | 'analytics' | 'playbooks' | 'approvals';
+type AiTab = 'chat' | 'analytics' | 'drafts' | 'playbooks' | 'approvals';
 
 interface AiAssistantScreenProps {
   onOpenSettings?: () => void;
+}
+
+interface DuePartyOption {
+  party_id: string;
+  name: string;
+  phone: string | null;
+  to_receive: number;
+  overdue_receivable: number;
 }
 
 export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
@@ -41,6 +52,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     language === 'hi' ? 'hi' : 'en'
   );
   const [hasProvider, setHasProvider] = useState<boolean>(false);
+  const [hasBuiltInGemini, setHasBuiltInGemini] = useState<boolean>(false);
   const [checkingProvider, setCheckingProvider] = useState(true);
 
   const [conversations, setConversations] = useState<AiConversationRecord[]>([]);
@@ -53,6 +65,15 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
   const [analyticsMetrics, setAnalyticsMetrics] = useState<Record<string, unknown> | null>(null);
   const [runningAnalytics, setRunningAnalytics] = useState(false);
 
+  const [dueParties, setDueParties] = useState<DuePartyOption[]>([]);
+  const [draftKind, setDraftKind] = useState<'payment_reminder' | 'daily_brief'>('payment_reminder');
+  const [draftPartyId, setDraftPartyId] = useState<string>('');
+  const [draftLang, setDraftLang] = useState<'en' | 'hi' | 'hinglish'>(
+    language === 'hi' ? 'hi' : 'hinglish'
+  );
+  const [draftText, setDraftText] = useState('');
+  const [generatingDraft, setGeneratingDraft] = useState(false);
+
   const [playbooks, setPlaybooks] = useState<AiPlaybookRecord[]>([]);
   const [runningPlaybook, setRunningPlaybook] = useState<string | null>(null);
 
@@ -63,10 +84,10 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token) return;
     setCheckingProvider(true);
     try {
-      const [provRes, convRes, pbRes, propRes] = await Promise.all([
+      const [provRes, convRes, pbRes, propRes, partyRes] = await Promise.all([
         fetch('/api/ai/providers', {
           headers: { Authorization: `Bearer ${session.access_token}` },
-        }).then((r) => (r.ok ? r.json() : { hasConfiguredProvider: false })),
+        }).then((r) => (r.ok ? r.json() : { hasConfiguredProvider: false, hasBuiltInGemini: false })),
         supabase
           .from('ai_conversations')
           .select('*')
@@ -83,13 +104,25 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           )
           .order('created_at', { ascending: false })
           .limit(40),
+        supabase
+          .from('party_balances')
+          .select('party_id, name, phone, to_receive, overdue_receivable')
+          .gt('to_receive', 0)
+          .order('overdue_receivable', { ascending: false })
+          .limit(50),
       ]);
 
       setHasProvider(Boolean(provRes?.hasConfiguredProvider));
+      setHasBuiltInGemini(Boolean(provRes?.hasBuiltInGemini));
       const convRows = (convRes.data as AiConversationRecord[] | null) ?? [];
       setConversations(convRows);
       setPlaybooks((pbRes.data as AiPlaybookRecord[] | null) ?? []);
       setProposals((propRes.data as AiActionProposalRecord[] | null) ?? []);
+      const partyRows = (partyRes.data as DuePartyOption[] | null) ?? [];
+      setDueParties(partyRows);
+      if (partyRows.length > 0) {
+        setDraftPartyId((prev) => prev || partyRows[0].party_id);
+      }
       if (convRows.length > 0) {
         setActiveConvId((prev) => prev || convRows[0].id);
       }
@@ -189,6 +222,36 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
       showToast(err instanceof Error ? err.message : 'Analytics failed.', 'error');
     } finally {
       setRunningAnalytics(false);
+    }
+  };
+
+  const handleGenerateSmartDraft = async () => {
+    if (!session?.access_token) return;
+    if (draftKind === 'payment_reminder' && !draftPartyId) {
+      showToast('Select a party with pending receivable first.', 'error');
+      return;
+    }
+    setGeneratingDraft(true);
+    try {
+      const res = await fetch('/api/ai/smart-draft-message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          kind: draftKind,
+          language: draftLang,
+          partyId: draftKind === 'payment_reminder' ? draftPartyId : null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Unable to generate draft.');
+      setDraftText(String(json.draftText || ''));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to generate draft.', 'error');
+    } finally {
+      setGeneratingDraft(false);
     }
   };
 
@@ -295,8 +358,8 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
             {language === 'hi'
-              ? 'केवल अधिकृत व्यवसाय डेटा पर आधारित प्रश्नोत्तर, विश्लेषण और ओनर-स्वीकृत ड्राफ्ट।'
-              : 'Ask questions in English, Hindi, or Hinglish using your own AI API key. Drafts always require Owner approval.'}
+              ? 'केवल अधिकृत व्यवसाय डेटा पर आधारित प्रश्नोत्तर, विश्लेषण, स्मार्ट व्हाट्सएप ड्राफ्ट और ओनर-स्वीकृत प्रस्ताव।'
+              : 'Ask questions in English, Hindi, or Hinglish, generate WhatsApp payment reminders & daily closing briefs, and review Owner-approved action proposals.'}
           </p>
         </div>
 
@@ -345,6 +408,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
             {canSeeProfit
               ? 'Authorized for cost & profit summaries'
               : 'Purchase cost & profit margins masked for your role'}
+            {hasBuiltInGemini ? ' · Built-in Gemini AI active' : ''}
           </span>
         </span>
         <span className="font-mono">Zero autonomous writes · SHA-256 signed proposals</span>
@@ -356,6 +420,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           [
             { key: 'chat', label: 'AI Chat', icon: IconSparkles },
             { key: 'analytics', label: 'Business Insights', icon: IconChartBar },
+            { key: 'drafts', label: 'Smart Drafts', icon: IconMessage },
             { key: 'playbooks', label: 'Playbooks', icon: IconPlayerPlay },
             {
               key: 'approvals',
@@ -581,6 +646,127 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
                 <div className="text-lg font-semibold mt-0.5">
                   {analyticsMetrics.gst_summary ? 'Yes' : 'Masked / Disabled'}
                 </div>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Smart Drafts Tab */}
+      {tab === 'drafts' && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">
+                AI WhatsApp Reminders &amp; Daily Closing Brief
+              </h2>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Generate ready-to-send customer Khata payment reminders or an evening shop closing summary using authorized live figures.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={generatingDraft || !hasProvider}
+              onClick={() => void handleGenerateSmartDraft()}
+              className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50"
+            >
+              {generatingDraft ? (
+                <IconLoader2 size={15} className="animate-spin" />
+              ) : (
+                <IconSparkles size={15} stroke={2} />
+              )}
+              <span>{generatingDraft ? 'Drafting...' : 'Generate Draft'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium mb-1">Draft Type</label>
+              <select
+                value={draftKind}
+                onChange={(e) =>
+                  setDraftKind(e.target.value as 'payment_reminder' | 'daily_brief')
+                }
+                className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+              >
+                <option value="payment_reminder">Customer Payment Reminder</option>
+                <option value="daily_brief">Evening Daily Closing Brief</option>
+              </select>
+            </div>
+
+            {draftKind === 'payment_reminder' && (
+              <div>
+                <label className="block text-xs font-medium mb-1">Customer with Dues</label>
+                <select
+                  value={draftPartyId}
+                  onChange={(e) => setDraftPartyId(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                >
+                  {dueParties.length === 0 ? (
+                    <option value="">No pending receivables</option>
+                  ) : (
+                    dueParties.map((p) => (
+                      <option key={p.party_id} value={p.party_id}>
+                        {p.name} ({formatINR(p.to_receive)})
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-medium mb-1">Language</label>
+              <select
+                value={draftLang}
+                onChange={(e) => setDraftLang(e.target.value as 'en' | 'hi' | 'hinglish')}
+                className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+              >
+                <option value="hinglish">Hinglish (Shopkeeper Friendly)</option>
+                <option value="hi">हिन्दी (Devanagari)</option>
+                <option value="en">English (Formal)</option>
+              </select>
+            </div>
+          </div>
+
+          {draftText && (
+            <div className="space-y-2.5 pt-2 border-t border-[var(--border)]">
+              <textarea
+                rows={5}
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                className="w-full p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] text-sm leading-relaxed"
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(draftText);
+                    showToast('Copied draft message to clipboard.', 'success');
+                  }}
+                  className="h-9 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-semibold inline-flex items-center gap-1.5"
+                >
+                  <IconCopy size={14} stroke={2} />
+                  <span>Copy Message</span>
+                </button>
+                {draftKind === 'payment_reminder' &&
+                  (() => {
+                    const selected = dueParties.find((p) => p.party_id === draftPartyId);
+                    const digits = (selected?.phone || '').replace(/\D/g, '');
+                    if (!digits) return null;
+                    const intlDigits = digits.length === 10 ? `91${digits}` : digits;
+                    return (
+                      <a
+                        href={`https://wa.me/${intlDigits}?text=${encodeURIComponent(draftText)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="h-9 px-3.5 rounded-lg bg-[var(--receive)] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <IconMessage size={14} stroke={2} />
+                        <span>Send via WhatsApp</span>
+                      </a>
+                    );
+                  })()}
               </div>
             </div>
           )}

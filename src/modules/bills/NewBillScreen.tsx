@@ -1,22 +1,25 @@
 import {
   IconAlertCircle,
+  IconArrowLeft,
   IconArrowsExchange,
-  IconBarcode,
   IconCheck,
   IconDeviceFloppy,
+  IconMinus,
   IconPlus,
   IconReceipt,
-  IconSearch,
+  IconSparkles,
   IconTrash,
-  IconX,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { BarcodeScanBar } from '../../components/barcode/BarcodeScanBar';
+import { playScanBeep, useBarcodeWedge } from '../../components/barcode/useBarcodeWedge';
 import { FileUpload, type UploadedFileItem } from '../../components/upload/FileUpload';
 import { addDaysLocalIso, formatDate, formatINR, todayLocalIso } from '../../core/format';
 import {
   amountInWordsINR,
   calculateBillPreview,
+  convertRateTaxMode,
   roundHalfUp,
   type BillDocumentType,
 } from '../../core/money';
@@ -45,12 +48,11 @@ import type {
   UnitConversionRecord,
 } from '../../types/bizone';
 
-interface BillFormModalProps {
-  open: boolean;
+export interface NewBillScreenProps {
   editingDraft?: BillRecord | null;
   defaultDocType?: 'tax_invoice' | 'bill_of_supply' | 'quotation';
   defaultPartyId?: string | null;
-  onClose: () => void;
+  onCancel: () => void;
   onSaved: (bill: BillRecord, mode: 'draft' | 'issued') => void;
 }
 
@@ -79,15 +81,14 @@ const PAYMENT_MODES: PaymentMode[] = [
   'other',
 ];
 
-export function BillFormModal({
-  open,
+export function NewBillScreen({
   editingDraft,
   defaultDocType,
   defaultPartyId,
-  onClose,
+  onCancel,
   onSaved,
-}: BillFormModalProps) {
-  const { business, profile, isModuleEnabled, language, showToast, t } = useApp();
+}: NewBillScreenProps) {
+  const { business, profile, session, isModuleEnabled, language, showToast, t } = useApp();
 
   const taxModuleEnabled = isModuleEnabled('tax');
   const partiesEnabled = isModuleEnabled('parties');
@@ -125,6 +126,9 @@ export function BillFormModal({
   const [loadingSubstitutes, setLoadingSubstitutes] = useState(false);
 
   const [lines, setLines] = useState<DraftLineRow[]>([]);
+  const [lastHighlightedId, setLastHighlightedId] = useState<string | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
+
   const [paidAmount, setPaidAmount] = useState('');
   const [paidTouched, setPaidTouched] = useState(false);
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('cash');
@@ -143,6 +147,9 @@ export function BillFormModal({
   const [partyAddressesById, setPartyAddressesById] = useState<Record<string, string>>({});
 
   const [itemSearch, setItemSearch] = useState('');
+  const [aiOrderOpen, setAiOrderOpen] = useState(false);
+  const [aiOrderText, setAiOrderText] = useState('');
+  const [aiParsing, setAiParsing] = useState(false);
   const [loadingMaster, setLoadingMaster] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -151,6 +158,20 @@ export function BillFormModal({
   const canOverrideUnrestricted = hasCapability(profile?.role, 'override_price_discount');
   const cashierMaxDiscount = Number(business?.cashier_max_discount_pct ?? 10);
   const allowCashierPriceReduction = Boolean(business?.allow_cashier_price_override);
+
+  const flashHighlight = useCallback((id: string) => {
+    setLastHighlightedId(id);
+    if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = window.setTimeout(() => {
+      setLastHighlightedId(null);
+    }, 1100);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) window.clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
 
   const loadPartyPackDetails = useCallback(
     async (pid: string) => {
@@ -169,10 +190,7 @@ export function BillFormModal({
               .order('site_name')
           : Promise.resolve({ data: [], error: null }),
         pack === 'wholesale'
-          ? supabase
-              .from('party_item_rates')
-              .select('*')
-              .eq('party_id', pid)
+          ? supabase.from('party_item_rates').select('*').eq('party_id', pid)
           : Promise.resolve({ data: [], error: null }),
       ]);
       if (!sitesRes.error) {
@@ -199,7 +217,7 @@ export function BillFormModal({
             .select('*')
             .eq('is_active', true)
             .order('name')
-            .limit(300),
+            .limit(400),
           supabase
             .from('unit_conversions')
             .select('item_id, alternate_unit_id, conversion_factor'),
@@ -227,11 +245,7 @@ export function BillFormModal({
                 .order('expiry_date', { ascending: true })
             : Promise.resolve({ data: [], error: null }),
           variantsEnabled
-            ? supabase
-                .from('item_variants')
-                .select('*')
-                .eq('is_active', true)
-                .order('size')
+            ? supabase.from('item_variants').select('*').eq('is_active', true).order('size')
             : Promise.resolve({ data: [], error: null }),
           pack === 'service'
             ? supabase
@@ -330,7 +344,6 @@ export function BillFormModal({
   }, [partiesEnabled, batchExpiryEnabled, variantsEnabled, pack]);
 
   useEffect(() => {
-    if (!open) return;
     setErrorMsg(null);
     setItemSearch('');
     setPaymentMode('cash');
@@ -539,7 +552,6 @@ export function BillFormModal({
 
     void init();
   }, [
-    open,
     editingDraft,
     defaultDocType,
     defaultPartyId,
@@ -567,9 +579,7 @@ export function BillFormModal({
       (business?.state_code || '').toUpperCase();
     setPlaceOfSupply(nextPos);
     if (found && found.credit_days > 0) {
-      setDueDate(
-        addDaysLocalIso(billDate || todayLocalIso(), found.credit_days)
-      );
+      setDueDate(addDaysLocalIso(billDate || todayLocalIso(), found.credit_days));
     }
   };
 
@@ -598,65 +608,266 @@ export function BillFormModal({
     [pack, selectedPartyObj?.price_tier, partyRatesByItem]
   );
 
-  const addItemToBill = (item: ItemCatalogRecord) => {
-    setLines((prev) => {
-      const canMerge =
-        pack !== 'clothing' && pack !== 'medical' && pack !== 'hardware';
-      const existingIdx = canMerge
-        ? prev.findIndex(
-            (l) => l.item.id === item.id && l.enteredUnitId === item.base_unit_id
-          )
-        : -1;
-      if (existingIdx >= 0) {
-        return prev.map((row, idx) => {
-          if (idx !== existingIdx) return row;
-          const nextQty = roundHalfUp(Number(row.enteredQty || 0) + 1, 3);
-          const resolved = resolvePriceForLine(row.item, nextQty, 1);
-          return {
-            ...row,
-            enteredQty: String(nextQty),
-            unitPrice: pack === 'wholesale' ? String(resolved.unitPrice) : row.unitPrice,
-            priceSource: resolved.source,
-          };
-        });
+  const addItemToBill = useCallback(
+    (
+      item: ItemCatalogRecord,
+      opts?: {
+        variantIdOverride?: string;
+        qtyOverride?: number;
+        unitCodeOverride?: string | null;
+        rateOverride?: number | null;
+        discountPctOverride?: number | null;
       }
-      const unitOptions = conversionsByItem[item.id] ?? [
-        { unitId: item.base_unit_id, code: item.base_unit_code, factor: 1 },
-      ];
+    ) => {
+      const targetUnitOpt = opts?.unitCodeOverride
+        ? (conversionsByItem[item.id] ?? []).find(
+            (u) => u.code.toLowerCase() === opts.unitCodeOverride!.toLowerCase()
+          )
+        : undefined;
+      const targetUnitId = targetUnitOpt?.unitId || item.base_unit_id;
+      const targetFactor = targetUnitOpt?.factor ?? 1;
+      const addQty = opts?.qtyOverride && opts.qtyOverride > 0 ? opts.qtyOverride : 1;
+
       const fefoBatch = batchExpiryEnabled
         ? sortBatchesFefo(batchesByItem[item.id] ?? [], billDate || todayLocalIso())[0]
         : undefined;
-      const defaultVar = variantsEnabled
-        ? (variantsByItem[item.id] ?? []).find((v) => v.qty_on_hand > 0) ??
-          (variantsByItem[item.id] ?? [])[0]
-        : undefined;
-      const baseResolved = resolvePriceForLine(item, 1, 1);
-      const initialPrice =
-        fefoBatch?.selling_rate != null
-          ? roundHalfUp(Number(fefoBatch.selling_rate), 2)
-          : defaultVar?.selling_price != null
-            ? roundHalfUp(Number(defaultVar.selling_price), 2)
-            : baseResolved.unitPrice;
-      return [
-        ...prev,
-        {
-          localId: crypto.randomUUID(),
-          item,
-          enteredQty: '1',
-          enteredUnitId: item.base_unit_id,
-          unitOptions,
-          unitPrice: String(initialPrice),
-          discountPct: '0',
-          taxInclusive: Boolean(item.tax_inclusive),
-          batchId: fefoBatch?.id || '',
-          variantId: defaultVar?.id || '',
-          serialNo: '',
-          looseRsInput: '',
-          priceSource: baseResolved.source,
+      const defaultVar = opts?.variantIdOverride
+        ? (variantsByItem[item.id] ?? []).find((v) => v.id === opts.variantIdOverride)
+        : variantsEnabled
+          ? (variantsByItem[item.id] ?? []).find((v) => v.qty_on_hand > 0) ??
+            (variantsByItem[item.id] ?? [])[0]
+          : undefined;
+
+      let touchedLineId = '';
+
+      setLines((prev) => {
+        const matchIdx = prev.findIndex(
+          (l) =>
+            l.item.id === item.id &&
+            l.enteredUnitId === targetUnitId &&
+            (opts?.variantIdOverride ? l.variantId === opts.variantIdOverride : !defaultVar || l.variantId === defaultVar.id) &&
+            (fefoBatch ? l.batchId === fefoBatch.id : !l.batchId)
+        );
+        if (matchIdx >= 0 && opts?.rateOverride == null) {
+          touchedLineId = prev[matchIdx].localId;
+          return prev.map((row, idx) => {
+            if (idx !== matchIdx) return row;
+            const nextQty = roundHalfUp(Number(row.enteredQty || 0) + addQty, 3);
+            const resolved = resolvePriceForLine(row.item, nextQty, targetFactor);
+            return {
+              ...row,
+              enteredQty: String(nextQty),
+              unitPrice:
+                pack === 'wholesale' && !row.batchId && !row.variantId
+                  ? String(resolved.unitPrice)
+                  : row.unitPrice,
+              priceSource: resolved.source,
+            };
+          });
+        }
+
+        const unitOptions = conversionsByItem[item.id] ?? [
+          { unitId: item.base_unit_id, code: item.base_unit_code, factor: 1 },
+        ];
+        const baseResolved = resolvePriceForLine(item, addQty, targetFactor);
+        const initialPrice =
+          opts?.rateOverride != null
+            ? roundHalfUp(Number(opts.rateOverride), 2)
+            : fefoBatch?.selling_rate != null
+              ? roundHalfUp(Number(fefoBatch.selling_rate) * targetFactor, 2)
+              : defaultVar?.selling_price != null
+                ? roundHalfUp(Number(defaultVar.selling_price) * targetFactor, 2)
+                : baseResolved.unitPrice;
+        const newId = crypto.randomUUID();
+        touchedLineId = newId;
+        return [
+          ...prev,
+          {
+            localId: newId,
+            item,
+            enteredQty: String(addQty),
+            enteredUnitId: targetUnitId,
+            unitOptions,
+            unitPrice: String(initialPrice),
+            discountPct: String(opts?.discountPctOverride ?? 0),
+            taxInclusive: Boolean(item.tax_inclusive),
+            batchId: fefoBatch?.id || '',
+            variantId: defaultVar?.id || '',
+            serialNo: '',
+            looseRsInput: '',
+            priceSource: baseResolved.source,
+          },
+        ];
+      });
+
+      if (touchedLineId) flashHighlight(touchedLineId);
+      setItemSearch('');
+    },
+    [
+      batchExpiryEnabled,
+      batchesByItem,
+      billDate,
+      conversionsByItem,
+      flashHighlight,
+      pack,
+      resolvePriceForLine,
+      variantsByItem,
+      variantsEnabled,
+    ]
+  );
+
+  const filteredCatalog = useMemo(() => {
+    const q = itemSearch.trim().toLowerCase();
+    if (!q) return catalogItems.slice(0, 10);
+    return catalogItems
+      .filter(
+        (it) =>
+          it.name.toLowerCase().includes(q) ||
+          (it.sku && it.sku.toLowerCase().includes(q)) ||
+          (it.barcode && it.barcode.toLowerCase().includes(q))
+      )
+      .slice(0, 12);
+  }, [catalogItems, itemSearch]);
+
+  const handleBarcodeMatch = useCallback(
+    (rawCode: string, allowSingleFuzzy = false): boolean => {
+      const q = rawCode.trim().toLowerCase();
+      if (!q) return false;
+
+      // 1. Check exact variant barcode/SKU first
+      for (const [itemId, variants] of Object.entries(variantsByItem)) {
+        const matchedVar = variants.find(
+          (v) =>
+            (v.barcode && v.barcode.toLowerCase() === q) ||
+            (v.sku && v.sku.toLowerCase() === q)
+        );
+        if (matchedVar) {
+          const parent = catalogItems.find((it) => it.id === itemId);
+          if (parent) {
+            addItemToBill(parent, { variantIdOverride: matchedVar.id });
+            return true;
+          }
+        }
+      }
+
+      // 2. Exact item barcode or SKU
+      const exactItem = catalogItems.find(
+        (it) =>
+          (it.barcode && it.barcode.toLowerCase() === q) ||
+          (it.sku && it.sku.toLowerCase() === q)
+      );
+      if (exactItem) {
+        addItemToBill(exactItem);
+        return true;
+      }
+
+      // 3. Single search match when user pressed Enter inside search input
+      if (allowSingleFuzzy) {
+        const matches = catalogItems.filter(
+          (it) =>
+            it.name.toLowerCase().includes(q) ||
+            (it.sku && it.sku.toLowerCase().includes(q)) ||
+            (it.barcode && it.barcode.toLowerCase().includes(q))
+        );
+        if (matches.length === 1) {
+          addItemToBill(matches[0]);
+          return true;
+        }
+      }
+
+      showToast(
+        language === 'hi'
+          ? `बारकोड "${rawCode}" कैटलॉग में नहीं मिला।`
+          : `Barcode "${rawCode}" not found in active catalog.`,
+        'error'
+      );
+      return false;
+    },
+    [addItemToBill, catalogItems, language, showToast, variantsByItem]
+  );
+
+  // Global hardware USB/Bluetooth keyboard-wedge scanner listener
+  useBarcodeWedge({
+    enabled: catalogItems.length > 0 && !aiOrderOpen,
+    onScan: (code) => {
+      const ok = handleBarcodeMatch(code, false);
+      playScanBeep(ok);
+    },
+  });
+
+  const handleAiParseOrder = async () => {
+    if (!session?.access_token || !aiOrderText.trim()) return;
+    setAiParsing(true);
+    try {
+      const res = await fetch('/api/ai/parse-order-text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
         },
-      ];
-    });
-    setItemSearch('');
+        body: JSON.stringify({ text: aiOrderText.trim(), mode: 'sale' }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'Unable to parse order text.');
+      const parsed = json.parsed as {
+        matched_party_id?: string | null;
+        notes?: string | null;
+        lines?: Array<{
+          raw_name: string;
+          matched_item_id: string | null;
+          qty: number;
+          unit_code?: string | null;
+          rate_override?: number | null;
+          discount_pct?: number | null;
+        }>;
+      };
+
+      if (parsed.matched_party_id && !partyId) {
+        handlePartyChange(parsed.matched_party_id);
+      }
+      if (parsed.notes && !notes.trim()) {
+        setNotes(parsed.notes);
+      }
+
+      let addedCount = 0;
+      const unmatched: string[] = [];
+      for (const ln of parsed.lines || []) {
+        const it = ln.matched_item_id
+          ? catalogItems.find((c) => c.id === ln.matched_item_id)
+          : undefined;
+        if (it) {
+          addItemToBill(it, {
+            qtyOverride: Math.max(0.001, Number(ln.qty || 1)),
+            unitCodeOverride: ln.unit_code || null,
+            rateOverride: ln.rate_override ?? null,
+            discountPctOverride: ln.discount_pct ?? 0,
+          });
+          addedCount += 1;
+        } else {
+          unmatched.push(ln.raw_name);
+        }
+      }
+
+      if (addedCount > 0) {
+        showToast(
+          unmatched.length > 0
+            ? `Added ${addedCount} item(s). Could not match: ${unmatched.join(', ')}`
+            : `Added ${addedCount} item(s) from text.`,
+          'success'
+        );
+        setAiOrderText('');
+        if (unmatched.length === 0) setAiOrderOpen(false);
+      } else {
+        showToast(
+          `No catalog items matched (${unmatched.join(', ') || 'try fuller names'}).`,
+          'error'
+        );
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'AI order parsing failed.', 'error');
+    } finally {
+      setAiParsing(false);
+    }
   };
 
   const handleOpenSubstitutes = async (lineId: string, itemId: string) => {
@@ -695,6 +906,7 @@ export function BillFormModal({
               unitOptions,
               batchId: fefo?.id || '',
               variantId: '',
+              taxInclusive: Boolean(found.tax_inclusive),
               unitPrice: String(
                 roundHalfUp(Number(fefo?.selling_rate ?? found.selling_price), 2)
               ),
@@ -706,37 +918,6 @@ export function BillFormModal({
     setSubstitutes([]);
   };
 
-  const filteredCatalog = useMemo(() => {
-    const q = itemSearch.trim().toLowerCase();
-    if (!q) return catalogItems.slice(0, 8);
-    return catalogItems
-      .filter(
-        (it) =>
-          it.name.toLowerCase().includes(q) ||
-          (it.sku && it.sku.toLowerCase().includes(q)) ||
-          (it.barcode && it.barcode.toLowerCase().includes(q))
-      )
-      .slice(0, 10);
-  }, [catalogItems, itemSearch]);
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key !== 'Enter') return;
-    const q = itemSearch.trim().toLowerCase();
-    if (!q) return;
-    const exactMatch = catalogItems.find(
-      (it) =>
-        (it.barcode && it.barcode.toLowerCase() === q) ||
-        (it.sku && it.sku.toLowerCase() === q)
-    );
-    if (exactMatch) {
-      e.preventDefault();
-      addItemToBill(exactMatch);
-    } else if (filteredCatalog.length === 1) {
-      e.preventDefault();
-      addItemToBill(filteredCatalog[0]);
-    }
-  };
-
   const updateLine = (localId: string, patch: Partial<DraftLineRow>) => {
     setLines((prev) =>
       prev.map((row) => {
@@ -745,6 +926,24 @@ export function BillFormModal({
         if (patch.enteredUnitId && patch.enteredUnitId !== row.enteredUnitId) {
           const opt = row.unitOptions.find((u) => u.unitId === patch.enteredUnitId);
           const factor = opt?.factor ?? 1;
+          const activeBatch = nextRow.batchId
+            ? (batchesByItem[row.item.id] ?? []).find((b) => b.id === nextRow.batchId)
+            : undefined;
+          const activeVar = nextRow.variantId
+            ? (variantsByItem[row.item.id] ?? []).find((v) => v.id === nextRow.variantId)
+            : undefined;
+          if (activeBatch?.selling_rate != null) {
+            return {
+              ...nextRow,
+              unitPrice: String(roundHalfUp(Number(activeBatch.selling_rate) * factor, 2)),
+            };
+          }
+          if (activeVar?.selling_price != null) {
+            return {
+              ...nextRow,
+              unitPrice: String(roundHalfUp(Number(activeVar.selling_price) * factor, 2)),
+            };
+          }
           const resolved = resolvePriceForLine(
             row.item,
             Number(nextRow.enteredQty || 1),
@@ -771,30 +970,67 @@ export function BillFormModal({
           };
         }
         if (patch.batchId !== undefined && patch.batchId !== row.batchId) {
+          const opt = row.unitOptions.find((u) => u.unitId === nextRow.enteredUnitId);
+          const factor = opt?.factor ?? 1;
           const batch = (batchesByItem[row.item.id] ?? []).find(
             (b) => b.id === patch.batchId
           );
           if (batch?.selling_rate != null) {
             return {
               ...nextRow,
-              unitPrice: String(roundHalfUp(Number(batch.selling_rate), 2)),
+              unitPrice: String(roundHalfUp(Number(batch.selling_rate) * factor, 2)),
             };
           }
         }
         if (patch.variantId !== undefined && patch.variantId !== row.variantId) {
+          const opt = row.unitOptions.find((u) => u.unitId === nextRow.enteredUnitId);
+          const factor = opt?.factor ?? 1;
           const vr = (variantsByItem[row.item.id] ?? []).find(
             (v) => v.id === patch.variantId
           );
           if (vr?.selling_price != null) {
             return {
               ...nextRow,
-              unitPrice: String(roundHalfUp(Number(vr.selling_price), 2)),
+              unitPrice: String(roundHalfUp(Number(vr.selling_price) * factor, 2)),
             };
           }
         }
         return nextRow;
       })
     );
+  };
+
+  const setAllLinesTaxInclusive = (incl: boolean, convertRates = false) => {
+    setLines((prev) =>
+      prev.map((row) => {
+        if (row.taxInclusive === incl) return row;
+        const gst = Number(row.item.gst_rate || 0);
+        const currentPrice = Number(row.unitPrice || 0);
+        const nextPrice =
+          convertRates && gstActiveForBiz && docType !== 'bill_of_supply' && gst > 0
+            ? convertRateTaxMode(currentPrice, gst, row.taxInclusive, incl)
+            : currentPrice;
+        return {
+          ...row,
+          taxInclusive: incl,
+          unitPrice: String(nextPrice),
+        };
+      })
+    );
+  };
+
+  const toggleLineTaxModeAndOptionallyConvert = (row: DraftLineRow, convertRate: boolean) => {
+    const nextIncl = !row.taxInclusive;
+    const gst = Number(row.item.gst_rate || 0);
+    const currentPrice = Number(row.unitPrice || 0);
+    const nextPrice =
+      convertRate && gstActiveForBiz && docType !== 'bill_of_supply' && gst > 0
+        ? convertRateTaxMode(currentPrice, gst, row.taxInclusive, nextIncl)
+        : currentPrice;
+    updateLine(row.localId, {
+      taxInclusive: nextIncl,
+      unitPrice: String(nextPrice),
+    });
   };
 
   const calc = useMemo(
@@ -827,7 +1063,6 @@ export function BillFormModal({
     ]
   );
 
-  // For Walk-in Customer cash bills default paidAmount automatically to grandTotal unless user has selected a party
   const effectivePaidNumber = useMemo(() => {
     if (docType === 'quotation') return 0;
     if (!partyId) return calc.grandTotal;
@@ -836,7 +1071,6 @@ export function BillFormModal({
     return Math.min(calc.grandTotal, Math.max(0, roundHalfUp(Number(paidAmount || 0), 2)));
   }, [docType, partyId, paymentsEnabled, paidTouched, paidAmount, calc.grandTotal]);
 
-  // Role violation preview so cashier immediately sees clear message before submit
   const linePolicyViolations = useMemo(() => {
     if (canOverrideUnrestricted) return [];
     const warnings: string[] = [];
@@ -955,7 +1189,6 @@ export function BillFormModal({
           'success'
         );
         onSaved(data as BillRecord, 'draft');
-        onClose();
       } else {
         const paid =
           docType === 'quotation'
@@ -1005,7 +1238,6 @@ export function BillFormModal({
           'success'
         );
         onSaved(issued, 'issued');
-        onClose();
       }
     } catch (err) {
       setErrorMsg(
@@ -1016,245 +1248,297 @@ export function BillFormModal({
     }
   };
 
-  if (!open) return null;
+  const allInclusive = lines.length > 0 && lines.every((l) => l.taxInclusive);
+  const allExclusive = lines.length > 0 && lines.every((l) => !l.taxInclusive);
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/55 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={onClose}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={docType === 'quotation' ? t('bills.newQuotation') : t('bills.newBill')}
-        className="w-full sm:max-w-5xl max-h-[95vh] rounded-t-2xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] flex flex-col overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="px-5 py-3.5 border-b border-[var(--border)] flex items-center justify-between gap-3 shrink-0">
+    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
+      {/* Top Workspace Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-4 border-b border-[var(--border)]">
+        <div className="space-y-1">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
+          >
+            <IconArrowLeft size={16} stroke={2} />
+            <span>{t('bills.title')}</span>
+          </button>
           <div className="flex items-center gap-2.5">
-            <IconReceipt size={20} stroke={2} className="text-[var(--primary-dark)]" />
-            <h2 className="text-base sm:text-lg font-semibold">
+            <IconReceipt size={22} stroke={2} className="text-[var(--primary-dark)]" />
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
               {editingDraft
                 ? `${language === 'hi' ? 'ड्राफ्ट संपादित करें' : 'Edit Draft'} · ${t(`bills.${docType === 'tax_invoice' ? 'taxInvoice' : docType === 'bill_of_supply' ? 'billOfSupply' : 'quotation'}`)}`
                 : docType === 'quotation'
                   ? t('bills.newQuotation')
                   : t('bills.newBill')}
-            </h2>
+            </h1>
           </div>
-          <button
-            type="button"
-            aria-label={t('common.close')}
-            onClick={onClose}
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
-          >
-            <IconX size={18} stroke={2} />
-          </button>
         </div>
 
-        {/* Scrollable Composer Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
-          {errorMsg && (
-            <div className="p-3 rounded-lg border border-[var(--give)]/40 bg-[var(--give-soft)] text-xs sm:text-sm text-[var(--give)] flex items-start gap-2">
-              <IconAlertCircle size={16} stroke={2} className="shrink-0 mt-0.5" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {/* Document Type & Customer Row */}
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-            <div className="md:col-span-4">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                Document Type
-              </label>
-              <div className="grid grid-cols-3 gap-1.5">
-                {(
-                  [
-                    {
-                      id: 'tax_invoice' as const,
-                      label: t('bills.taxInvoice'),
-                      disabled: !gstActiveForBiz,
-                    },
-                    {
-                      id: 'bill_of_supply' as const,
-                      label: t('bills.billOfSupply'),
-                      disabled: false,
-                    },
-                    {
-                      id: 'quotation' as const,
-                      label: t('bills.quotation'),
-                      disabled: false,
-                    },
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    disabled={opt.disabled}
-                    onClick={() => setDocType(opt.id)}
-                    className={`h-10 px-2 rounded-lg border text-xs font-medium truncate disabled:opacity-40 ${
-                      docType === opt.id
-                        ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
-                        : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="md:col-span-4">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                {t('bills.partyLabel')}
-              </label>
-              <select
-                value={partyId}
-                onChange={(e) => handlePartyChange(e.target.value)}
-                disabled={!partiesEnabled}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+        {/* Document Type Switch + Top Quick Actions */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+            {(
+              [
+                {
+                  id: 'tax_invoice' as const,
+                  label: t('bills.taxInvoice'),
+                  disabled: !gstActiveForBiz,
+                },
+                {
+                  id: 'bill_of_supply' as const,
+                  label: t('bills.billOfSupply'),
+                  disabled: false,
+                },
+                {
+                  id: 'quotation' as const,
+                  label: t('bills.quotation'),
+                  disabled: false,
+                },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                disabled={opt.disabled}
+                onClick={() => setDocType(opt.id)}
+                className={`h-9 px-3 rounded-md text-xs font-medium whitespace-nowrap disabled:opacity-40 ${
+                  docType === opt.id
+                    ? 'bg-[var(--primary)] text-[var(--on-primary)] font-semibold'
+                    : 'text-[var(--text-muted)] hover:text-[var(--text)]'
+                }`}
               >
-                <option value="">
-                  {t('bills.walkInCustomer')} (Cash)
-                </option>
-                {parties.map((p) => (
-                  <option key={p.party_id} value={p.party_id}>
-                    {p.name}
-                    {p.phone ? ` (${p.phone})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                {t('bills.billDate')}
-              </label>
-              <input
-                type="date"
-                value={billDate}
-                onChange={(e) => setBillDate(e.target.value)}
-                className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-              />
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                {docType === 'quotation' ? t('bills.validUntil') : t('bills.dueDate')}
-              </label>
-              <input
-                type="date"
-                value={docType === 'quotation' ? validUntil : dueDate}
-                onChange={(e) =>
-                  docType === 'quotation'
-                    ? setValidUntil(e.target.value)
-                    : setDueDate(e.target.value)
-                }
-                className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-              />
-            </div>
+                {opt.label}
+              </button>
+            ))}
           </div>
 
-          {((pack === 'hardware' && partyId && partySites.length > 0) ||
-            (pack === 'service' && serviceJobs.length > 0) ||
-            (pack === 'wholesale' && selectedPartyObj)) && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs">
-              {pack === 'hardware' && partyId && partySites.length > 0 && (
-                <div>
-                  <label className="block font-medium text-[var(--text-muted)] mb-1">
-                    Contractor Delivery Site
-                  </label>
-                  <select
-                    value={siteId}
-                    onChange={(e) => setSiteId(e.target.value)}
-                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-                  >
-                    <option value="">Default party address</option>
-                    {partySites.map((st) => (
-                      <option key={st.id} value={st.id}>
-                        {st.site_name}
-                        {st.contact_phone ? ` (${st.contact_phone})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void handleSubmit('draft')}
+            className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <IconDeviceFloppy size={16} stroke={2} />
+            <span>{t('bills.saveDraft')}</span>
+          </button>
 
-              {pack === 'service' && serviceJobs.length > 0 && (
-                <div>
-                  <label className="block font-medium text-[var(--text-muted)] mb-1">
-                    Link Service Job / Work Order
-                  </label>
-                  <select
-                    value={jobId}
-                    onChange={(e) => setJobId(e.target.value)}
-                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-                  >
-                    <option value="">Standalone bill (no job)</option>
-                    {serviceJobs.map((jb) => (
-                      <option key={jb.id} value={jb.id}>
-                        {jb.job_number} — {jb.title} ({jb.status})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+          <button
+            type="button"
+            disabled={submitting || linePolicyViolations.length > 0}
+            onClick={() => void handleSubmit('issued')}
+            className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 disabled:opacity-50"
+          >
+            <IconCheck size={16} stroke={2.5} />
+            <span>
+              {submitting
+                ? t('profile.saving')
+                : docType === 'quotation'
+                  ? t('bills.issueQuotation')
+                  : t('bills.issueBill')}
+            </span>
+          </button>
+        </div>
+      </div>
 
-              {pack === 'wholesale' && selectedPartyObj && (
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-[var(--text-muted)]">B2B Price Tier:</span>
-                  <span className="font-semibold uppercase text-[var(--primary-dark)]">
-                    {(selectedPartyObj.price_tier || 'standard').replace(/_/g, ' ')}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+      {errorMsg && (
+        <div className="p-3.5 rounded-xl border border-[var(--give)]/40 bg-[var(--give-soft)] text-xs sm:text-sm text-[var(--give)] flex items-start gap-2">
+          <IconAlertCircle size={18} stroke={2} className="shrink-0 mt-0.5" />
+          <span>{errorMsg}</span>
+        </div>
+      )}
 
-          {gstActiveForBiz && docType !== 'bill_of_supply' && (
-            <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs">
-              <div className="flex items-center gap-2">
-                <label htmlFor="pos-state" className="font-medium text-[var(--text-muted)]">
-                  {t('bills.placeOfSupply')}:
+      {/* Main 2-Column Workspace */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* Left Main Area */}
+        <div className="lg:col-span-8 space-y-5">
+          {/* Customer & Dates Card */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-5">
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {t('bills.partyLabel')}
+                </label>
+                <select
+                  value={partyId}
+                  onChange={(e) => handlePartyChange(e.target.value)}
+                  disabled={!partiesEnabled}
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                >
+                  <option value="">{t('bills.walkInCustomer')} (Cash)</option>
+                  {parties.map((p) => (
+                    <option key={p.party_id} value={p.party_id}>
+                      {p.name}
+                      {p.phone ? ` (${p.phone})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {t('bills.billDate')}
                 </label>
                 <input
-                  id="pos-state"
-                  type="text"
-                  maxLength={4}
-                  value={placeOfSupply}
-                  onChange={(e) => setPlaceOfSupply(e.target.value.toUpperCase())}
-                  placeholder={business?.state_code || '27'}
-                  className="w-20 h-8 px-2 rounded border border-[var(--border)] bg-[var(--surface)] font-mono text-xs uppercase"
+                  type="date"
+                  value={billDate}
+                  onChange={(e) => setBillDate(e.target.value)}
+                  className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
                 />
               </div>
-              <span className="font-semibold text-[var(--primary-dark)]">
-                {calc.isInterstate ? t('bills.interstate') : t('bills.intrastate')}
-              </span>
-            </div>
-          )}
 
-          {/* Fast Item / Barcode Quick Adder */}
-          <div className="space-y-2">
-            <div className="relative">
-              <IconBarcode
-                size={18}
-                stroke={2}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--primary-dark)]"
-              />
-              <input
-                type="text"
-                value={itemSearch}
-                onChange={(e) => setItemSearch(e.target.value)}
-                onKeyDown={handleSearchKeyDown}
-                placeholder={t('bills.addItemLine')}
-                className="w-full h-11 pl-10 pr-10 rounded-lg border border-[var(--primary)]/50 bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
-              />
-              <IconSearch
-                size={16}
-                stroke={2}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-              />
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {docType === 'quotation' ? t('bills.validUntil') : t('bills.dueDate')}
+                </label>
+                <input
+                  type="date"
+                  value={docType === 'quotation' ? validUntil : dueDate}
+                  onChange={(e) =>
+                    docType === 'quotation'
+                      ? setValidUntil(e.target.value)
+                      : setDueDate(e.target.value)
+                  }
+                  className="w-full h-10 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm tabular-nums"
+                />
+              </div>
+
+              {gstActiveForBiz && docType !== 'bill_of_supply' && (
+                <div className="sm:col-span-2">
+                  <label
+                    htmlFor="pos-state"
+                    className="block text-xs font-medium text-[var(--text-muted)] mb-1"
+                  >
+                    State ({calc.isInterstate ? 'IGST' : 'C+SGST'})
+                  </label>
+                  <input
+                    id="pos-state"
+                    type="text"
+                    maxLength={4}
+                    value={placeOfSupply}
+                    onChange={(e) => setPlaceOfSupply(e.target.value.toUpperCase())}
+                    placeholder={business?.state_code || '27'}
+                    className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono text-sm uppercase text-center"
+                  />
+                </div>
+              )}
             </div>
+
+            {((pack === 'hardware' && partyId && partySites.length > 0) ||
+              (pack === 'service' && serviceJobs.length > 0) ||
+              (pack === 'wholesale' && selectedPartyObj)) && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[var(--border)] text-xs">
+                {pack === 'hardware' && partyId && partySites.length > 0 && (
+                  <div>
+                    <label className="block font-medium text-[var(--text-muted)] mb-1">
+                      Contractor Delivery Site
+                    </label>
+                    <select
+                      value={siteId}
+                      onChange={(e) => setSiteId(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                    >
+                      <option value="">Default party address</option>
+                      {partySites.map((st) => (
+                        <option key={st.id} value={st.id}>
+                          {st.site_name}
+                          {st.contact_phone ? ` (${st.contact_phone})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {pack === 'service' && serviceJobs.length > 0 && (
+                  <div>
+                    <label className="block font-medium text-[var(--text-muted)] mb-1">
+                      Link Service Job / Work Order
+                    </label>
+                    <select
+                      value={jobId}
+                      onChange={(e) => setJobId(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                    >
+                      <option value="">Standalone bill (no job)</option>
+                      {serviceJobs.map((jb) => (
+                        <option key={jb.id} value={jb.id}>
+                          {jb.job_number} — {jb.title} ({jb.status})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {pack === 'wholesale' && selectedPartyObj && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-[var(--text-muted)]">B2B Price Tier:</span>
+                    <span className="font-semibold uppercase text-[var(--primary-dark)]">
+                      {(selectedPartyObj.price_tier || 'standard').replace(/_/g, ' ')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* Fast Scan, Search & AI Order Input */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                {t('bills.fastAddTitle')}
+              </span>
+              <button
+                type="button"
+                onClick={() => setAiOrderOpen((v) => !v)}
+                className={`h-8 px-2.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 ${
+                  aiOrderOpen
+                    ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-muted)]'
+                }`}
+              >
+                <IconSparkles size={14} stroke={2} className="text-[var(--primary-dark)]" />
+                <span>{t('bills.aiSmartOrder')}</span>
+              </button>
+            </div>
+
+            {aiOrderOpen && (
+              <div className="p-3 rounded-lg border border-[var(--primary)]/40 bg-[var(--surface-muted)] space-y-2">
+                <p className="text-xs text-[var(--text-muted)]">
+                  {language === 'hi'
+                    ? 'व्हाट्सएप या नोट्स से ऑर्डर टेक्स्ट पेस्ट करें (जैसे: "रमेश 5 किलो चीनी, 2 बॉक्स तेल @ 1200")'
+                    : 'Paste customer order text in English, Hindi, or Hinglish (e.g., "Ramesh 5 kg sugar, 2 box oil @ 1200, 5% disc"):'}
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    value={aiOrderText}
+                    onChange={(e) => setAiOrderText(e.target.value)}
+                    placeholder="e.g., 5 kg sugar, 2 ltr mustard oil..."
+                    className="flex-1 h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                  <button
+                    type="button"
+                    disabled={aiParsing || !aiOrderText.trim()}
+                    onClick={() => void handleAiParseOrder()}
+                    className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <IconSparkles size={14} stroke={2} />
+                    <span>{aiParsing ? 'Parsing...' : 'Add Items'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <BarcodeScanBar
+              searchQuery={itemSearch}
+              onSearchChange={setItemSearch}
+              onScanSubmit={(code) => handleBarcodeMatch(code, true)}
+              placeholder={t('bills.addItemLine')}
+              scanButtonLabel={t('bills.scanCamera')}
+              scannerTitle={t('bills.scanCameraTitle')}
+              continuousCameraDefault
+            />
 
             {loadingMaster ? (
               <p className="text-xs text-[var(--text-muted)]">{t('common.loading')}</p>
@@ -1265,26 +1549,61 @@ export function BillFormModal({
                     key={it.id}
                     type="button"
                     onClick={() => addItemToBill(it)}
-                    className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs flex items-center gap-2"
+                    className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)]/60 hover:border-[var(--primary-dark)] hover:bg-[var(--surface-muted)] text-xs flex items-center gap-2"
                   >
                     <IconPlus size={14} stroke={2} className="text-[var(--primary-dark)]" />
-                    <span className="font-medium truncate max-w-[160px]">{it.name}</span>
+                    <span className="font-medium truncate max-w-[170px]">{it.name}</span>
                     <span className="text-[var(--text-muted)] tabular-nums">
-                      {formatINR(Number(it.selling_price))} · {it.qty_on_hand} {it.base_unit_code}
+                      {formatINR(Number(it.selling_price))}
+                      {it.tax_inclusive ? ' (Incl.)' : ''} · {it.qty_on_hand} {it.base_unit_code}
                     </span>
                   </button>
                 ))}
               </div>
             )}
-          </div>
+          </section>
 
-          {/* Bill Line Items */}
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          {/* Line Items Card */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+            <div className="px-4 py-3 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-2 bg-[var(--surface-muted)]/60">
+              <h2 className="text-sm font-semibold">
+                {t('bills.lineItemsTitle')} ({lines.length})
+              </h2>
+
+              {gstActiveForBiz && docType !== 'bill_of_supply' && lines.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <span className="text-[var(--text-muted)]">{t('bills.ratesTaxMode')}:</span>
+                  <button
+                    type="button"
+                    onClick={() => setAllLinesTaxInclusive(true, false)}
+                    className={`px-2 py-1 rounded border font-medium ${
+                      allInclusive
+                        ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                        : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {t('bills.allInclusive')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAllLinesTaxInclusive(false, false)}
+                    className={`px-2 py-1 rounded border font-medium ${
+                      allExclusive
+                        ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                        : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+                    }`}
+                  >
+                    {t('bills.allExclusive')}
+                  </button>
+                </div>
+              )}
+            </div>
+
             {lines.length === 0 ? (
-              <div className="p-6 text-center text-xs sm:text-sm text-[var(--text-muted)]">
+              <div className="p-10 text-center text-xs sm:text-sm text-[var(--text-muted)]">
                 {language === 'hi'
-                  ? 'ऊपर से सामान चुनें या बारकोड स्कैन करके Enter दबाएं।'
-                  : 'Click an item above or scan a barcode and press Enter to add it to this bill.'}
+                  ? 'ऊपर से सामान चुनें, कैमरा खोलें या हार्डवेयर बारकोड स्कैनर से सीधे स्कैन करें।'
+                  : 'Click an item chip, tap Camera Scan, or scan with your USB/Bluetooth barcode scanner to add lines instantly.'}
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1292,13 +1611,13 @@ export function BillFormModal({
                   <thead>
                     <tr className="border-b border-[var(--border)] bg-[var(--surface-muted)] text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
                       <th className="py-2.5 px-3 font-medium">Item</th>
-                      <th className="py-2.5 px-2 font-medium w-24">{t('bills.qty')}</th>
+                      <th className="py-2.5 px-2 font-medium text-center">{t('bills.qty')}</th>
                       <th className="py-2.5 px-2 font-medium w-24">{t('bills.unit')}</th>
-                      <th className="py-2.5 px-2 font-medium w-28">{t('bills.rate')}</th>
-                      <th className="py-2.5 px-2 font-medium w-20">{t('bills.discPct')}</th>
+                      <th className="py-2.5 px-2 font-medium w-36">{t('bills.rate')}</th>
+                      <th className="py-2.5 px-2 font-medium w-16">{t('bills.discPct')}</th>
                       <th className="py-2.5 px-2 font-medium text-right">{t('bills.gst')}</th>
                       <th className="py-2.5 px-3 font-medium text-right">{t('bills.amount')}</th>
-                      <th className="py-2.5 px-2 w-10" />
+                      <th className="py-2.5 px-2 w-9" />
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
@@ -1325,14 +1644,24 @@ export function BillFormModal({
                         Number(row.unitPrice || 0),
                         Number(row.enteredQty || 0)
                       );
+                      const stepQty = row.item.base_unit_allow_decimal ? 0.5 : 1;
+                      const currentQty = Number(row.enteredQty || 0);
+                      const isHighlighted = lastHighlightedId === row.localId;
+
                       return (
-                        <tr key={row.localId}>
-                          <td className="py-2.5 px-3 min-w-[200px]">
-                            <p className="font-medium">{row.item.name}</p>
-                            <p className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                        <tr
+                          key={row.localId}
+                          className={
+                            isHighlighted
+                              ? 'bg-[var(--primary-soft)]/55 transition-colors'
+                              : 'hover:bg-[var(--surface-muted)]/35 transition-colors'
+                          }
+                        >
+                          <td className="py-2.5 px-3 min-w-[200px] align-top">
+                            <p className="font-medium leading-snug">{row.item.name}</p>
+                            <p className="text-[11px] text-[var(--text-muted)] tabular-nums mt-0.5">
                               Stock: {row.item.qty_on_hand} {row.item.base_unit_code}
                               {row.item.hsn_code ? ` · HSN ${row.item.hsn_code}` : ''}
-                              {row.taxInclusive && calc.gstApplied ? ' · Tax Incl.' : ''}
                               {scheduleClass ? ` · Sch ${scheduleClass}` : ''}
                               {row.priceSource === 'custom_rate'
                                 ? ' · Rate Card'
@@ -1451,26 +1780,56 @@ export function BillFormModal({
                               </div>
                             )}
                           </td>
-                          <td className="py-2 px-2">
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              min="0.001"
-                              step={row.item.base_unit_allow_decimal ? '0.001' : '1'}
-                              value={row.enteredQty}
-                              onChange={(e) =>
-                                updateLine(row.localId, { enteredQty: e.target.value })
-                              }
-                              className="w-20 h-9 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-xs font-medium tabular-nums"
-                            />
+
+                          {/* Qty Stepper */}
+                          <td className="py-2.5 px-2 align-top">
+                            <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+                              <button
+                                type="button"
+                                aria-label="Decrease quantity"
+                                onClick={() => {
+                                  const next = Math.max(
+                                    row.item.base_unit_allow_decimal ? 0.001 : 1,
+                                    roundHalfUp(currentQty - stepQty, 3)
+                                  );
+                                  updateLine(row.localId, { enteredQty: String(next) });
+                                }}
+                                className="w-7 h-9 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                              >
+                                <IconMinus size={13} stroke={2.5} />
+                              </button>
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                min="0.001"
+                                step={row.item.base_unit_allow_decimal ? '0.001' : '1'}
+                                value={row.enteredQty}
+                                onChange={(e) =>
+                                  updateLine(row.localId, { enteredQty: e.target.value })
+                                }
+                                className="w-14 h-9 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Increase quantity"
+                                onClick={() => {
+                                  const next = roundHalfUp(currentQty + stepQty, 3);
+                                  updateLine(row.localId, { enteredQty: String(next) });
+                                }}
+                                className="w-7 h-9 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                              >
+                                <IconPlus size={13} stroke={2.5} />
+                              </button>
+                            </div>
                           </td>
-                          <td className="py-2 px-2">
+
+                          <td className="py-2.5 px-2 align-top">
                             <select
                               value={row.enteredUnitId}
                               onChange={(e) =>
                                 updateLine(row.localId, { enteredUnitId: e.target.value })
                               }
-                              className="w-20 h-9 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-xs"
+                              className="w-20 h-9 px-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
                             >
                               {row.unitOptions.map((u) => (
                                 <option key={u.unitId} value={u.unitId}>
@@ -1479,7 +1838,9 @@ export function BillFormModal({
                               ))}
                             </select>
                           </td>
-                          <td className="py-2 px-2">
+
+                          {/* Rate + Explicit Tax Incl./Excl. Switch & Convert */}
+                          <td className="py-2.5 px-2 align-top space-y-1">
                             <input
                               type="number"
                               inputMode="decimal"
@@ -1489,10 +1850,37 @@ export function BillFormModal({
                               onChange={(e) =>
                                 updateLine(row.localId, { unitPrice: e.target.value })
                               }
-                              className="w-24 h-9 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-xs font-medium tabular-nums"
+                              className="w-28 h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium tabular-nums text-right"
                             />
+                            {gstActiveForBiz && docType !== 'bill_of_supply' && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleLineTaxModeAndOptionallyConvert(row, false)}
+                                  title="Toggle whether entered rate includes GST"
+                                  className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${
+                                    row.taxInclusive
+                                      ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                                      : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+                                  }`}
+                                >
+                                  {row.taxInclusive ? t('bills.taxInclBadge') : t('bills.taxExclBadge')}
+                                </button>
+                                {Number(row.item.gst_rate || 0) > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleLineTaxModeAndOptionallyConvert(row, true)}
+                                    title="Switch tax mode AND recalculate rate cleanly"
+                                    className="p-0.5 rounded border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--primary-dark)]"
+                                  >
+                                    <IconArrowsExchange size={12} stroke={2} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </td>
-                          <td className="py-2 px-2">
+
+                          <td className="py-2.5 px-2 align-top">
                             <input
                               type="number"
                               inputMode="decimal"
@@ -1503,25 +1891,30 @@ export function BillFormModal({
                               onChange={(e) =>
                                 updateLine(row.localId, { discountPct: e.target.value })
                               }
-                              className="w-16 h-9 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                              className="w-16 h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums text-right"
                             />
                           </td>
-                          <td className="py-2.5 px-2 text-right tabular-nums text-xs text-[var(--text-muted)] whitespace-nowrap">
+
+                          <td className="py-2.5 px-2 text-right tabular-nums text-xs text-[var(--text-muted)] whitespace-nowrap align-top">
                             {calc.gstApplied ? (
                               <>
-                                <div>{lineCalc?.effectiveGstRate ?? 0}%</div>
-                                <div className="text-[11px]">
-                                  {formatINR(lineCalc?.taxAmount ?? 0)}
+                                <div className="font-medium text-[var(--text)]">
+                                  {lineCalc?.effectiveGstRate ?? 0}% ({formatINR(lineCalc?.taxAmount ?? 0)})
+                                </div>
+                                <div className="text-[10px]">
+                                  Base {formatINR(lineCalc?.taxableAmount ?? 0)}
                                 </div>
                               </>
                             ) : (
                               '—'
                             )}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap">
+
+                          <td className="py-2.5 px-3 text-right font-semibold tabular-nums whitespace-nowrap align-top">
                             {formatINR(lineCalc?.lineTotal ?? 0)}
                           </td>
-                          <td className="py-2 px-2 text-right">
+
+                          <td className="py-2.5 px-2 text-right align-top">
                             <button
                               type="button"
                               aria-label="Remove line"
@@ -1542,10 +1935,10 @@ export function BillFormModal({
                 </table>
               </div>
             )}
-          </div>
+          </section>
 
           {subTargetLineId && (
-            <div className="p-3.5 rounded-xl border border-[var(--primary-dark)]/40 bg-[var(--surface-muted)] space-y-2 text-xs">
+            <div className="p-4 rounded-xl border border-[var(--primary-dark)]/40 bg-[var(--surface-muted)] space-y-2 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-semibold">Same-Salt Substitutes</span>
                 <button
@@ -1642,7 +2035,7 @@ export function BillFormModal({
           )}
 
           {linePolicyViolations.length > 0 && (
-            <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+            <div className="p-3.5 rounded-xl border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-300 space-y-1">
               <p className="font-semibold">
                 {language === 'hi'
                   ? 'भूमिका सीमा (Owner या Manager अनुमति आवश्यक):'
@@ -1654,252 +2047,269 @@ export function BillFormModal({
             </div>
           )}
 
-          {/* Totals, Charges, Notes & Instant Payment */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <div className="lg:col-span-7 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                    {t('bills.extraCharges')} (₹)
-                  </label>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="0.01"
-                    value={extraCharges}
-                    onChange={(e) => setExtraCharges(e.target.value)}
-                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                  />
-                </div>
-                <label className="flex items-center gap-2 pt-5 text-sm font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={autoRoundOff}
-                    onChange={(e) => setAutoRoundOff(e.target.checked)}
-                    className="w-4 h-4 accent-[var(--primary-dark)]"
-                  />
-                  <span>Auto Round-Off</span>
+          {/* Extra Charges & Notes */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {t('bills.extraCharges')} (₹)
                 </label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={extraCharges}
+                  onChange={(e) => setExtraCharges(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                />
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                    {t('parties.notes')}
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Order or delivery note..."
-                    className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                    Invoice Terms
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={terms}
-                    onChange={(e) => setTerms(e.target.value)}
-                    className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm"
-                  />
-                </div>
-              </div>
+              <label className="flex items-center gap-2 pt-5 text-sm font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoRoundOff}
+                  onChange={(e) => setAutoRoundOff(e.target.checked)}
+                  className="w-4 h-4 accent-[var(--primary-dark)]"
+                />
+                <span>Auto Round-Off</span>
+              </label>
             </div>
 
-            <div className="lg:col-span-5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-4 space-y-3">
-              <dl className="space-y-1.5 text-xs sm:text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-[var(--text-muted)]">{t('bills.taxableSubtotal')}</dt>
-                  <dd className="font-medium tabular-nums">
-                    {formatINR(calc.subtotalTaxable)}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  {t('parties.notes')}
+                </label>
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Order or delivery note..."
+                  className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                  Invoice Terms
+                </label>
+                <textarea
+                  rows={2}
+                  value={terms}
+                  onChange={(e) => setTerms(e.target.value)}
+                  className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm"
+                />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* Right Sticky Checkout Rail */}
+        <aside className="lg:col-span-4 lg:sticky lg:top-6 space-y-4">
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+              <div>
+                <p className="text-xs text-[var(--text-muted)]">Billing Summary</p>
+                <p className="text-sm font-semibold truncate max-w-[220px]">
+                  {selectedPartyObj ? selectedPartyObj.name : `${t('bills.walkInCustomer')} (Cash)`}
+                </p>
+              </div>
+              {gstActiveForBiz && docType !== 'bill_of_supply' && (
+                <span className="text-[11px] font-semibold text-[var(--primary-dark)]">
+                  {calc.isInterstate ? 'IGST' : 'CGST+SGST'}
+                </span>
+              )}
+            </div>
+
+            <dl className="space-y-2 text-xs sm:text-sm">
+              <div className="flex justify-between">
+                <dt className="text-[var(--text-muted)]">{t('bills.taxableSubtotal')}</dt>
+                <dd className="font-medium tabular-nums">
+                  {formatINR(calc.subtotalTaxable)}
+                </dd>
+              </div>
+              {calc.discountTotal > 0 && (
+                <div className="flex justify-between text-[var(--receive-text)]">
+                  <dt>{t('bills.discountTotal')}</dt>
+                  <dd className="tabular-nums">-{formatINR(calc.discountTotal)}</dd>
+                </div>
+              )}
+              {calc.gstApplied && !calc.isInterstate && (
+                <>
+                  <div className="flex justify-between text-[var(--text-muted)]">
+                    <dt>CGST</dt>
+                    <dd className="tabular-nums">{formatINR(calc.cgstTotal)}</dd>
+                  </div>
+                  <div className="flex justify-between text-[var(--text-muted)]">
+                    <dt>SGST</dt>
+                    <dd className="tabular-nums">{formatINR(calc.sgstTotal)}</dd>
+                  </div>
+                </>
+              )}
+              {calc.gstApplied && calc.isInterstate && (
+                <div className="flex justify-between text-[var(--text-muted)]">
+                  <dt>IGST</dt>
+                  <dd className="tabular-nums">{formatINR(calc.igstTotal)}</dd>
+                </div>
+              )}
+              {calc.extraCharges > 0 && (
+                <div className="flex justify-between text-[var(--text-muted)]">
+                  <dt>{t('bills.extraCharges')}</dt>
+                  <dd className="tabular-nums">{formatINR(calc.extraCharges)}</dd>
+                </div>
+              )}
+              {calc.roundOff !== 0 && (
+                <div className="flex justify-between text-[var(--text-muted)]">
+                  <dt>{t('bills.roundOff')}</dt>
+                  <dd className="tabular-nums">
+                    {calc.roundOff > 0 ? `+${calc.roundOff.toFixed(2)}` : calc.roundOff.toFixed(2)}
                   </dd>
                 </div>
-                {calc.discountTotal > 0 && (
-                  <div className="flex justify-between text-[var(--receive-text)]">
-                    <dt>{t('bills.discountTotal')}</dt>
-                    <dd className="tabular-nums">-{formatINR(calc.discountTotal)}</dd>
-                  </div>
-                )}
-                {calc.gstApplied && !calc.isInterstate && (
-                  <>
-                    <div className="flex justify-between text-[var(--text-muted)]">
-                      <dt>CGST</dt>
-                      <dd className="tabular-nums">{formatINR(calc.cgstTotal)}</dd>
-                    </div>
-                    <div className="flex justify-between text-[var(--text-muted)]">
-                      <dt>SGST</dt>
-                      <dd className="tabular-nums">{formatINR(calc.sgstTotal)}</dd>
-                    </div>
-                  </>
-                )}
-                {calc.gstApplied && calc.isInterstate && (
-                  <div className="flex justify-between text-[var(--text-muted)]">
-                    <dt>IGST</dt>
-                    <dd className="tabular-nums">{formatINR(calc.igstTotal)}</dd>
-                  </div>
-                )}
-                {calc.extraCharges > 0 && (
-                  <div className="flex justify-between text-[var(--text-muted)]">
-                    <dt>{t('bills.extraCharges')}</dt>
-                    <dd className="tabular-nums">{formatINR(calc.extraCharges)}</dd>
-                  </div>
-                )}
-                {calc.roundOff !== 0 && (
-                  <div className="flex justify-between text-[var(--text-muted)]">
-                    <dt>{t('bills.roundOff')}</dt>
-                    <dd className="tabular-nums">
-                      {calc.roundOff > 0 ? `+${calc.roundOff.toFixed(2)}` : calc.roundOff.toFixed(2)}
-                    </dd>
-                  </div>
-                )}
-                <div className="pt-2 border-t border-[var(--border)] flex justify-between text-base font-semibold">
-                  <dt>{t('bills.grandTotal')}</dt>
-                  <dd className="tabular-nums">{formatINR(calc.grandTotal)}</dd>
-                </div>
-              </dl>
-
-              {pack === 'kirana' && totalMrpSavings > 0 && (
-                <p className="text-xs font-medium text-[var(--receive-text)] tabular-nums">
-                  Customer MRP Savings: {formatINR(totalMrpSavings)}
-                </p>
               )}
+              <div className="pt-2.5 border-t border-[var(--border)] flex justify-between items-baseline text-lg font-bold">
+                <dt>{t('bills.grandTotal')}</dt>
+                <dd className="tabular-nums">{formatINR(calc.grandTotal)}</dd>
+              </div>
+            </dl>
 
-              <p className="text-[11px] text-[var(--text-muted)] leading-snug">
-                {amountInWordsINR(calc.grandTotal)}
+            {pack === 'kirana' && totalMrpSavings > 0 && (
+              <p className="text-xs font-medium text-[var(--receive-text)] tabular-nums">
+                Customer MRP Savings: {formatINR(totalMrpSavings)}
               </p>
+            )}
 
-              {/* Payment Split for Invoices */}
-              {docType !== 'quotation' && (
-                <div className="pt-3 border-t border-[var(--border)] space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold">{t('bills.paidNow')}</span>
-                    {partyId && paymentsEnabled && (
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaidTouched(true);
-                            setPaidAmount(String(calc.grandTotal));
-                          }}
-                          className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] font-medium"
-                        >
-                          Full Cash/UPI
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPaidTouched(true);
-                            setPaidAmount('0');
-                          }}
-                          className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] font-medium"
-                        >
-                          Full Credit (Khata)
-                        </button>
-                      </div>
-                    )}
-                  </div>
+            <p className="text-[11px] text-[var(--text-muted)] leading-snug">
+              {amountInWordsINR(calc.grandTotal)}
+            </p>
 
-                  {!partyId ? (
-                    <p className="text-xs text-[var(--text-muted)]">
-                      {language === 'hi'
-                        ? 'वॉक-इन नकद बिल के लिए पूरी राशि अभी प्राप्त मानी जाएगी।'
-                        : 'Walk-in cash bill settles the full amount immediately. Select a Party for partial/credit Khata.'}
-                    </p>
-                  ) : !paymentsEnabled ? (
-                    <p className="text-xs text-[var(--text-muted)]">
-                      {t('bills.partyPayModuleOff')}
-                    </p>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        max={calc.grandTotal}
-                        step="0.01"
-                        value={paidTouched ? paidAmount : String(calc.grandTotal)}
-                        onChange={(e) => {
+            {/* Payment Collection */}
+            {docType !== 'quotation' && (
+              <div className="pt-3 border-t border-[var(--border)] space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">{t('bills.paidNow')}</span>
+                  {partyId && paymentsEnabled && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
                           setPaidTouched(true);
-                          setPaidAmount(e.target.value);
+                          setPaidAmount(String(calc.grandTotal));
                         }}
-                        className="h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold tabular-nums"
-                      />
-                      <select
-                        value={paymentMode}
-                        onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
-                        className="h-10 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium"
+                        className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-muted)] text-[11px] font-medium"
                       >
-                        {PAYMENT_MODES.map((m) => (
-                          <option key={m} value={m}>
-                            {t(`payments.modes.${m}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {effectivePaidNumber > 0 && (
-                    <input
-                      type="text"
-                      value={paymentReference}
-                      onChange={(e) => setPaymentReference(e.target.value)}
-                      placeholder={t('payments.referenceNo')}
-                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-                    />
-                  )}
-
-                  {partyId && (
-                    <div className="flex justify-between text-xs font-medium">
-                      <span className="text-[var(--text-muted)]">{t('bills.balanceDue')}</span>
-                      <span className="tabular-nums text-[var(--receive-text)]">
-                        {formatINR(Math.max(0, roundHalfUp(calc.grandTotal - effectivePaidNumber, 2)))}
-                      </span>
+                        Full Paid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaidTouched(true);
+                          setPaidAmount('0');
+                        }}
+                        className="px-2 py-1 rounded border border-[var(--border)] bg-[var(--surface-muted)] text-[11px] font-medium"
+                      >
+                        Credit (Khata)
+                      </button>
                     </div>
                   )}
                 </div>
-              )}
+
+                {!partyId ? (
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {language === 'hi'
+                      ? 'वॉक-इन नकद बिल के लिए पूरी राशि अभी प्राप्त मानी जाएगी।'
+                      : 'Walk-in cash bill settles full amount immediately. Choose a Party for partial/credit Khata.'}
+                  </p>
+                ) : !paymentsEnabled ? (
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {t('bills.partyPayModuleOff')}
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      max={calc.grandTotal}
+                      step="0.01"
+                      value={paidTouched ? paidAmount : String(calc.grandTotal)}
+                      onChange={(e) => {
+                        setPaidTouched(true);
+                        setPaidAmount(e.target.value);
+                      }}
+                      className="h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold tabular-nums text-right"
+                    />
+                    <select
+                      value={paymentMode}
+                      onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
+                      className="h-10 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium"
+                    >
+                      {PAYMENT_MODES.map((m) => (
+                        <option key={m} value={m}>
+                          {t(`payments.modes.${m}`)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {effectivePaidNumber > 0 && (
+                  <input
+                    type="text"
+                    value={paymentReference}
+                    onChange={(e) => setPaymentReference(e.target.value)}
+                    placeholder={t('payments.referenceNo')}
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                  />
+                )}
+
+                {partyId && (
+                  <div className="flex justify-between text-xs font-medium pt-0.5">
+                    <span className="text-[var(--text-muted)]">{t('bills.balanceDue')}</span>
+                    <span className="tabular-nums text-[var(--receive-text)]">
+                      {formatINR(Math.max(0, roundHalfUp(calc.grandTotal - effectivePaidNumber, 2)))}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="pt-2 space-y-2">
+              <button
+                type="button"
+                disabled={submitting || linePolicyViolations.length > 0}
+                onClick={() => void handleSubmit('issued')}
+                className="w-full h-11 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center justify-center gap-2 hover:opacity-95 disabled:opacity-50"
+              >
+                <IconCheck size={17} stroke={2.5} />
+                <span>
+                  {submitting
+                    ? t('profile.saving')
+                    : docType === 'quotation'
+                      ? t('bills.issueQuotation')
+                      : `${t('bills.issueBill')} (${formatINR(calc.grandTotal)})`}
+                </span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void handleSubmit('draft')}
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <IconDeviceFloppy size={15} stroke={2} />
+                  <span>{t('bills.saveDraft')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="h-10 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* Footer Actions */}
-        <div className="px-5 py-3.5 border-t border-[var(--border)] bg-[var(--surface)] flex flex-wrap items-center justify-end gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-11 px-4 rounded-lg border border-[var(--border)] text-sm font-medium"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => handleSubmit('draft')}
-            className="h-11 px-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
-          >
-            <IconDeviceFloppy size={17} stroke={2} />
-            <span>{t('bills.saveDraft')}</span>
-          </button>
-          <button
-            type="button"
-            disabled={submitting || linePolicyViolations.length > 0}
-            onClick={() => handleSubmit('issued')}
-            className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 disabled:opacity-50"
-          >
-            <IconCheck size={17} stroke={2.5} />
-            <span>
-              {submitting
-                ? t('profile.saving')
-                : docType === 'quotation'
-                  ? t('bills.issueQuotation')
-                  : t('bills.issueBill')}
-            </span>
-          </button>
-        </div>
+        </aside>
       </div>
     </div>
   );

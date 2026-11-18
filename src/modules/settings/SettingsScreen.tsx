@@ -2942,7 +2942,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                                   model: e.target.value,
                                 }))
                               }
-                              placeholder="gemini-2.5-flash"
+                              placeholder="gemini-4-hydrogen"
                               className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
                             />
                           </div>

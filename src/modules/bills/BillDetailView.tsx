@@ -24,7 +24,6 @@ import type {
   PartyBalanceRecord,
 } from '../../types/bizone';
 import { PaymentModal } from '../parties/PaymentModal';
-import { BillFormModal } from './BillFormModal';
 import { BillPrintPreviewModal } from './BillPrintPreviewModal';
 import { SalesReturnModal } from './SalesReturnModal';
 
@@ -32,6 +31,7 @@ interface BillDetailViewProps {
   billId: string;
   onBack: () => void;
   onOpenBill: (billId: string) => void;
+  onEditDraft?: (draft: BillRecord) => void;
   onOpenParty?: (partyId: string) => void;
   onUpdated?: () => void;
 }
@@ -40,6 +40,7 @@ export function BillDetailView({
   billId,
   onBack,
   onOpenBill,
+  onEditDraft,
   onOpenParty,
   onUpdated,
 }: BillDetailViewProps) {
@@ -54,7 +55,6 @@ export function BillDetailView({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [editDraftOpen, setEditDraftOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -355,7 +355,7 @@ export function BillDetailView({
             <>
               <button
                 type="button"
-                onClick={() => setEditDraftOpen(true)}
+                onClick={() => onEditDraft?.(bill)}
                 className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5"
               >
                 <IconEdit size={16} stroke={2} />
@@ -678,20 +678,6 @@ export function BillDetailView({
       )}
 
       {/* Modals */}
-      <BillFormModal
-        open={editDraftOpen}
-        editingDraft={bill}
-        onClose={() => setEditDraftOpen(false)}
-        onSaved={(saved) => {
-          onUpdated?.();
-          if (saved.id === bill.id) {
-            void loadDetail();
-          } else {
-            onOpenBill(saved.id);
-          }
-        }}
-      />
-
       <BillPrintPreviewModal
         open={printOpen}
         bill={bill}

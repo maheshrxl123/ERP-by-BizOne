@@ -1442,6 +1442,7 @@ export interface OfflineBillQueueItem {
     entered_unit_id: string;
     unit_price: number;
     discount_pct: number;
+    tax_inclusive?: boolean;
   }>;
   paid_amount: number;
   payment_mode: PaymentMode;

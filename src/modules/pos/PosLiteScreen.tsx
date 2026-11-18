@@ -1,5 +1,6 @@
 import {
   IconBuildingBank,
+  IconCamera,
   IconCheck,
   IconClock,
   IconPlus,
@@ -12,8 +13,10 @@ import {
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { BarcodeScannerModal } from '../../components/barcode/BarcodeScannerModal';
+import { playScanBeep, useBarcodeWedge } from '../../components/barcode/useBarcodeWedge';
 import { formatDateTime, formatINR, todayLocalIso } from '../../core/format';
-import { roundHalfUp } from '../../core/money';
+import { calculateBillPreview, roundHalfUp } from '../../core/money';
 import { roundQty } from '../../core/units';
 import {
   enqueueOfflineBill,
@@ -23,7 +26,6 @@ import {
   syncOfflineQueue,
 } from '../../core/offlineQueue';
 import { supabase } from '../../core/supabase';
-import { defaultTaxEngine } from '../../core/taxEngine';
 import type {
   ItemCatalogRecord,
   OfflineBillQueueItem,
@@ -37,6 +39,7 @@ interface CartLine {
   qty: number;
   unitPrice: number;
   discountPct: number;
+  taxInclusive: boolean;
 }
 
 interface HeldBillRow {
@@ -45,7 +48,13 @@ interface HeldBillRow {
   payload: {
     partyId: string | null;
     partyName: string;
-    lines: Array<{ itemId: string; qty: number; unitPrice: number; discountPct: number }>;
+    lines: Array<{
+      itemId: string;
+      qty: number;
+      unitPrice: number;
+      discountPct: number;
+      taxInclusive?: boolean;
+    }>;
     mode: PaymentMode;
     splitNote: string;
   };
@@ -78,6 +87,7 @@ export function PosLiteScreen() {
   const [holdLabel, setHoldLabel] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [cameraScannerOpen, setCameraScannerOpen] = useState(false);
 
   // Register state
   const [openingCashInput, setOpeningCashInput] = useState('0');
@@ -147,7 +157,7 @@ export function PosLiteScreen() {
       .slice(0, 12);
   }, [items, search]);
 
-  const addItem = (it: ItemCatalogRecord) => {
+  const addItem = useCallback((it: ItemCatalogRecord) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.item.id === it.id);
       if (existing) {
@@ -160,35 +170,64 @@ export function PosLiteScreen() {
           qty: 1,
           unitPrice: Number(it.selling_price || 0),
           discountPct: 0,
+          taxInclusive: Boolean(it.tax_inclusive),
         },
       ];
     });
-  };
+  }, []);
+
+  const handleBarcodeScan = useCallback(
+    (rawCode: string) => {
+      const needle = rawCode.trim().toLowerCase();
+      if (!needle) return;
+      const match = items.find(
+        (it) =>
+          (it.barcode && it.barcode.trim().toLowerCase() === needle) ||
+          (it.sku && it.sku.trim().toLowerCase() === needle)
+      );
+      if (match) {
+        addItem(match);
+        playScanBeep(true);
+        setSearch('');
+        showToast(`Added ${match.name}`, 'success');
+      } else {
+        playScanBeep(false);
+        showToast(`No item found for barcode "${rawCode.trim()}".`, 'error');
+      }
+    },
+    [items, addItem, showToast]
+  );
+
+  useBarcodeWedge({
+    enabled: !cameraScannerOpen,
+    onScan: handleBarcodeScan,
+  });
 
   const totals = useMemo(() => {
-    let taxable = 0;
-    let tax = 0;
-    let rawTotal = 0;
-    for (const c of cart) {
-      const res = defaultTaxEngine.computeLineTax({
-        itemId: c.item.id,
-        itemName: c.item.name,
-        hsnCode: c.item.hsn_code,
-        qty: c.qty,
+    const calc = calculateBillPreview({
+      gstRegistered: Boolean(business?.gst_registered),
+      taxModuleEnabled: isModuleEnabled('tax'),
+      docType: taxEnabled ? 'tax_invoice' : 'bill_of_supply',
+      businessStateCode: business?.state_code || null,
+      placeOfSupplyStateCode: business?.state_code || null,
+      isInterstate: false,
+      extraCharges: 0,
+      autoRoundOff: true,
+      lines: cart.map((c) => ({
+        enteredQty: c.qty,
         unitPrice: c.unitPrice,
         discountPct: c.discountPct,
         gstRate: Number(c.item.gst_rate || 0),
-        taxInclusive: Boolean(c.item.tax_inclusive),
-        isInterstate: false,
-        gstRegistered: taxEnabled,
-      });
-      taxable = roundHalfUp(taxable + res.taxableAmount, 2);
-      tax = roundHalfUp(tax + res.taxAmount, 2);
-      rawTotal = roundHalfUp(rawTotal + res.lineTotal, 2);
-    }
-    const grandTotal = roundHalfUp(rawTotal, 0);
-    return { taxable, tax, grandTotal };
-  }, [cart, taxEnabled]);
+        taxInclusive: c.taxInclusive,
+      })),
+    });
+    return {
+      taxable: calc.subtotalTaxable,
+      tax: calc.taxTotal,
+      roundOff: calc.roundOff,
+      grandTotal: calc.grandTotal,
+    };
+  }, [cart, taxEnabled, business?.gst_registered, business?.state_code, isModuleEnabled]);
 
   const selectedParty = parties.find((p) => p.party_id === partyId) || null;
   const openRegister = registers.find((r) => r.status === 'open') || null;
@@ -206,6 +245,7 @@ export function PosLiteScreen() {
           qty: c.qty,
           unitPrice: c.unitPrice,
           discountPct: c.discountPct,
+          taxInclusive: c.taxInclusive,
         })),
         mode: paymentMode,
         splitNote:
@@ -233,6 +273,7 @@ export function PosLiteScreen() {
           qty: ln.qty,
           unitPrice: ln.unitPrice,
           discountPct: ln.discountPct,
+          taxInclusive: ln.taxInclusive ?? Boolean(it.tax_inclusive),
         });
       }
     }
@@ -278,6 +319,7 @@ export function PosLiteScreen() {
       entered_unit_id: c.item.base_unit_id,
       unit_price: c.unitPrice,
       discount_pct: c.discountPct,
+      tax_inclusive: c.taxInclusive,
     }));
 
     if (!isOnline || queueOfflineMode) {
@@ -293,6 +335,7 @@ export function PosLiteScreen() {
           entered_unit_id: c.item.base_unit_id,
           unit_price: c.unitPrice,
           discount_pct: c.discountPct,
+          tax_inclusive: c.taxInclusive,
         })),
         paid_amount: totals.grandTotal,
         payment_mode: paymentMode,
@@ -453,19 +496,55 @@ export function PosLiteScreen() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left: Item Picker */}
         <section className="lg:col-span-7 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-4">
-          <div className="relative">
-            <IconSearch
-              size={16}
-              stroke={2}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
-            />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Scan barcode or search item name / SKU..."
-              className="w-full h-11 pl-9 pr-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <IconSearch
+                size={16}
+                stroke={2}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]"
+              />
+              <input
+                type="text"
+                value={search}
+                data-barcode-input="true"
+                onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && search.trim()) {
+                    e.preventDefault();
+                    const q = search.trim().toLowerCase();
+                    const exact = items.find(
+                      (it) =>
+                        (it.barcode && it.barcode.trim().toLowerCase() === q) ||
+                        (it.sku && it.sku.trim().toLowerCase() === q)
+                    );
+                    if (exact) {
+                      addItem(exact);
+                      playScanBeep(true);
+                      setSearch('');
+                      showToast(`Added ${exact.name}`, 'success');
+                    } else if (filteredItems.length === 1) {
+                      addItem(filteredItems[0]);
+                      playScanBeep(true);
+                      setSearch('');
+                    } else {
+                      playScanBeep(false);
+                      showToast(`No exact barcode/SKU match for "${search.trim()}"`, 'error');
+                    }
+                  }
+                }}
+                placeholder="Scan barcode or search item name / SKU..."
+                className="w-full h-11 pl-9 pr-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setCameraScannerOpen(true)}
+              className="h-11 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] hover:bg-[var(--primary-soft)] text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              title="Scan barcode via camera"
+            >
+              <IconCamera size={16} stroke={2} className="text-[var(--primary-dark)]" />
+              <span>Scan</span>
+            </button>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
@@ -529,8 +608,28 @@ export function PosLiteScreen() {
                 <div key={c.item.id} className="py-2.5 flex items-center justify-between gap-2 text-sm">
                   <div className="min-w-0 flex-1">
                     <div className="font-medium truncate">{c.item.name}</div>
-                    <div className="text-xs text-[var(--text-muted)] tabular-nums">
-                      {formatINR(c.unitPrice)} × {c.qty}
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)] tabular-nums">
+                      <span>
+                        {formatINR(c.unitPrice)} × {c.qty}
+                      </span>
+                      {taxEnabled && Number(c.item.gst_rate || 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCart((prev) =>
+                              prev.map((x) =>
+                                x.item.id === c.item.id
+                                  ? { ...x, taxInclusive: !x.taxInclusive }
+                                  : x
+                              )
+                            )
+                          }
+                          className="text-[11px] font-medium px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:border-[var(--primary-dark)]"
+                          title="Toggle rate tax basis between Inclusive and Exclusive GST"
+                        >
+                          {c.taxInclusive ? 'Incl. GST' : `+ ${c.item.gst_rate}% GST`}
+                        </button>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -575,6 +674,14 @@ export function PosLiteScreen() {
                 {formatINR(totals.taxable)} + {formatINR(totals.tax)}
               </span>
             </div>
+            {totals.roundOff !== 0 && (
+              <div className="flex justify-between text-xs text-[var(--text-muted)] tabular-nums">
+                <span>Round-off</span>
+                <span>
+                  {totals.roundOff > 0 ? `+${formatINR(totals.roundOff)}` : formatINR(totals.roundOff)}
+                </span>
+              </div>
+            )}
             <div className="flex justify-between text-base font-semibold tabular-nums">
               <span>Grand Total</span>
               <span>{formatINR(totals.grandTotal)}</span>
@@ -785,6 +892,14 @@ export function PosLiteScreen() {
           )}
         </section>
       </div>
+
+      <BarcodeScannerModal
+        open={cameraScannerOpen}
+        onClose={() => setCameraScannerOpen(false)}
+        onDetected={handleBarcodeScan}
+        title="Scan POS Item Barcode"
+        continuousDefault={true}
+      />
     </div>
   );
 }

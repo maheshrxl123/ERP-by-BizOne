@@ -349,6 +349,16 @@
     "refundNow": "Immediate Cash / UPI Refund",
     "payViaUpi": "Scan & Pay via UPI",
     "partyPayModuleOff": "Payments module is disabled — party bills post to Khata credit (₹0 paid now).",
+    "fastAddTitle": "Fast Item Entry (Search or Barcode)",
+    "aiSmartOrder": "AI Text Order",
+    "scanCamera": "Scan",
+    "scanCameraTitle": "Scan Item Barcode / QR",
+    "lineItemsTitle": "Bill Items",
+    "ratesTaxMode": "Rates Mode:",
+    "allInclusive": "All Incl. GST",
+    "allExclusive": "All Excl. (+GST)",
+    "taxInclBadge": "Incl. GST",
+    "taxExclBadge": "+ GST (Excl.)",
     "statuses": {
       "draft": "Draft",
       "issued": "Issued",
@@ -405,7 +415,14 @@
     "postPurchase": "Post Purchase",
     "saveDraft": "Save Draft",
     "purchaseReturn": "Purchase Return",
-    "voidPurchase": "Void Purchase"
+    "voidPurchase": "Void Purchase",
+    "aiScanTitle": "AI Purchase Bill Scanner",
+    "aiScanDesc": "Upload or snap a supplier invoice photo/PDF to auto-fill supplier details, invoice #, and items.",
+    "aiScanning": "Scanning Invoice...",
+    "uploadInvoiceScan": "Upload Bill PDF / Image",
+    "snapInvoicePhoto": "Take Bill Photo",
+    "applyScanned": "Apply Scanned Lines",
+    "rateTaxBasis": "Supplier Cost Basis:"
   },
   "expenses": {
     "title": "Business Expenses",

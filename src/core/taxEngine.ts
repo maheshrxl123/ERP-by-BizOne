@@ -86,7 +86,7 @@ export class IndiaGstTaxEngine implements TaxEngine {
     const effRate = input.gstRegistered ? Math.max(0, Number(input.gstRate || 0)) : 0;
 
     const grossAmount = round2(qty * rate);
-    const discountAmount = round2((grossAmount * discPct) / 100);
+    const discountAmount = round2((round2(grossAmount * 100) * discPct) / 10000);
     const netAmount = round2(grossAmount - discountAmount);
 
     let taxableAmount = netAmount;
@@ -94,10 +94,10 @@ export class IndiaGstTaxEngine implements TaxEngine {
 
     if (effRate > 0) {
       if (input.taxInclusive) {
-        taxableAmount = round2((netAmount * 100) / (100 + effRate));
+        taxableAmount = round2(round2(netAmount * 100) / (100 + effRate));
         taxAmount = round2(netAmount - taxableAmount);
       } else {
-        taxAmount = round2((taxableAmount * effRate) / 100);
+        taxAmount = round2((round2(taxableAmount * 100) * effRate) / 10000);
       }
     }
 

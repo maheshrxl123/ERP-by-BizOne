@@ -10,7 +10,7 @@ import { formatDate, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type { PurchaseBillRecord, PurchaseSummary } from '../../types/bizone';
 import { PurchaseDetailModal } from './PurchaseDetailModal';
-import { PurchaseFormModal } from './PurchaseFormModal';
+import { NewPurchaseScreen } from './NewPurchaseScreen';
 
 interface PurchasesScreenProps {
   initialAction?: 'new-purchase' | null;
@@ -115,6 +115,23 @@ export function PurchasesScreen({
     }
     return 'bg-[var(--give-soft)] text-[var(--give)]';
   };
+
+  if (showFormModal) {
+    return (
+      <NewPurchaseScreen
+        editingDraft={editingDraft}
+        onCancel={() => {
+          setShowFormModal(false);
+          setEditingDraft(null);
+        }}
+        onSaved={() => {
+          setShowFormModal(false);
+          setEditingDraft(null);
+          void loadData();
+        }}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
@@ -280,16 +297,6 @@ export function PurchasesScreen({
           </table>
         </div>
       )}
-
-      <PurchaseFormModal
-        open={showFormModal}
-        editingDraft={editingDraft}
-        onClose={() => {
-          setShowFormModal(false);
-          setEditingDraft(null);
-        }}
-        onSaved={() => void loadData()}
-      />
 
       <PurchaseDetailModal
         purchase={selectedPurchase}

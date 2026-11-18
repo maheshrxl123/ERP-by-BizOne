@@ -12,7 +12,7 @@ import { formatDate, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type { BillRecord, BillingSummary } from '../../types/bizone';
 import { BillDetailView } from './BillDetailView';
-import { BillFormModal } from './BillFormModal';
+import { NewBillScreen } from './NewBillScreen';
 
 export type BillFilterTab =
   | 'all'
@@ -52,6 +52,7 @@ export function BillsScreen({
   );
 
   const [formOpen, setFormOpen] = useState(false);
+  const [editingDraft, setEditingDraft] = useState<BillRecord | null>(null);
   const [formDocType, setFormDocType] = useState<
     'tax_invoice' | 'bill_of_supply' | 'quotation'
   >('tax_invoice');
@@ -64,6 +65,7 @@ export function BillsScreen({
   useEffect(() => {
     if (!initialAction) return;
     setSelectedBillId(null);
+    setEditingDraft(null);
     if (initialAction === 'new-quotation') {
       setFormDocType('quotation');
     } else {
@@ -139,12 +141,37 @@ export function BillsScreen({
     });
   }, [bills, filterTab, search]);
 
+  if (formOpen) {
+    return (
+      <NewBillScreen
+        editingDraft={editingDraft}
+        defaultDocType={formDocType}
+        defaultPartyId={formPartyId}
+        onCancel={() => {
+          setFormOpen(false);
+          setEditingDraft(null);
+        }}
+        onSaved={(saved) => {
+          setFormOpen(false);
+          setEditingDraft(null);
+          void loadBills();
+          setSelectedBillId(saved.id);
+        }}
+      />
+    );
+  }
+
   if (selectedBillId) {
     return (
       <BillDetailView
         billId={selectedBillId}
         onBack={() => setSelectedBillId(null)}
         onOpenBill={(id) => setSelectedBillId(id)}
+        onEditDraft={(draft) => {
+          setEditingDraft(draft);
+          setSelectedBillId(null);
+          setFormOpen(true);
+        }}
         onOpenParty={onOpenParty}
         onUpdated={() => void loadBills()}
       />
@@ -168,6 +195,7 @@ export function BillsScreen({
           <button
             type="button"
             onClick={() => {
+              setEditingDraft(null);
               setFormDocType('quotation');
               setFormPartyId(null);
               setFormOpen(true);
@@ -181,6 +209,7 @@ export function BillsScreen({
           <button
             type="button"
             onClick={() => {
+              setEditingDraft(null);
               setFormDocType(business?.gst_registered ? 'tax_invoice' : 'bill_of_supply');
               setFormPartyId(null);
               setFormOpen(true);
@@ -423,17 +452,6 @@ export function BillsScreen({
           </>
         )}
       </section>
-
-      <BillFormModal
-        open={formOpen}
-        defaultDocType={formDocType}
-        defaultPartyId={formPartyId}
-        onClose={() => setFormOpen(false)}
-        onSaved={(saved) => {
-          void loadBills();
-          setSelectedBillId(saved.id);
-        }}
-      />
     </div>
   );
 }

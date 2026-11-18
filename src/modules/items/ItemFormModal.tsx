@@ -1,18 +1,24 @@
 import {
+  IconArrowsExchange,
+  IconCamera,
   IconChevronDown,
   IconChevronUp,
   IconLoader2,
   IconPlus,
+  IconSparkles,
   IconTrash,
   IconWand,
   IconX,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { BarcodeScannerModal } from '../../components/barcode/BarcodeScannerModal';
 import {
   ImageUpload,
   type UploadedImageItem,
 } from '../../components/upload/ImageUpload';
+import { formatINR } from '../../core/format';
+import { convertRateTaxMode, roundHalfUp } from '../../core/money';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import { convertToBaseQty } from '../../core/units';
@@ -100,6 +106,8 @@ export function ItemFormModal({
     null
   );
   const [inlineAddName, setInlineAddName] = useState('');
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [aiFilling, setAiFilling] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -265,6 +273,140 @@ export function ItemFormModal({
     setBarcode(`890${base}`);
     if (!sku.trim()) {
       setSku(`SKU-${base.slice(-6)}`);
+    }
+  };
+
+  const handleAiAutoFill = async () => {
+    if (!session?.access_token) return;
+    let base64 = '';
+    let mimeType = 'image/jpeg';
+
+    if (!name.trim() && images.length > 0 && images[0]?.url) {
+      try {
+        const imgRes = await fetch(images[0].url);
+        if (imgRes.ok) {
+          const blob = await imgRes.blob();
+          mimeType = blob.type || 'image/jpeg';
+          base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch {
+        // Ignore signed URL fetch errors cleanly
+      }
+    }
+
+    if (!name.trim() && !base64) {
+      showToast('Enter an item name or upload a product photo first.', 'error');
+      return;
+    }
+
+    setAiFilling(true);
+    try {
+      const res = await fetch('/api/ai/suggest-item', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          name: name.trim(),
+          base64: base64 || undefined,
+          mimeType: base64 ? mimeType : undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || 'AI auto-fill failed.');
+
+      const s = json.suggestion as {
+        suggested_name?: string;
+        category_name?: string;
+        brand_name?: string | null;
+        hsn_code?: string;
+        gst_rate?: number;
+        base_unit_code?: string;
+        tax_inclusive?: boolean;
+        mrp_hint?: number | null;
+        selling_price_hint?: number | null;
+        notes?: string | null;
+      };
+
+      if (!name.trim() && s.suggested_name) {
+        setName(s.suggested_name);
+      }
+      if (s.hsn_code) {
+        setHsnCode(String(s.hsn_code));
+      }
+      if (typeof s.gst_rate === 'number' && GST_RATES.includes(s.gst_rate)) {
+        setGstRate(String(s.gst_rate));
+      }
+      if (typeof s.tax_inclusive === 'boolean') {
+        setTaxInclusive(s.tax_inclusive);
+      }
+      if (s.base_unit_code) {
+        const unitMatch = units.find(
+          (u) => u.code.toUpperCase() === String(s.base_unit_code).trim().toUpperCase()
+        );
+        if (unitMatch) setBaseUnitId(unitMatch.id);
+      }
+      if (!mrp.trim() && typeof s.mrp_hint === 'number' && s.mrp_hint > 0) {
+        setMrp(String(s.mrp_hint));
+      }
+      if (
+        !sellingPrice.trim() &&
+        typeof s.selling_price_hint === 'number' &&
+        s.selling_price_hint > 0
+      ) {
+        setSellingPrice(String(s.selling_price_hint));
+      }
+      if (!notes.trim() && s.notes) {
+        setNotes(s.notes);
+      }
+
+      let taxonomyChanged = false;
+      if (s.category_name?.trim()) {
+        const existingCat = categories.find(
+          (c) => c.name.trim().toLowerCase() === s.category_name!.trim().toLowerCase()
+        );
+        if (existingCat) {
+          setCategoryId(existingCat.id);
+        } else {
+          const { data: catData } = await supabase.rpc('save_item_category', {
+            p_name: s.category_name.trim(),
+          });
+          if (catData?.id) {
+            setCategoryId(catData.id);
+            taxonomyChanged = true;
+          }
+        }
+      }
+      if (s.brand_name?.trim()) {
+        const existingBrand = brands.find(
+          (b) => b.name.trim().toLowerCase() === s.brand_name!.trim().toLowerCase()
+        );
+        if (existingBrand) {
+          setBrandId(existingBrand.id);
+        } else {
+          const { data: brandData } = await supabase.rpc('save_brand', {
+            p_name: s.brand_name.trim(),
+          });
+          if (brandData?.id) {
+            setBrandId(brandData.id);
+            taxonomyChanged = true;
+          }
+        }
+      }
+      if (taxonomyChanged) {
+        await onTaxonomyUpdated();
+      }
+      showToast('AI filled HSN, GST slab, category, unit & tax mode.', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'AI auto-fill failed.', 'error');
+    } finally {
+      setAiFilling(false);
     }
   };
 
@@ -564,9 +706,25 @@ export function ItemFormModal({
             </div>
 
             <div className="sm:col-span-2">
-              <label className="block text-xs font-medium mb-1">
-                {t('items.name')} *
-              </label>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label className="block text-xs font-medium">
+                  {t('items.name')} *
+                </label>
+                <button
+                  type="button"
+                  disabled={aiFilling}
+                  onClick={() => void handleAiAutoFill()}
+                  className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline disabled:opacity-50"
+                  title="Auto-fill HSN code, GST slab, category, brand & tax mode with AI"
+                >
+                  {aiFilling ? (
+                    <IconLoader2 size={12} className="animate-spin" />
+                  ) : (
+                    <IconSparkles size={12} stroke={2} />
+                  )}
+                  <span>{aiFilling ? 'Filling...' : 'AI Auto-Fill HSN & GST'}</span>
+                </button>
+              </div>
               <input
                 type="text"
                 value={name}
@@ -677,16 +835,27 @@ export function ItemFormModal({
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center justify-between mb-1 gap-2">
                 <label className="text-xs font-medium">{t('items.barcode')}</label>
-                <button
-                  type="button"
-                  onClick={handleGenerateBarcode}
-                  className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
-                >
-                  <IconWand size={12} stroke={2} />
-                  <span>{t('items.generateCode')}</span>
-                </button>
+                <div className="flex items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setBarcodeScannerOpen(true)}
+                    className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                    title="Scan barcode via camera"
+                  >
+                    <IconCamera size={12} stroke={2} />
+                    <span>Scan</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateBarcode}
+                    className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                  >
+                    <IconWand size={12} stroke={2} />
+                    <span>{t('items.generateCode')}</span>
+                  </button>
+                </div>
               </div>
               <input
                 type="text"
@@ -792,6 +961,40 @@ export function ItemFormModal({
                 <span>{t('items.taxInclusive')}</span>
               </label>
             </div>
+
+            {(() => {
+              const spNum = Math.max(0, Number(sellingPrice || 0));
+              const gstNum = Math.max(0, Number(gstRate || 0));
+              if (spNum <= 0 || gstNum <= 0) return null;
+              const exclRate = taxInclusive
+                ? convertRateTaxMode(spNum, gstNum, true, false)
+                : roundHalfUp(spNum, 2);
+              const inclRate = taxInclusive
+                ? roundHalfUp(spNum, 2)
+                : convertRateTaxMode(spNum, gstNum, false, true);
+              const gstAmt = roundHalfUp(inclRate - exclRate, 2);
+              return (
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className="text-[var(--text-muted)] tabular-nums">
+                    Base <strong className="text-[var(--text)]">{formatINR(exclRate)}</strong> + GST ({gstNum}% = {formatINR(gstAmt)}) = Final Price <strong className="text-[var(--primary-dark)]">{formatINR(inclRate)}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextIncl = !taxInclusive;
+                      setSellingPrice(
+                        String(convertRateTaxMode(spNum, gstNum, taxInclusive, nextIncl))
+                      );
+                      setTaxInclusive(nextIncl);
+                    }}
+                    className="h-7 px-2.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] hover:bg-[var(--primary-soft)] text-[11px] font-semibold inline-flex items-center gap-1"
+                  >
+                    <IconArrowsExchange size={13} stroke={2} />
+                    <span>{taxInclusive ? 'Convert to Excl. Rate' : 'Convert to Incl. MRP'}</span>
+                  </button>
+                </div>
+              );
+            })()}
 
             {(business?.pack === 'wholesale' || wholesaleSlabs.length > 0) && (
               <div className="pt-3 border-t border-[var(--border)] space-y-2">
@@ -1368,6 +1571,19 @@ export function ItemFormModal({
           </div>
         </form>
       </div>
+
+      <BarcodeScannerModal
+        open={barcodeScannerOpen}
+        onClose={() => setBarcodeScannerOpen(false)}
+        onDetected={(code) => {
+          setBarcode(code.toUpperCase());
+          if (!sku.trim()) {
+            setSku(code.toUpperCase().slice(0, 16));
+          }
+        }}
+        title="Scan Item Barcode"
+        continuousDefault={false}
+      />
     </div>
   );
 }

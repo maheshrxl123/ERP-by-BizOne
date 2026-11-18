@@ -51,6 +51,23 @@ export function roundHalfUp(value: number, decimals = 2): number {
   return Object.is(result, -0) ? 0 : result;
 }
 
+export function convertRateTaxMode(
+  rate: number,
+  gstRate: number,
+  fromInclusive: boolean,
+  toInclusive: boolean
+): number {
+  const cleanRate = Math.max(0, Number.isFinite(rate) ? rate : 0);
+  const cleanGst = Math.min(100, Math.max(0, Number.isFinite(gstRate) ? gstRate : 0));
+  if (fromInclusive === toInclusive || cleanGst === 0) {
+    return roundHalfUp(cleanRate, 2);
+  }
+  if (toInclusive) {
+    return roundHalfUp((roundHalfUp(cleanRate * 100, 0) * (100 + cleanGst)) / 10000, 2);
+  }
+  return roundHalfUp(roundHalfUp(cleanRate * 100, 0) / (100 + cleanGst), 2);
+}
+
 export function calculateBillPreview(params: {
   gstRegistered: boolean;
   taxModuleEnabled?: boolean;
@@ -93,7 +110,7 @@ export function calculateBillPreview(params: {
       : 0;
 
     const grossAmount = roundHalfUp(qty * price, 2);
-    const discountAmount = roundHalfUp((grossAmount * discPct) / 100, 2);
+    const discountAmount = roundHalfUp((roundHalfUp(grossAmount * 100, 0) * discPct) / 10000, 2);
     const lineAfterDisc = roundHalfUp(grossAmount - discountAmount, 2);
 
     let taxableAmount = lineAfterDisc;
@@ -102,12 +119,18 @@ export function calculateBillPreview(params: {
 
     if (effectiveGstRate > 0) {
       if (line.taxInclusive) {
-        taxableAmount = roundHalfUp(lineAfterDisc / (1 + effectiveGstRate / 100), 2);
+        taxableAmount = roundHalfUp(
+          roundHalfUp(lineAfterDisc * 100, 0) / (100 + effectiveGstRate),
+          2
+        );
         taxAmount = roundHalfUp(lineAfterDisc - taxableAmount, 2);
         lineTotal = lineAfterDisc;
       } else {
         taxableAmount = lineAfterDisc;
-        taxAmount = roundHalfUp((taxableAmount * effectiveGstRate) / 100, 2);
+        taxAmount = roundHalfUp(
+          (roundHalfUp(taxableAmount * 100, 0) * effectiveGstRate) / 10000,
+          2
+        );
         lineTotal = roundHalfUp(taxableAmount + taxAmount, 2);
       }
     }

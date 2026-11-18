@@ -39,7 +39,7 @@ export function ModulePhasePlaceholder({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-xs font-medium text-[var(--primary-dark)]">
-              {def ? `Roadmap ${def.phase}` : 'Module'}
+              {def ? `${def.level === 'basic' ? 'Core' : 'Advanced'} Module` : 'Module'}
             </p>
             <h1 className="text-xl font-semibold mt-1">
               {def
@@ -73,7 +73,7 @@ export function ModulePhasePlaceholder({
           {!hasPermission
             ? 'Your assigned role does not have permission to access this module.'
             : enabled
-              ? `This workspace is currently running Phase 1 (Foundation, Authentication, Business Setup, Profile, Uploads & Permissions). Full ${def?.nameEn || moduleKey} workflows activate in ${def?.phase || 'upcoming phases'}.`
+              ? `Full ${def?.nameEn || moduleKey} workflows can be enabled by the Business Owner.`
               : 'This module is currently turned off in Settings -> Modules & Features. All routes and RPC access remain locked while disabled.'}
         </div>
 

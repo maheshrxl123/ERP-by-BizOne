@@ -274,7 +274,7 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
           <button
             type="button"
             onClick={() => onNavigate('notifications')}
-            className={`h-10 px-3.5 rounded-lg border text-xs sm:text-sm font-medium inline-flex items-center gap-2 transition-colors ${
+            className={`hidden h-10 px-3.5 rounded-lg border text-xs sm:text-sm font-medium items-center gap-2 transition-colors ${
               unreadAlertsCount > 0
                 ? 'border-[var(--warning)]/50 bg-[var(--warning-soft)] text-[var(--text)]'
                 : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-[var(--text)]'
@@ -806,7 +806,7 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
           </section>
 
           {/* Quick Workspace Shortcuts */}
-          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-3">
+          <section className="hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-3">
             <h2 className="text-sm font-semibold text-[var(--text-muted)]">
               {language === 'hi' ? 'त्वरित नेविगेशन' : 'Quick Workspace Shortcuts'}
             </h2>

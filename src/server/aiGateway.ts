@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { hasCapability, type UserRole } from '../core/permissions.ts';
@@ -379,7 +379,7 @@ export async function callConfiguredAiProvider(params: {
   }
 
   if (provider === 'gemini') {
-    const chosenModel = model.trim() || 'gemini-2.5-flash';
+    const chosenModel = model.trim() || 'gemini-4-hydrogen';
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
@@ -466,3 +466,105 @@ export async function callConfiguredAiProvider(params: {
     clearTimeout(timeout);
   }
 }
+
+export { Type as GeminiSchemaType };
+
+function stripJsonCodeFences(raw: string): string {
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : trimmed;
+}
+
+export async function callAiStructuredJson<T>(params: {
+  provider: AiProviderKind;
+  apiKey: string;
+  model: string;
+  baseUrl?: string | null;
+  systemPrompt: string;
+  userPrompt: string;
+  responseSchema: Schema;
+  attachment?: { mimeType: string; base64Data: string } | null;
+}): Promise<{ data: T; tokensUsed: number }> {
+  const {
+    provider,
+    apiKey,
+    model,
+    baseUrl,
+    systemPrompt,
+    userPrompt,
+    responseSchema,
+    attachment,
+  } = params;
+
+  if (!apiKey.trim()) {
+    throw new Error('AI API key is not configured.');
+  }
+
+  if (provider === 'gemini') {
+    const chosenModel = model.trim() || 'gemini-4-hydrogen';
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+    });
+
+    const parts: Array<
+      | { text: string }
+      | { inlineData: { mimeType: string; data: string } }
+    > = [];
+    if (attachment?.base64Data) {
+      parts.push({
+        inlineData: {
+          mimeType: attachment.mimeType,
+          data: attachment.base64Data,
+        },
+      });
+    }
+    parts.push({ text: userPrompt });
+
+    const response = await ai.models.generateContent({
+      model: chosenModel,
+      contents: [{ role: 'user', parts }],
+      config: {
+        systemInstruction: systemPrompt,
+        temperature: 0.1,
+        responseMimeType: 'application/json',
+        responseSchema,
+      },
+    });
+
+    const text = stripJsonCodeFences(response.text || '{}');
+    const tokensUsed = Number(response.usageMetadata?.totalTokenCount || 0);
+    return {
+      data: JSON.parse(text) as T,
+      tokensUsed,
+    };
+  }
+
+  if (attachment?.base64Data) {
+    throw new Error(
+      'Image/PDF document scanning requires Google Gemini (built-in or configured in Settings → Integrations).'
+    );
+  }
+
+  const out = await callConfiguredAiProvider({
+    provider,
+    apiKey,
+    model,
+    baseUrl,
+    systemPrompt: `${systemPrompt}\nReturn ONLY valid JSON matching the requested schema. No markdown fences or extra commentary.`,
+    userPrompt,
+  });
+
+  const cleaned = stripJsonCodeFences(out.text);
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  const jsonSlice =
+    firstBrace >= 0 && lastBrace > firstBrace
+      ? cleaned.slice(firstBrace, lastBrace + 1)
+      : cleaned;
+  return {
+    data: JSON.parse(jsonSlice) as T,
+    tokensUsed: out.tokensUsed,
+  };
+}
+

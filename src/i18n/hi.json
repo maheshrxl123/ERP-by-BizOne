@@ -349,6 +349,16 @@
     "refundNow": "तुरंत नकद / यूपीआई रिफंड",
     "payViaUpi": "स्कैन करें और यूपीआई से भुगतान करें",
     "partyPayModuleOff": "भुगतान मॉड्यूल बंद है — पार्टी बिल पूरे उधार (खाता क्रेडिट, ₹0 नकद) में दर्ज होगा।",
+    "fastAddTitle": "तेज़ आइटम एंट्री (खोजें या बारकोड स्कैन करें)",
+    "aiSmartOrder": "AI टेक्स्ट ऑर्डर",
+    "scanCamera": "स्कैन",
+    "scanCameraTitle": "आइटम बारकोड / QR स्कैन करें",
+    "lineItemsTitle": "बिल के आइटम",
+    "ratesTaxMode": "दर का प्रकार:",
+    "allInclusive": "सभी GST सहित",
+    "allExclusive": "सभी GST अलग (+GST)",
+    "taxInclBadge": "GST सहित",
+    "taxExclBadge": "+ GST (अलग)",
     "statuses": {
       "draft": "ड्राफ्ट",
       "issued": "जारी",
@@ -405,7 +415,14 @@
     "postPurchase": "खरीद दर्ज करें",
     "saveDraft": "ड्राफ्ट सहेजें",
     "purchaseReturn": "खरीद वापसी",
-    "voidPurchase": "खरीद रद्द करें"
+    "voidPurchase": "खरीद रद्द करें",
+    "aiScanTitle": "AI खरीद बिल स्कैनर",
+    "aiScanDesc": "सप्लायर बिल की फोटो या PDF अपलोड/कैप्चर करें — AI अपने आप सप्लायर, बिल नं. और आइटम भर देगा।",
+    "aiScanning": "बिल स्कैन हो रहा है...",
+    "uploadInvoiceScan": "बिल PDF / फोटो अपलोड करें",
+    "snapInvoicePhoto": "बिल की फोटो लें",
+    "applyScanned": "स्कैन की गई लाइनें जोड़ें",
+    "rateTaxBasis": "सप्लायर दर प्रकार:"
   },
   "expenses": {
     "title": "व्यापारिक खर्च",

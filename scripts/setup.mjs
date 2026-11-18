@@ -155,6 +155,7 @@ async function applyMigrationsIfToken() {
     '0011_phase6_packs_data_management.sql',
     '0012_phase6_import_demo_backup_drive.sql',
     '0013_phase7_ai_advanced_v1.sql',
+    '0014_tax_fixes_and_ai_features.sql',
   ]);
 
   for (const file of migrationFiles) {
@@ -221,7 +222,7 @@ async function verifyConnectivity() {
   await applyMigrationsIfToken();
   await verifyConnectivity();
   console.log(
-    '[setup] All BizOne ERP migrations (0001..0013) are verified and live.'
+    '[setup] All BizOne ERP migrations (0001..0014) are verified and live.'
   );
 })().catch((err) => {
   console.error('[setup] Error:', err.message);

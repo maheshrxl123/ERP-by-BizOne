@@ -60,13 +60,28 @@ async function compressImageFile(
           return;
         }
         ctx.drawImage(img, 0, 0, width, height);
-        const outMime =
+        const preferredMime: 'image/webp' | 'image/jpeg' | 'image/png' =
           file.type === 'image/png'
             ? 'image/png'
             : file.type === 'image/webp'
               ? 'image/webp'
               : 'image/jpeg';
-        const dataUrl = canvas.toDataURL(outMime, 0.84);
+        let outMime = preferredMime;
+        let dataUrl = canvas.toDataURL(outMime, 0.84);
+        const approxBytes = (url: string) =>
+          Math.floor(((url.split(',')[1] || '').length * 3) / 4);
+
+        // PNG ignores canvas quality param and can exceed 5MB; step down to WebP/JPEG cleanly
+        if (outMime === 'image/png' && approxBytes(dataUrl) > 4.5 * 1024 * 1024) {
+          const webpUrl = canvas.toDataURL('image/webp', 0.86);
+          if (webpUrl.startsWith('data:image/webp') && approxBytes(webpUrl) <= 4.5 * 1024 * 1024) {
+            dataUrl = webpUrl;
+            outMime = 'image/webp';
+          } else {
+            dataUrl = canvas.toDataURL('image/jpeg', 0.84);
+            outMime = 'image/jpeg';
+          }
+        }
         resolve({ base64: dataUrl, mimeType: outMime });
       };
       img.src = String(reader.result);
@@ -93,11 +108,13 @@ export function ImageUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const replaceIdxRef = useRef<number | null>(null);
   const attemptedHydrateRef = useRef<Set<string>>(new Set());
+  const latestValueRef = useRef<UploadedImageItem[]>(value);
+  latestValueRef.current = value;
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate missing signed URLs once per fileId
+  // Hydrate missing signed URLs once per fileId without clobbering concurrent user edits
   useEffect(() => {
     let active = true;
     const hydrate = async () => {
@@ -111,14 +128,30 @@ export function ImageUpload({
         attemptedHydrateRef.current.add(item.fileId);
       }
 
-      const updated = await Promise.all(
-        value.map(async (item) => {
-          if (item.url) return item;
+      const resolvedMap = new Map<string, string>();
+      await Promise.all(
+        missing.map(async (item) => {
           const signed = await getSignedUrl(item.fileId);
-          return signed ? { ...item, url: signed } : item;
+          if (signed) {
+            resolvedMap.set(item.fileId, signed);
+          }
         })
       );
-      if (active) onChange(updated);
+
+      if (!active || resolvedMap.size === 0) return;
+
+      const current = latestValueRef.current;
+      let changed = false;
+      const merged = current.map((item) => {
+        if (item.url) return item;
+        const signed = resolvedMap.get(item.fileId);
+        if (signed) {
+          changed = true;
+          return { ...item, url: signed };
+        }
+        return item;
+      });
+      if (changed) onChange(merged);
     };
     void hydrate();
     return () => {

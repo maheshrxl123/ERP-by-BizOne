@@ -122,6 +122,7 @@ export function BillDetailView({
           ...(fullBill as BillRecord),
           source_bill_number: (billRes.data as BillRecord).source_bill_number,
           converted_to_bill_number: (billRes.data as BillRecord).converted_to_bill_number,
+          site_name: (billRes.data as BillRecord).site_name,
         });
       }
 
@@ -339,6 +340,12 @@ export function BillDetailView({
                 <span className="tabular-nums">Due {formatDate(bill.due_date)}</span>
               </>
             )}
+            {bill.site_name && (
+              <>
+                <span>·</span>
+                <span>Site: {bill.site_name}</span>
+              </>
+            )}
           </p>
         </div>
 
@@ -549,6 +556,13 @@ export function BillDetailView({
                       {line.hsn_code ? ` · HSN ${line.hsn_code}` : ''}
                       {line.conversion_factor !== 1
                         ? ` · ${line.base_qty} base units`
+                        : ''}
+                      {line.variant_label ? ` · ${line.variant_label}` : ''}
+                      {line.batch_no ? ` · Batch ${line.batch_no}` : ''}
+                      {line.expiry_date ? ` · Exp ${formatDate(line.expiry_date)}` : ''}
+                      {line.mrp ? ` · MRP ${formatINR(Number(line.mrp))}` : ''}
+                      {(line.line_meta as Record<string, unknown> | undefined)?.serial_no
+                        ? ` · SN ${String((line.line_meta as Record<string, unknown>).serial_no)}`
                         : ''}
                     </p>
                   </td>

@@ -41,7 +41,7 @@ export function PartiesScreen({
   onNewBill,
   onOpenBill,
 }: PartiesScreenProps) {
-  const { isModuleEnabled, language, t } = useApp();
+  const { isModuleEnabled, language, showToast, t } = useApp();
 
   const [selectedPartyId, setSelectedPartyId] = useState<string | null>(
     initialPartyId ?? null
@@ -97,12 +97,33 @@ export function PartiesScreen({
   }, [initialPartyId, onActionConsumed]);
 
   useEffect(() => {
+    if (!initialAction) return;
     if (initialAction === 'add-party') {
       setSelectedPartyId(null);
       setAddPartyOpen(true);
       onActionConsumed?.();
+    } else if (
+      initialAction === 'receive-payment' ||
+      initialAction === 'give-payment'
+    ) {
+      setSelectedPartyId(null);
+      if (paymentsEnabled) {
+        setQuickPaymentParty(null);
+        setQuickPaymentDir(
+          initialAction === 'receive-payment' ? 'receive' : 'give'
+        );
+        setQuickPaymentOpen(true);
+      } else {
+        showToast(
+          language === 'hi'
+            ? 'भुगतान मॉड्यूल बंद है।'
+            : 'Payments module is disabled.',
+          'error'
+        );
+      }
+      onActionConsumed?.();
     }
-  }, [initialAction, onActionConsumed]);
+  }, [initialAction, paymentsEnabled, language, showToast, onActionConsumed]);
 
   const filteredParties = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();

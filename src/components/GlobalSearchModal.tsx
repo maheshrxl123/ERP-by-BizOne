@@ -5,12 +5,18 @@ import { useApp } from '../app/AppProvider';
 import { formatINR } from '../core/format';
 import { hasCapability } from '../core/permissions';
 import { supabase } from '../core/supabase';
-import type { AppDestination } from '../modules/dashboard/HomeScreen';
+import { getPackWorkspaceTitle } from '../packs/registry';
+import type {
+  AppDestination,
+  NavigationAction,
+} from '../modules/dashboard/HomeScreen';
 import type { ItemFilterTab } from '../modules/items/ItemsScreen';
 import type {
   BillRecord,
+  ExpenseRecord,
   ItemCatalogRecord,
   PartyBalanceRecord,
+  PurchaseBillRecord,
 } from '../types/bizone';
 
 interface GlobalSearchModalProps {
@@ -24,14 +30,7 @@ interface GlobalSearchModalProps {
       itemId?: string | null;
       billId?: string | null;
       itemFilter?: ItemFilterTab | null;
-      action?:
-        | 'add-party'
-        | 'add-item'
-        | 'receive-payment'
-        | 'give-payment'
-        | 'new-bill'
-        | 'new-quotation'
-        | null;
+      action?: NavigationAction | null;
     }
   ) => void;
 }
@@ -41,11 +40,13 @@ export function GlobalSearchModal({
   onClose,
   onNavigate,
 }: GlobalSearchModalProps) {
-  const { staff, profile, isModuleEnabled, language, t } = useApp();
+  const { business, staff, profile, isModuleEnabled, language, t } = useApp();
   const [query, setQuery] = useState('');
   const [parties, setParties] = useState<PartyBalanceRecord[]>([]);
   const [catalogItems, setCatalogItems] = useState<ItemCatalogRecord[]>([]);
   const [bills, setBills] = useState<BillRecord[]>([]);
+  const [purchases, setPurchases] = useState<PurchaseBillRecord[]>([]);
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
 
   const canSearchBills =
     isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills');
@@ -55,9 +56,18 @@ export function GlobalSearchModal({
     isModuleEnabled('inventory') &&
     (hasCapability(profile?.role, 'items') ||
       hasCapability(profile?.role, 'create_bills'));
+  const canSearchPurchases =
+    isModuleEnabled('purchases') && hasCapability(profile?.role, 'purchases');
+  const canSearchExpenses =
+    isModuleEnabled('expenses') && hasCapability(profile?.role, 'expenses');
+  const canSeeReports =
+    isModuleEnabled('reports') && hasCapability(profile?.role, 'reports');
+  const canSeeBackup =
+    isModuleEnabled('backup') && hasCapability(profile?.role, 'backup');
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
     setQuery('');
     if (canSearchBills) {
       supabase
@@ -66,8 +76,8 @@ export function GlobalSearchModal({
         .order('bill_date', { ascending: false })
         .order('created_at', { ascending: false })
         .limit(100)
-        .then(({ data }) => {
-          setBills((data as BillRecord[] | null) ?? []);
+        .then(({ data, error }) => {
+          if (active) setBills(error ? [] : ((data as BillRecord[] | null) ?? []));
         });
     } else {
       setBills([]);
@@ -80,8 +90,8 @@ export function GlobalSearchModal({
         .eq('is_active', true)
         .order('name')
         .limit(100)
-        .then(({ data }) => {
-          setParties((data as PartyBalanceRecord[] | null) ?? []);
+        .then(({ data, error }) => {
+          if (active) setParties(error ? [] : ((data as PartyBalanceRecord[] | null) ?? []));
         });
     } else {
       setParties([]);
@@ -94,19 +104,56 @@ export function GlobalSearchModal({
         .eq('is_active', true)
         .order('name')
         .limit(150)
-        .then(({ data }) => {
-          setCatalogItems((data as ItemCatalogRecord[] | null) ?? []);
+        .then(({ data, error }) => {
+          if (active) setCatalogItems(error ? [] : ((data as ItemCatalogRecord[] | null) ?? []));
         });
     } else {
       setCatalogItems([]);
+    }
+
+    if (canSearchPurchases) {
+      supabase
+        .from('purchase_list_view')
+        .select('*')
+        .order('bill_date', { ascending: false })
+        .limit(60)
+        .then(({ data, error }) => {
+          if (active) setPurchases(error ? [] : ((data as PurchaseBillRecord[] | null) ?? []));
+        });
+    } else {
+      setPurchases([]);
+    }
+
+    if (canSearchExpenses) {
+      supabase
+        .from('expense_list_view')
+        .select('*')
+        .order('expense_date', { ascending: false })
+        .limit(60)
+        .then(({ data, error }) => {
+          if (active) setExpenses(error ? [] : ((data as ExpenseRecord[] | null) ?? []));
+        });
+    } else {
+      setExpenses([]);
     }
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, canSearchBills, canSearchParties, canSearchItems]);
+    return () => {
+      active = false;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [
+    open,
+    onClose,
+    canSearchBills,
+    canSearchParties,
+    canSearchItems,
+    canSearchPurchases,
+    canSearchExpenses,
+  ]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -134,7 +181,21 @@ export function GlobalSearchModal({
         subtitle: 'Quick start guides & shortcuts',
         action: () => onNavigate('help'),
       },
+      {
+        id: 'dest-pack',
+        title: getPackWorkspaceTitle(business?.pack, language),
+        subtitle: 'Business-type workflows, batches, variants, slabs, or job cards',
+        action: () => onNavigate('pack'),
+      },
     ];
+    if (['owner', 'manager', 'storekeeper', 'accountant'].includes(profile?.role ?? '')) {
+      items.push({
+        id: 'dest-data',
+        title: t('nav.data'),
+        subtitle: 'CSV / XLSX import mapping, error reports & multi-sheet exports',
+        action: () => onNavigate('data'),
+      });
+    }
 
     if (canSearchBills) {
       items.push({
@@ -207,6 +268,118 @@ export function GlobalSearchModal({
       }
     }
 
+    if (canSearchPurchases) {
+      items.push({
+        id: 'dest-purchases',
+        title: t('purchases.title'),
+        subtitle: t('purchases.subtitle'),
+        action: () => onNavigate('purchases'),
+      });
+      for (const pur of purchases) {
+        items.push({
+          id: `purchase-${pur.id}`,
+          title: pur.purchase_number || `Draft · ${pur.party_name}`,
+          subtitle: `${pur.party_name}${pur.supplier_invoice_no ? ` · Inv ${pur.supplier_invoice_no}` : ''} · ${formatINR(Number(pur.grand_total))}`,
+          action: () => onNavigate('purchases'),
+        });
+      }
+    }
+
+    if (canSearchExpenses) {
+      items.push({
+        id: 'dest-expenses',
+        title: t('expenses.title'),
+        subtitle: t('expenses.subtitle'),
+        action: () => onNavigate('expenses'),
+      });
+      for (const exp of expenses) {
+        items.push({
+          id: `expense-${exp.id}`,
+          title: `${exp.expense_number} · ${language === 'hi' ? exp.category_name_hi : exp.category_name_en}`,
+          subtitle: `${exp.paid_to || exp.payment_mode} · ${formatINR(Number(exp.amount))}`,
+          action: () => onNavigate('expenses'),
+        });
+      }
+    }
+
+    if (canSeeReports) {
+      items.push({
+        id: 'dest-reports',
+        title: t('reports.title'),
+        subtitle: t('reports.subtitle'),
+        action: () => onNavigate('reports'),
+      });
+    }
+    if (canSearchBills) {
+      items.push({
+        id: 'dest-pos',
+        title: t('nav.pos'),
+        subtitle: 'Fast POS counter billing, hold bills, register shift & offline queue',
+        action: () => onNavigate('pos'),
+      });
+    }
+    if (
+      isModuleEnabled('accounting') &&
+      ['owner', 'manager', 'accountant'].includes(profile?.role ?? '')
+    ) {
+      items.push({
+        id: 'dest-accounting',
+        title: t('nav.accounting'),
+        subtitle: 'Double-entry vouchers, Trial Balance, P&L, Balance Sheet & reconciliation',
+        action: () => onNavigate('accounting'),
+      });
+    }
+    if (
+      isModuleEnabled('tax') &&
+      ['owner', 'manager', 'accountant'].includes(profile?.role ?? '')
+    ) {
+      items.push({
+        id: 'dest-gst',
+        title: t('nav.gst'),
+        subtitle: 'GSTR-1, GSTR-3B, GSTR-2B ITC match, E-Invoice / EWB & TDS/TCS',
+        action: () => onNavigate('gst'),
+      });
+    }
+    if (
+      (isModuleEnabled('inventory') || isModuleEnabled('locations')) &&
+      ['owner', 'manager', 'storekeeper', 'cashier', 'accountant'].includes(profile?.role ?? '')
+    ) {
+      items.push({
+        id: 'dest-operations',
+        title: t('nav.operations'),
+        subtitle: 'Godown transfers, physical stock counts, orders, leads & cheque register',
+        action: () => onNavigate('operations'),
+      });
+    }
+    if (
+      isModuleEnabled('messaging') &&
+      ['owner', 'manager', 'cashier', 'accountant'].includes(profile?.role ?? '')
+    ) {
+      items.push({
+        id: 'dest-messaging',
+        title: t('nav.messaging'),
+        subtitle: 'WhatsApp, SMS & Email templates and delivery logs',
+        action: () => onNavigate('messaging'),
+      });
+    }
+    if (isModuleEnabled('ai')) {
+      items.push({
+        id: 'dest-ai',
+        title: t('nav.ai'),
+        subtitle: 'Optional AI Chat (EN/HI/Hinglish), analytics, playbooks & approvals',
+        action: () => onNavigate('ai'),
+      });
+    }
+
+    if (canSeeBackup) {
+      items.push({
+        id: 'set-backup',
+        title: t('settings.tabs.backup'),
+        subtitle: 'Settings · Export JSON backup, checksum verification & storage usage',
+        action: () => onNavigate('settings', 'backup'),
+      });
+    }
+
     if (profile?.role === 'owner') {
       items.push(
         {
@@ -230,8 +403,14 @@ export function GlobalSearchModal({
         {
           id: 'set-int',
           title: t('settings.tabs.integrations'),
-          subtitle: 'Settings · Encrypted optional provider keys',
+          subtitle: 'Settings · Encrypted optional provider keys (Google Drive, AI)',
           action: () => onNavigate('settings', 'integrations'),
+        },
+        {
+          id: 'set-data',
+          title: t('settings.tabs.data'),
+          subtitle: 'Settings · CSV/XLSX bulk import & multi-sheet export',
+          action: () => onNavigate('settings', 'data'),
         }
       );
 
@@ -249,7 +428,7 @@ export function GlobalSearchModal({
       items.push({
         id: `mod-${mod.key}`,
         title: language === 'hi' ? mod.nameHi : mod.nameEn,
-        subtitle: `Module · ${mod.phase}`,
+        subtitle: language === 'hi' ? mod.descriptionHi : mod.descriptionEn,
         action: () =>
           profile?.role === 'owner'
             ? onNavigate('settings', 'modules')
@@ -271,10 +450,17 @@ export function GlobalSearchModal({
     bills,
     parties,
     catalogItems,
+    purchases,
+    expenses,
     canSearchBills,
     canSearchParties,
     canSearchItems,
+    canSearchPurchases,
+    canSearchExpenses,
+    canSeeReports,
+    canSeeBackup,
     isModuleEnabled,
+    business?.pack,
     profile?.role,
     language,
     t,

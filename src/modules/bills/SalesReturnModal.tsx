@@ -48,20 +48,22 @@ export function SalesReturnModal({
     const loadReturned = async () => {
       setLoadingPrev(true);
       try {
-        const { data: cnBills } = await supabase
+        const { data: cnBills, error: cnBillsErr } = await supabase
           .from('bills')
           .select('id')
           .eq('source_bill_id', sourceBill.id)
           .eq('doc_type', 'credit_note')
           .neq('status', 'voided');
+        if (cnBillsErr) throw cnBillsErr;
 
         const cnIds = ((cnBills as Array<{ id: string }> | null) ?? []).map((b) => b.id);
         const map: Record<string, number> = {};
         if (cnIds.length > 0) {
-          const { data: cnLines } = await supabase
+          const { data: cnLines, error: cnLinesErr } = await supabase
             .from('bill_lines')
             .select('source_bill_line_id, entered_qty')
             .in('bill_id', cnIds);
+          if (cnLinesErr) throw cnLinesErr;
           for (const row of (cnLines as Array<{
             source_bill_line_id: string | null;
             entered_qty: number;
@@ -77,6 +79,10 @@ export function SalesReturnModal({
           initialQtys[sl.id] = '';
         }
         setReturnQtyByLine(initialQtys);
+      } catch (err) {
+        setErrorMsg(
+          err instanceof Error ? err.message : 'Unable to load prior return history.'
+        );
       } finally {
         setLoadingPrev(false);
       }
@@ -318,7 +324,7 @@ export function SalesReturnModal({
             </div>
           </div>
 
-          {sourceBill.party_id && isModuleEnabled('payments') && (
+          {(!sourceBill.party_id || isModuleEnabled('payments')) && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)]">
               <div>
                 <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">

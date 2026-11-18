@@ -12,7 +12,7 @@ export interface UploadedFileItem {
 
 interface FileUploadProps {
   label: string;
-  purpose?: 'attachment';
+  purpose?: 'attachment' | 'prescription';
   value: UploadedFileItem | null;
   onChange: (next: UploadedFileItem | null) => void;
   helperText?: string;

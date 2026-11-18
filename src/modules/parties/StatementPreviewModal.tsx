@@ -8,9 +8,9 @@ import {
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../../app/AppProvider';
+import { downloadCsvFile } from '../../core/export';
 import {
   copyToClipboard,
-  escapeCsvCell,
   formatDate,
   formatINR,
   toLocalIsoDate,
@@ -124,29 +124,20 @@ export function StatementPreviewModal({
       'Credit (-)',
       'Running Balance',
     ];
-    const lines = [header.map(escapeCsvCell).join(',')];
-    for (const row of statement.rows) {
-      lines.push(
-        [
-          row.entry_date,
-          row.reference_no ?? '',
-          row.entry_type,
-          row.note ?? '',
-          Number(row.debit_amount).toFixed(2),
-          Number(row.credit_amount).toFixed(2),
-          Number(row.running_balance ?? 0).toFixed(2),
-        ]
-          .map(escapeCsvCell)
-          .join(',')
-      );
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${statement.party_name.replace(/[^a-zA-Z0-9_-]/g, '_')}_statement.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const rows = statement.rows.map((row) => [
+      row.entry_date,
+      row.reference_no ?? '',
+      row.entry_type,
+      row.note ?? '',
+      Number(row.debit_amount).toFixed(2),
+      Number(row.credit_amount).toFixed(2),
+      Number(row.running_balance ?? 0).toFixed(2),
+    ]);
+    downloadCsvFile(
+      `${statement.party_name.replace(/[^a-zA-Z0-9_-]/g, '_')}_statement.csv`,
+      header,
+      rows
+    );
   };
 
   const buildSummaryText = () => {
@@ -469,24 +460,65 @@ export function StatementPreviewModal({
                 </div>
               )}
 
-              {/* UPI QR Footer when Business UPI is set */}
-              {(business?.upi_id || qrUrl) && Number(statement.closing_balance) > 0 && (
-                <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between gap-4">
-                  <div className="text-xs text-[var(--text-muted)]">
-                    <p className="font-medium text-[var(--text)]">
-                      {language === 'hi' ? 'यूपीआई द्वारा भुगतान करें' : 'Pay via UPI'}
-                    </p>
-                    {business?.upi_id && <p>UPI ID: {business.upi_id}</p>}
+              {/* UPI & Bank Details Footer when closing balance is due */}
+              {(() => {
+                const ps = (business?.pack_settings || {}) as Record<string, unknown>;
+                const bName = typeof ps.bank_name === 'string' ? ps.bank_name : '';
+                const bHolder =
+                  typeof ps.bank_account_holder === 'string' ? ps.bank_account_holder : '';
+                const bAc = typeof ps.bank_account_no === 'string' ? ps.bank_account_no : '';
+                const bIfsc = typeof ps.bank_ifsc === 'string' ? ps.bank_ifsc : '';
+                const bBranch = typeof ps.bank_branch === 'string' ? ps.bank_branch : '';
+                const hasBank = Boolean(bName || bAc || bIfsc);
+                if (
+                  (!business?.upi_id && !qrUrl && !hasBank) ||
+                  Number(statement.closing_balance) <= 0
+                ) {
+                  return null;
+                }
+                return (
+                  <div className="pt-3 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-4">
+                    <div className="text-xs text-[var(--text-muted)] space-y-1">
+                      {(business?.upi_id || qrUrl) && (
+                        <div>
+                          <p className="font-medium text-[var(--text)]">
+                            {language === 'hi' ? 'यूपीआई द्वारा भुगतान करें' : 'Pay via UPI'}
+                          </p>
+                          {business?.upi_id && <p className="font-mono">UPI ID: {business.upi_id}</p>}
+                        </div>
+                      )}
+                      {hasBank && (
+                        <div>
+                          <p className="font-medium text-[var(--text)]">
+                            {language === 'hi' ? 'बैंक खाता विवरण' : 'Bank Account Details'}
+                          </p>
+                          {bName && (
+                            <p>
+                              {bName}
+                              {bBranch ? ` (${bBranch})` : ''}
+                              {bHolder ? ` · A/c Holder: ${bHolder}` : ''}
+                            </p>
+                          )}
+                          {(bAc || bIfsc) && (
+                            <p className="font-mono">
+                              {bAc && `A/c No: ${bAc}`}
+                              {bAc && bIfsc && ' · '}
+                              {bIfsc && `IFSC: ${bIfsc}`}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {qrUrl && (
+                      <img
+                        src={qrUrl}
+                        alt="UPI QR"
+                        className="w-16 h-16 rounded border border-[var(--border)] bg-white object-contain"
+                      />
+                    )}
                   </div>
-                  {qrUrl && (
-                    <img
-                      src={qrUrl}
-                      alt="UPI QR"
-                      className="w-16 h-16 rounded border border-[var(--border)] bg-white object-contain"
-                    />
-                  )}
-                </div>
-              )}
+                );
+              })()}
             </>
           ) : null}
         </div>

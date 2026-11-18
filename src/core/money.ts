@@ -57,6 +57,7 @@ export function calculateBillPreview(params: {
   docType: BillDocumentType;
   businessStateCode?: string | null;
   placeOfSupplyStateCode?: string | null;
+  isInterstate?: boolean;
   extraCharges?: number;
   autoRoundOff?: boolean;
   lines: BillLineCalcInput[];
@@ -69,7 +70,10 @@ export function calculateBillPreview(params: {
   const bizState = (params.businessStateCode ?? '').trim().toUpperCase();
   const posState = (params.placeOfSupplyStateCode ?? '').trim().toUpperCase();
   const isInterstate =
-    gstApplied && bizState.length > 0 && posState.length > 0 && bizState !== posState;
+    gstApplied &&
+    (typeof params.isInterstate === 'boolean'
+      ? params.isInterstate
+      : bizState.length > 0 && posState.length > 0 && bizState !== posState);
 
   let subtotalTaxable = 0;
   let discountTotal = 0;

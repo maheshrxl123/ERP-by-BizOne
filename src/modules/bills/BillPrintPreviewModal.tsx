@@ -42,7 +42,7 @@ export function BillPrintPreviewModal({
   onClose,
   onShareLinksChanged,
 }: BillPrintPreviewModalProps) {
-  const { business, signedUrlCache, getSignedUrl, language, showToast, t } = useApp();
+  const { business, profile, staff, signedUrlCache, getSignedUrl, language, showToast, t } = useApp();
 
   const [layout, setLayout] = useState<PrintLayoutType>(
     business?.default_print_layout || bill.business_snapshot?.default_print_layout || 'a4'
@@ -60,15 +60,143 @@ export function BillPrintPreviewModal({
   const logoUrl = logoFileId ? signedUrlCache[logoFileId] : undefined;
   const uploadedQrUrl = qrFileId ? signedUrlCache[qrFileId] : undefined;
 
+  const isPayable =
+    bill.doc_type === 'quotation' || Number(bill.balance_due) > 0;
+  const isPaidInvoice =
+    bill.doc_type !== 'quotation' &&
+    bill.doc_type !== 'credit_note' &&
+    bill.status === 'issued' &&
+    Number(bill.balance_due) <= 0;
   const showUpiQr =
+    isPayable &&
     bill.doc_type !== 'credit_note' &&
     bill.status !== 'voided' &&
     (bill.business_snapshot?.show_upi_qr_on_invoice ??
       business?.show_upi_qr_on_invoice ??
       true);
   const upiId = bill.business_snapshot?.upi_id || business?.upi_id || '';
+  const snapPack = (bill.business_snapshot?.pack_settings || {}) as Record<string, unknown>;
+  const bizPack = (business?.pack_settings || {}) as Record<string, unknown>;
+  const showBankDetails =
+    (typeof bill.business_snapshot?.show_bank_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_bank_on_invoice
+      : typeof snapPack.show_bank_on_invoice === 'boolean'
+        ? snapPack.show_bank_on_invoice
+        : typeof bizPack.show_bank_on_invoice === 'boolean'
+          ? bizPack.show_bank_on_invoice
+          : true);
+  const bankName =
+    bill.business_snapshot?.bank_name ||
+    (typeof snapPack.bank_name === 'string' ? snapPack.bank_name : '') ||
+    (typeof bizPack.bank_name === 'string' ? bizPack.bank_name : '');
+  const bankAccountHolder =
+    bill.business_snapshot?.bank_account_holder ||
+    (typeof snapPack.bank_account_holder === 'string' ? snapPack.bank_account_holder : '') ||
+    (typeof bizPack.bank_account_holder === 'string' ? bizPack.bank_account_holder : '');
+  const bankAccountNo =
+    bill.business_snapshot?.bank_account_no ||
+    (typeof snapPack.bank_account_no === 'string' ? snapPack.bank_account_no : '') ||
+    (typeof bizPack.bank_account_no === 'string' ? bizPack.bank_account_no : '');
+  const bankIfsc =
+    bill.business_snapshot?.bank_ifsc ||
+    (typeof snapPack.bank_ifsc === 'string' ? snapPack.bank_ifsc : '') ||
+    (typeof bizPack.bank_ifsc === 'string' ? bizPack.bank_ifsc : '');
+  const bankBranch =
+    bill.business_snapshot?.bank_branch ||
+    (typeof snapPack.bank_branch === 'string' ? snapPack.bank_branch : '') ||
+    (typeof bizPack.bank_branch === 'string' ? bizPack.bank_branch : '');
+  const bankAccountType =
+    bill.business_snapshot?.bank_account_type ||
+    (typeof snapPack.bank_account_type === 'string' ? snapPack.bank_account_type : '') ||
+    (typeof bizPack.bank_account_type === 'string' ? bizPack.bank_account_type : '');
+  const hasBankDetails =
+    showBankDetails && Boolean(bankName || bankAccountNo || bankIfsc);
+
+  const showCashierOnInvoice =
+    typeof bill.business_snapshot?.show_cashier_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_cashier_on_invoice
+      : typeof snapPack.show_cashier_on_invoice === 'boolean'
+        ? snapPack.show_cashier_on_invoice
+        : typeof bizPack.show_cashier_on_invoice === 'boolean'
+          ? bizPack.show_cashier_on_invoice
+          : true;
+  const resolvedStaffMember = staff.find(
+    (s) => s.id === (bill.issued_by || bill.created_by)
+  );
+  const cashierName =
+    (typeof bizPack.default_cashier_name === 'string' && bizPack.default_cashier_name.trim()) ||
+    (typeof snapPack.default_cashier_name === 'string' && snapPack.default_cashier_name.trim()) ||
+    bill.business_snapshot?.cashier_name ||
+    bill.business_snapshot?.default_cashier_name ||
+    resolvedStaffMember?.full_name ||
+    profile?.full_name ||
+    '';
+
+  const showSignatoryOnInvoice =
+    typeof bill.business_snapshot?.show_signatory_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_signatory_on_invoice
+      : typeof snapPack.show_signatory_on_invoice === 'boolean'
+        ? snapPack.show_signatory_on_invoice
+        : typeof bizPack.show_signatory_on_invoice === 'boolean'
+          ? bizPack.show_signatory_on_invoice
+          : true;
+  const signatoryLabel =
+    (typeof bizPack.signatory_label === 'string' && bizPack.signatory_label.trim()) ||
+    (typeof snapPack.signatory_label === 'string' && snapPack.signatory_label.trim()) ||
+    bill.business_snapshot?.signatory_label ||
+    'Authorized Signatory';
+
+  const showHsnOnInvoice =
+    typeof bill.business_snapshot?.show_hsn_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_hsn_on_invoice
+      : typeof snapPack.show_hsn_on_invoice === 'boolean'
+        ? snapPack.show_hsn_on_invoice
+        : typeof bizPack.show_hsn_on_invoice === 'boolean'
+          ? bizPack.show_hsn_on_invoice
+          : true;
+
+  const showMrpSavingsOnInvoice =
+    typeof bill.business_snapshot?.show_mrp_savings_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_mrp_savings_on_invoice
+      : typeof snapPack.show_mrp_savings_on_invoice === 'boolean'
+        ? snapPack.show_mrp_savings_on_invoice
+        : typeof bizPack.show_mrp_savings_on_invoice === 'boolean'
+          ? bizPack.show_mrp_savings_on_invoice
+          : true;
+
+  const showCustomerDetailsOnInvoice =
+    typeof bill.business_snapshot?.show_customer_details_on_invoice === 'boolean'
+      ? bill.business_snapshot.show_customer_details_on_invoice
+      : typeof snapPack.show_customer_details_on_invoice === 'boolean'
+        ? snapPack.show_customer_details_on_invoice
+        : typeof bizPack.show_customer_details_on_invoice === 'boolean'
+          ? bizPack.show_customer_details_on_invoice
+          : true;
+
+  const invoiceGreeting =
+    (typeof bizPack.invoice_greeting === 'string' ? bizPack.invoice_greeting.trim() : undefined) ??
+    (typeof snapPack.invoice_greeting === 'string' ? snapPack.invoice_greeting.trim() : undefined) ??
+    bill.business_snapshot?.invoice_greeting ??
+    'Thank you! Visit Again';
+
+  const totalMrpSavings = useMemo(() => {
+    if (!showMrpSavingsOnInvoice) return 0;
+    let saved = 0;
+    for (const line of lines) {
+      const mrp = Number(line.mrp || 0);
+      const qty = Number(line.entered_qty || 0);
+      const lineTotal = Number(line.line_total || 0);
+      if (mrp > 0 && qty > 0 && mrp * qty > lineTotal) {
+        saved += mrp * qty - lineTotal;
+      }
+    }
+    return Math.round(saved * 100) / 100;
+  }, [lines, showMrpSavingsOnInvoice]);
+
   const qrPayAmount =
-    Number(bill.balance_due) > 0 ? Number(bill.balance_due) : Number(bill.grand_total);
+    bill.doc_type === 'quotation'
+      ? Number(bill.grand_total)
+      : Number(bill.balance_due);
   const upiDeepLink = useMemo(
     () =>
       showUpiQr && upiId
@@ -369,6 +497,8 @@ export function BillPrintPreviewModal({
                       `Ph: ${bill.business_snapshot?.phone || business?.phone}`}
                     {(bill.business_snapshot?.gstin || business?.gstin) &&
                       ` · GSTIN: ${bill.business_snapshot?.gstin || business?.gstin}`}
+                    {(bill.business_snapshot?.drug_licence_no || business?.drug_licence_no) &&
+                      ` · DL: ${bill.business_snapshot?.drug_licence_no || business?.drug_licence_no}`}
                   </p>
                 </div>
               </div>
@@ -386,6 +516,11 @@ export function BillPrintPreviewModal({
                     Due: {formatDate(bill.due_date)}
                   </p>
                 )}
+                {showCashierOnInvoice && cashierName && (
+                  <p className="text-[11px] text-neutral-600">
+                    Cashier: <span className="font-medium text-neutral-800">{cashierName}</span>
+                  </p>
+                )}
               </div>
             </div>
 
@@ -394,9 +529,12 @@ export function BillPrintPreviewModal({
               <div>
                 <p className="text-neutral-500 uppercase font-semibold">Bill To</p>
                 <p className="font-bold text-neutral-900 text-xs">{bill.party_name}</p>
-                {bill.party_phone && <p>Ph: {bill.party_phone}</p>}
+                {showCustomerDetailsOnInvoice && bill.party_phone && <p>Ph: {bill.party_phone}</p>}
                 {bill.party_gstin && <p className="font-mono">GSTIN: {bill.party_gstin}</p>}
-                {bill.party_address && <p className="text-neutral-600">{bill.party_address}</p>}
+                {showCustomerDetailsOnInvoice && bill.party_address && (
+                  <p className="text-neutral-600">{bill.party_address}</p>
+                )}
+                {bill.site_name && <p className="text-neutral-700 font-medium">Site: {bill.site_name}</p>}
               </div>
               {bill.gst_applied && bill.place_of_supply_state_code && (
                 <div className="text-right">
@@ -414,7 +552,7 @@ export function BillPrintPreviewModal({
                 <tr className="border-b border-neutral-300 text-[10px] uppercase text-neutral-600">
                   <th className="py-1.5 pr-2">#</th>
                   <th className="py-1.5 pr-2">Item</th>
-                  {!isThermal && <th className="py-1.5 px-1">HSN</th>}
+                  {!isThermal && showHsnOnInvoice && <th className="py-1.5 px-1">HSN</th>}
                   <th className="py-1.5 px-1 text-right">Qty</th>
                   <th className="py-1.5 px-1 text-right">Rate</th>
                   {!isThermal && bill.gst_applied && (
@@ -429,13 +567,30 @@ export function BillPrintPreviewModal({
                     <td className="py-1.5 pr-2 tabular-nums">{line.line_no}</td>
                     <td className="py-1.5 pr-2">
                       <div className="font-medium">{line.item_name}</div>
-                      {Number(line.discount_pct) > 0 && (
+                      {(Number(line.discount_pct) > 0 ||
+                        Boolean(line.batch_no) ||
+                        Boolean(line.variant_label) ||
+                        (showMrpSavingsOnInvoice && Boolean(line.mrp)) ||
+                        Boolean((line.line_meta as Record<string, unknown> | undefined)?.serial_no)) && (
                         <div className="text-[10px] text-neutral-500">
-                          Disc: {line.discount_pct}%
+                          {[
+                            Number(line.discount_pct) > 0 ? `Disc ${line.discount_pct}%` : '',
+                            line.variant_label || '',
+                            line.batch_no ? `Batch ${line.batch_no}` : '',
+                            line.expiry_date ? `Exp ${formatDate(line.expiry_date)}` : '',
+                            showMrpSavingsOnInvoice && line.mrp
+                              ? `MRP ${Number(line.mrp).toFixed(2)}`
+                              : '',
+                            (line.line_meta as Record<string, unknown> | undefined)?.serial_no
+                              ? `SN ${String((line.line_meta as Record<string, unknown>).serial_no)}`
+                              : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
                         </div>
                       )}
                     </td>
-                    {!isThermal && (
+                    {!isThermal && showHsnOnInvoice && (
                       <td className="py-1.5 px-1 font-mono text-[10px]">
                         {line.hsn_code || '—'}
                       </td>
@@ -502,7 +657,7 @@ export function BillPrintPreviewModal({
                   </table>
                 )}
 
-                {showUpiQr && (uploadedQrUrl || upiDeepLink) && (
+                {showUpiQr && (uploadedQrUrl || upiDeepLink) ? (
                   <div className="pt-1 flex items-center gap-3">
                     {uploadedQrUrl ? (
                       <img
@@ -522,6 +677,36 @@ export function BillPrintPreviewModal({
                         </p>
                       )}
                     </div>
+                  </div>
+                ) : (
+                  isPaidInvoice && (
+                    <div className="pt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-600/30 bg-emerald-50 text-emerald-800 text-[11px] font-semibold">
+                      <IconCheck size={14} stroke={2.5} />
+                      <span>{language === 'hi' ? 'पूर्ण भुगतान प्राप्त' : 'Paid in Full'}</span>
+                    </div>
+                  )
+                )}
+
+                {hasBankDetails && (
+                  <div className="pt-1.5 text-[11px] text-neutral-700 space-y-0.5">
+                    <p className="font-semibold text-neutral-900">
+                      {language === 'hi' ? 'बैंक खाता विवरण' : 'Bank Account Details'}
+                    </p>
+                    {bankName && (
+                      <p>
+                        Bank: <span className="font-medium">{bankName}</span>
+                        {bankBranch ? ` (${bankBranch})` : ''}
+                        {bankAccountType ? ` · ${bankAccountType}` : ''}
+                      </p>
+                    )}
+                    {bankAccountHolder && <p>A/c Holder: {bankAccountHolder}</p>}
+                    {(bankAccountNo || bankIfsc) && (
+                      <p className="font-mono">
+                        {bankAccountNo && `A/c No: ${bankAccountNo}`}
+                        {bankAccountNo && bankIfsc && ' · '}
+                        {bankIfsc && `IFSC: ${bankIfsc}`}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -600,9 +785,30 @@ export function BillPrintPreviewModal({
                       </div>
                     </>
                   )}
+                  {showMrpSavingsOnInvoice && totalMrpSavings > 0 && (
+                    <div className="pt-1 border-t border-dashed border-neutral-300 flex justify-between text-emerald-700 font-semibold">
+                      <dt>{language === 'hi' ? 'MRP पर कुल बचत' : 'Total Saved on MRP'}</dt>
+                      <dd>{formatINR(totalMrpSavings)}</dd>
+                    </div>
+                  )}
                 </dl>
+
+                {showSignatoryOnInvoice && !isThermal && (
+                  <div className="mt-6 pt-6 border-t border-neutral-200 text-right text-[11px]">
+                    <p className="font-semibold text-neutral-800">
+                      For {bill.business_snapshot?.name || business?.name || 'BizOne'}
+                    </p>
+                    <p className="mt-6 text-neutral-500">{signatoryLabel}</p>
+                  </div>
+                )}
               </div>
             </div>
+
+            {invoiceGreeting && (
+              <div className="mt-3 pt-2 border-t border-dashed border-neutral-300 text-center text-[11px] font-medium text-neutral-600">
+                {invoiceGreeting}
+              </div>
+            )}
           </div>
 
           {/* Share Links Manager (no-print) */}

@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconLoader2, IconPrinter } from '@tabler/icons-react';
+import { IconAlertCircle, IconCheck, IconLoader2, IconPrinter } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildUpiDeepLink, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
@@ -63,22 +63,33 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
     return Array.from(map.values()).sort((a, b) => a.rate - b.rate);
   }, [payload]);
 
+  const isPayable = Boolean(
+    payload &&
+      payload.bill.doc_type !== 'credit_note' &&
+      payload.bill.status !== 'voided' &&
+      (payload.bill.doc_type === 'quotation' || Number(payload.bill.balance_due) > 0)
+  );
+  const isPaidInvoice = Boolean(
+    payload &&
+      payload.bill.doc_type !== 'quotation' &&
+      payload.bill.doc_type !== 'credit_note' &&
+      payload.bill.status === 'issued' &&
+      Number(payload.bill.balance_due) <= 0
+  );
+
   const upiDeepLink = useMemo(() => {
-    if (!payload?.assets.showUpiQr || !payload.assets.upiId) return '';
-    if (payload.bill.doc_type === 'credit_note' || payload.bill.status === 'voided') {
-      return '';
-    }
+    if (!isPayable || !payload?.assets.showUpiQr || !payload.assets.upiId) return '';
     const amount =
-      Number(payload.bill.balance_due) > 0
-        ? Number(payload.bill.balance_due)
-        : Number(payload.bill.grand_total);
+      payload.bill.doc_type === 'quotation'
+        ? Number(payload.bill.grand_total)
+        : Number(payload.bill.balance_due);
     return buildUpiDeepLink({
       upiId: payload.assets.upiId,
       businessName: payload.bill.business_snapshot?.name || 'BizOne Store',
       amount: amount > 0 ? amount : undefined,
       note: payload.bill.bill_number || 'Invoice Payment',
     });
-  }, [payload]);
+  }, [isPayable, payload]);
 
   if (loading) {
     return (
@@ -281,10 +292,9 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
                 </tbody>
               </table>
             )}
-            {assets.showUpiQr &&
-              bill.doc_type !== 'credit_note' &&
-              bill.status !== 'voided' &&
-              (assets.upiQrUrl || upiDeepLink) && (
+            {isPayable &&
+            assets.showUpiQr &&
+            (assets.upiQrUrl || upiDeepLink) ? (
               <div className="flex items-center gap-3 pt-1">
                 {assets.upiQrUrl ? (
                   <img
@@ -298,9 +308,68 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
                 <div>
                   <p className="font-semibold">Scan & Pay via UPI</p>
                   {assets.upiId && <p className="font-mono text-neutral-600">{assets.upiId}</p>}
+                  <p className="tabular-nums font-medium">
+                    Amount:{' '}
+                    {formatINR(
+                      bill.doc_type === 'quotation'
+                        ? Number(bill.grand_total)
+                        : Number(bill.balance_due)
+                    )}
+                  </p>
                 </div>
               </div>
+            ) : (
+              isPaidInvoice && (
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border border-emerald-600/30 bg-emerald-50 text-emerald-800 text-[11px] font-semibold">
+                  <IconCheck size={14} stroke={2.5} />
+                  <span>Paid in Full</span>
+                </div>
+              )
             )}
+            {(() => {
+              const snap = bill.business_snapshot;
+              const ps = (snap?.pack_settings || {}) as Record<string, unknown>;
+              const showBank =
+                snap?.show_bank_on_invoice ??
+                (typeof ps.show_bank_on_invoice === 'boolean' ? ps.show_bank_on_invoice : true);
+              const bName =
+                snap?.bank_name || (typeof ps.bank_name === 'string' ? ps.bank_name : '');
+              const bHolder =
+                snap?.bank_account_holder ||
+                (typeof ps.bank_account_holder === 'string' ? ps.bank_account_holder : '');
+              const bAc =
+                snap?.bank_account_no ||
+                (typeof ps.bank_account_no === 'string' ? ps.bank_account_no : '');
+              const bIfsc =
+                snap?.bank_ifsc || (typeof ps.bank_ifsc === 'string' ? ps.bank_ifsc : '');
+              const bBranch =
+                snap?.bank_branch ||
+                (typeof ps.bank_branch === 'string' ? ps.bank_branch : '');
+              const bType =
+                snap?.bank_account_type ||
+                (typeof ps.bank_account_type === 'string' ? ps.bank_account_type : '');
+              if (!showBank || (!bName && !bAc && !bIfsc)) return null;
+              return (
+                <div className="pt-1.5 text-[11px] text-neutral-700 space-y-0.5">
+                  <p className="font-semibold text-neutral-900">Bank Account Details</p>
+                  {bName && (
+                    <p>
+                      Bank: <span className="font-medium">{bName}</span>
+                      {bBranch ? ` (${bBranch})` : ''}
+                      {bType ? ` · ${bType}` : ''}
+                    </p>
+                  )}
+                  {bHolder && <p>A/c Holder: {bHolder}</p>}
+                  {(bAc || bIfsc) && (
+                    <p className="font-mono">
+                      {bAc && `A/c No: ${bAc}`}
+                      {bAc && bIfsc && ' · '}
+                      {bIfsc && `IFSC: ${bIfsc}`}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
             {bill.terms && <p className="text-[11px] text-neutral-600 whitespace-pre-line">{bill.terms}</p>}
           </div>
 

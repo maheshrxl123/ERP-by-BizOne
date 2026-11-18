@@ -5,6 +5,7 @@ import {
   IconBarcode,
   IconEdit,
   IconPhoto,
+  IconPlus,
   IconRestore,
   IconStarFilled,
 } from '@tabler/icons-react';
@@ -14,12 +15,16 @@ import { formatDate, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import { formatStockQty } from '../../core/units';
+import { classifyBatchExpiry, daysUntilExpiry } from '../../packs/registry';
 import type {
   BrandRecord,
+  ItemBatchRecord,
   ItemCatalogRecord,
   ItemCategoryRecord,
   ItemImageRecord,
   ItemUnitRecord,
+  ItemVariantRecord,
+  SaltSubstituteRow,
   StockLedgerEntryRecord,
   UnitConversionRecord,
 } from '../../types/bizone';
@@ -46,7 +51,7 @@ export function ItemDetailView({
   onUpdated,
   onTaxonomyUpdated,
 }: ItemDetailViewProps) {
-  const { profile, signedUrlCache, getSignedUrl, language, showToast, t } =
+  const { business, profile, isModuleEnabled, signedUrlCache, getSignedUrl, language, showToast, t } =
     useApp();
 
   const canEdit = hasCapability(profile?.role, 'items');
@@ -57,18 +62,31 @@ export function ItemDetailView({
   const [conversions, setConversions] = useState<UnitConversionRecord[]>([]);
   const [images, setImages] = useState<ItemImageRecord[]>([]);
   const [ledger, setLedger] = useState<StockLedgerEntryRecord[]>([]);
+  const [batches, setBatches] = useState<ItemBatchRecord[]>([]);
+  const [substitutes, setSubstitutes] = useState<SaltSubstituteRow[]>([]);
+  const [variants, setVariants] = useState<ItemVariantRecord[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const [batchAddOpen, setBatchAddOpen] = useState(false);
+  const [newBatchNo, setNewBatchNo] = useState('');
+  const [newBatchExp, setNewBatchExp] = useState('');
+  const [newBatchMrp, setNewBatchMrp] = useState('');
+  const [newBatchQty, setNewBatchQty] = useState('10');
+  const [savingBatch, setSavingBatch] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
+  const showBatches = business?.pack === 'medical' || isModuleEnabled('batch_expiry');
+  const showVariants = business?.pack === 'clothing' || isModuleEnabled('variants');
+
   const loadDetail = useCallback(async () => {
     setLoading(true);
     try {
-      const [itemRes, convRes, imgRes, ledgerRes] = await Promise.all([
+      const [itemRes, convRes, imgRes, ledgerRes, batchesRes, subRes, varRes] = await Promise.all([
         supabase
           .from('item_catalog_view')
           .select('*')
@@ -91,6 +109,23 @@ export function ItemDetailView({
           .order('movement_date', { ascending: false })
           .order('created_at', { ascending: false })
           .limit(100),
+        showBatches
+          ? supabase
+              .from('item_batches')
+              .select('*')
+              .eq('item_id', itemId)
+              .order('expiry_date', { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        business?.pack === 'medical'
+          ? supabase.rpc('get_salt_substitutes', { p_item_id: itemId })
+          : Promise.resolve({ data: [], error: null }),
+        showVariants
+          ? supabase
+              .from('item_variants')
+              .select('*')
+              .eq('item_id', itemId)
+              .order('size', { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (itemRes.error) throw itemRes.error;
@@ -104,6 +139,9 @@ export function ItemDetailView({
       setConversions((convRes.data as UnitConversionRecord[] | null) ?? []);
       setImages(loadedImages);
       setLedger((ledgerRes.data as StockLedgerEntryRecord[] | null) ?? []);
+      setBatches((batchesRes.data as ItemBatchRecord[] | null) ?? []);
+      setSubstitutes((subRes.data as SaltSubstituteRow[] | null) ?? []);
+      setVariants((varRes.data as ItemVariantRecord[] | null) ?? []);
 
       const primary =
         loadedImages.find((i) => i.is_primary)?.file_id ||
@@ -123,11 +161,41 @@ export function ItemDetailView({
     } finally {
       setLoading(false);
     }
-  }, [itemId, getSignedUrl, showToast]);
+  }, [itemId, getSignedUrl, showToast, showBatches, showVariants, business?.pack]);
 
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  const handleAddBatch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!item || !newBatchNo.trim() || !newBatchExp) return;
+    setSavingBatch(true);
+    try {
+      const { error } = await supabase.rpc('save_item_batch', {
+        p_item_id: item.id,
+        p_batch_no: newBatchNo.trim(),
+        p_expiry_date: newBatchExp,
+        p_mfg_date: null,
+        p_mrp: newBatchMrp ? Number(newBatchMrp) : item.mrp ?? null,
+        p_purchase_rate: null,
+        p_selling_rate: newBatchMrp ? Number(newBatchMrp) : item.selling_price,
+        p_qty_delta: Number(newBatchQty || 0),
+        p_batch_id: null,
+        p_is_active: true,
+      });
+      if (error) throw error;
+      showToast('Batch added.', 'success');
+      setBatchAddOpen(false);
+      setNewBatchNo('');
+      await loadDetail();
+      await onUpdated();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to save batch.', 'error');
+    } finally {
+      setSavingBatch(false);
+    }
+  };
 
   const handleToggleArchive = async () => {
     if (!item || !canEdit || archiving) return;
@@ -428,6 +496,24 @@ export function ItemDetailView({
               </div>
             )}
 
+            {Array.isArray(item.wholesale_slabs) && item.wholesale_slabs.length > 0 && (
+              <div className="pt-2 border-t border-[var(--border)]">
+                <p className="text-xs font-medium text-[var(--text-muted)] mb-1.5">
+                  Wholesale Rate Slabs
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {item.wholesale_slabs.map((slab, idx) => (
+                    <span
+                      key={idx}
+                      className="px-2.5 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs tabular-nums"
+                    >
+                      {slab.min_qty}+ · {slab.tier} → {formatINR(Number(slab.rate))}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {item.notes && (
               <p className="pt-2 border-t border-[var(--border)] text-xs text-[var(--text-muted)]">
                 {item.notes}
@@ -436,6 +522,206 @@ export function ItemDetailView({
           </div>
         </section>
       </div>
+
+      {/* Pack-Specific Details: Batches & Expiry */}
+      {showBatches && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold">Batches &amp; Expiry (FEFO)</h2>
+              {item.pack_metadata?.salt && (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Salt: {String(item.pack_metadata.salt)}
+                  {item.pack_metadata?.schedule ? ` · Schedule ${String(item.pack_metadata.schedule)}` : ''}
+                </p>
+              )}
+            </div>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setBatchAddOpen((v) => !v)}
+                className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <IconPlus size={15} stroke={2} />
+                <span>Add Batch</span>
+              </button>
+            )}
+          </div>
+
+          {batchAddOpen && canEdit && (
+            <form
+              onSubmit={handleAddBatch}
+              className="p-4 border-b border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-2 sm:grid-cols-5 gap-3 items-end"
+            >
+              <div>
+                <label className="block text-xs font-medium mb-1">Batch No *</label>
+                <input
+                  required
+                  value={newBatchNo}
+                  onChange={(e) => setNewBatchNo(e.target.value)}
+                  placeholder="B-2601"
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs uppercase"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Expiry Date *</label>
+                <input
+                  required
+                  type="date"
+                  value={newBatchExp}
+                  onChange={(e) => setNewBatchExp(e.target.value)}
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Batch MRP</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newBatchMrp}
+                  onChange={(e) => setNewBatchMrp(e.target.value)}
+                  placeholder={String(item.mrp ?? item.selling_price)}
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium mb-1">Qty</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={newBatchQty}
+                  onChange={(e) => setNewBatchQty(e.target.value)}
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={savingBatch}
+                className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold"
+              >
+                {savingBatch ? 'Saving...' : 'Save Batch'}
+              </button>
+            </form>
+          )}
+
+          {batches.length === 0 ? (
+            <div className="p-5 text-xs text-[var(--text-muted)]">No batches recorded yet.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                  <tr>
+                    <th className="py-2.5 px-4 text-left">Batch No</th>
+                    <th className="py-2.5 px-4 text-left">Expiry</th>
+                    <th className="py-2.5 px-4 text-left">Status</th>
+                    <th className="py-2.5 px-4 text-right">MRP</th>
+                    <th className="py-2.5 px-4 text-right">Selling</th>
+                    <th className="py-2.5 px-4 text-right">Stock</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {batches.map((b) => {
+                    const cls = classifyBatchExpiry(b.expiry_date);
+                    const days = daysUntilExpiry(b.expiry_date);
+                    return (
+                      <tr key={b.id}>
+                        <td className="py-2.5 px-4 font-mono font-medium">{b.batch_no}</td>
+                        <td className="py-2.5 px-4 tabular-nums">{formatDate(b.expiry_date)}</td>
+                        <td
+                          className={`py-2.5 px-4 font-medium ${
+                            cls === 'expired'
+                              ? 'text-[var(--give)]'
+                              : days <= 60
+                                ? 'text-amber-600'
+                                : 'text-[var(--receive-text)]'
+                          }`}
+                        >
+                          {cls === 'expired'
+                            ? 'Expired (Blocked)'
+                            : days <= 30
+                              ? 'Expiring ≤ 30d'
+                              : days <= 60
+                                ? 'Expiring ≤ 60d'
+                                : days <= 90
+                                  ? 'Expiring ≤ 90d'
+                                  : 'Healthy'}
+                        </td>
+                        <td className="py-2.5 px-4 text-right tabular-nums">
+                          {b.mrp != null ? formatINR(Number(b.mrp)) : '—'}
+                        </td>
+                        <td className="py-2.5 px-4 text-right tabular-nums">
+                          {b.selling_rate != null ? formatINR(Number(b.selling_rate)) : '—'}
+                        </td>
+                        <td className="py-2.5 px-4 text-right tabular-nums font-semibold">
+                          {formatStockQty(b.qty_on_hand, item.base_unit_code)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {substitutes.length > 0 && (
+            <div className="p-4 border-t border-[var(--border)] bg-[var(--surface-muted)]/50 space-y-2">
+              <p className="text-xs font-semibold">Same-Salt Substitutes</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {substitutes.map((s) => (
+                  <div
+                    key={s.id}
+                    className="p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] flex items-center justify-between text-xs"
+                  >
+                    <div>
+                      <p className="font-medium">{s.name}</p>
+                      <p className="text-[var(--text-muted)]">Stock: {s.qty_on_hand}</p>
+                    </div>
+                    <span className="font-semibold tabular-nums">{formatINR(Number(s.selling_price))}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Clothing Variants Matrix Table */}
+      {showVariants && variants.length > 0 && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border)] flex items-center justify-between">
+            <h2 className="text-base font-semibold">Size &amp; Colour Variants</h2>
+            <span className="text-xs text-[var(--text-muted)] tabular-nums">{variants.length} SKUs</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)]">
+                <tr>
+                  <th className="py-2.5 px-4 text-left">Size</th>
+                  <th className="py-2.5 px-4 text-left">Colour</th>
+                  <th className="py-2.5 px-4 text-left">SKU</th>
+                  <th className="py-2.5 px-4 text-right">Selling</th>
+                  <th className="py-2.5 px-4 text-right">Stock</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {variants.map((v) => (
+                  <tr key={v.id}>
+                    <td className="py-2.5 px-4 font-semibold">{v.size || '—'}</td>
+                    <td className="py-2.5 px-4">{v.color || '—'}</td>
+                    <td className="py-2.5 px-4 font-mono">{v.sku || '—'}</td>
+                    <td className="py-2.5 px-4 text-right tabular-nums">
+                      {formatINR(Number(v.selling_price ?? item.selling_price))}
+                    </td>
+                    <td className="py-2.5 px-4 text-right tabular-nums font-semibold">
+                      {v.qty_on_hand} {item.base_unit_code}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Immutable Stock Ledger */}
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">

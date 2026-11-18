@@ -136,10 +136,11 @@ export function buildDueReminderText(params: {
 
 export function escapeCsvCell(value: string | number | null | undefined): string {
   const str = value === null || value === undefined ? '' : String(value);
-  if (/[",\n\r]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
+  const neutralized = /^[=+\-@\t\r]/.test(str) ? `'${str}` : str;
+  if (/[",\n\r]/.test(neutralized)) {
+    return `"${neutralized.replace(/"/g, '""')}"`;
   }
-  return str;
+  return neutralized;
 }
 
 export function toLocalIsoDate(date: Date = new Date()): string {

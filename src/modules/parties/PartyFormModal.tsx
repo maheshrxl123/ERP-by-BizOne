@@ -16,6 +16,7 @@ import type {
   PartyBalanceRecord,
   PartyRecord,
   PartyType,
+  PriceTier,
 } from '../../types/bizone';
 
 interface PartyFormModalProps {
@@ -26,12 +27,17 @@ interface PartyFormModalProps {
 }
 
 
-const EMPTY_ADDRESS: PartyAddressRecord = {
+interface EditableAddressRow extends PartyAddressRecord {
+  localId: string;
+}
+
+const EMPTY_ADDRESS: Omit<EditableAddressRow, 'localId'> = {
   label: 'Primary',
   address_line1: '',
   address_line2: '',
   city: '',
   state: '',
+  state_code: '',
   pincode: '',
   is_default: true,
 };
@@ -42,10 +48,11 @@ export function PartyFormModal({
   onClose,
   onSaved,
 }: PartyFormModalProps) {
-  const { language, showToast, t } = useApp();
+  const { business, language, showToast, t } = useApp();
 
   const [name, setName] = useState('');
   const [partyType, setPartyType] = useState<PartyType>('customer');
+  const [priceTier, setPriceTier] = useState<PriceTier>('standard');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [gstin, setGstin] = useState('');
@@ -55,7 +62,7 @@ export function PartyFormModal({
   const [creditLimit, setCreditLimit] = useState('0');
   const [creditDays, setCreditDays] = useState('0');
   const [notes, setNotes] = useState('');
-  const [addresses, setAddresses] = useState<PartyAddressRecord[]>([]);
+  const [addresses, setAddresses] = useState<EditableAddressRow[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [loadingAddrs, setLoadingAddrs] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -67,6 +74,7 @@ export function PartyFormModal({
     if (editingParty) {
       setName(editingParty.name);
       setPartyType(editingParty.party_type);
+      setPriceTier((editingParty.price_tier as PriceTier) || 'standard');
       setPhone(editingParty.phone ?? '');
       setEmail(editingParty.email ?? '');
       setGstin(editingParty.gstin ?? '');
@@ -80,22 +88,31 @@ export function PartyFormModal({
         Boolean(
           editingParty.credit_limit > 0 ||
             editingParty.credit_days > 0 ||
-            editingParty.notes
+            editingParty.notes ||
+            (editingParty.price_tier && editingParty.price_tier !== 'standard')
         )
       );
 
       setLoadingAddrs(true);
       void (async () => {
         try {
-          const { data } = await supabase
+          const { data, error: addrErr } = await supabase
             .from('party_addresses')
             .select('*')
             .eq('party_id', editingParty.party_id)
             .order('is_default', { ascending: false })
             .order('created_at', { ascending: true });
-          const rows = (data as PartyAddressRecord[] | null) ?? [];
+          if (addrErr) throw addrErr;
+          const rows = ((data as PartyAddressRecord[] | null) ?? []).map((row) => ({
+            ...row,
+            localId: row.id || crypto.randomUUID(),
+          }));
           setAddresses(rows);
           if (rows.length > 0) setShowAdvanced(true);
+        } catch (err) {
+          setErrorMsg(
+            err instanceof Error ? err.message : 'Unable to load party addresses.'
+          );
         } finally {
           setLoadingAddrs(false);
         }
@@ -103,6 +120,7 @@ export function PartyFormModal({
     } else {
       setName('');
       setPartyType('customer');
+      setPriceTier('standard');
       setPhone('');
       setEmail('');
       setGstin('');
@@ -121,7 +139,7 @@ export function PartyFormModal({
 
   const handlePartyTypeChange = (nextType: PartyType) => {
     setPartyType(nextType);
-    if (!editingParty && Number(openingBalance || 0) === 0) {
+    if (!editingParty) {
       setOpeningDir(nextType === 'supplier' ? 'to_give' : 'to_receive');
     }
   };
@@ -132,6 +150,7 @@ export function PartyFormModal({
       ...prev,
       {
         ...EMPTY_ADDRESS,
+        localId: crypto.randomUUID(),
         label: prev.length === 0 ? 'Primary' : `Branch ${prev.length + 1}`,
         is_default: prev.length === 0,
       },
@@ -139,23 +158,23 @@ export function PartyFormModal({
   };
 
   const updateAddressField = (
-    idx: number,
+    localId: string,
     field: keyof PartyAddressRecord,
     value: string | boolean
   ) => {
     setAddresses((prev) =>
-      prev.map((row, i) => {
+      prev.map((row) => {
         if (field === 'is_default' && value === true) {
-          return { ...row, is_default: i === idx };
+          return { ...row, is_default: row.localId === localId };
         }
-        return i === idx ? { ...row, [field]: value } : row;
+        return row.localId === localId ? { ...row, [field]: value } : row;
       })
     );
   };
 
-  const removeAddressRow = (idx: number) => {
+  const removeAddressRow = (localId: string) => {
     setAddresses((prev) => {
-      const next = prev.filter((_, i) => i !== idx);
+      const next = prev.filter((row) => row.localId !== localId);
       if (next.length > 0 && !next.some((a) => a.is_default)) {
         next[0] = { ...next[0], is_default: true };
       }
@@ -206,6 +225,34 @@ export function PartyFormModal({
       return;
     }
 
+    for (const a of addresses) {
+      const hasLine1 = a.address_line1.trim().length > 0;
+      const hasSecondary = Boolean(
+        a.address_line2?.trim() ||
+          a.city?.trim() ||
+          a.state?.trim() ||
+          a.state_code?.trim() ||
+          a.pincode?.trim()
+      );
+      if (!hasLine1 && hasSecondary) {
+        setErrorMsg(
+          language === 'hi'
+            ? 'अधूरे पते में गली/दुकान का पता (लाइन 1) भरें या खाली पता हटाएं।'
+            : 'Please enter the street/shop address line for each address, or remove incomplete rows.'
+        );
+        return;
+      }
+      const code = a.state_code?.trim().toUpperCase() || '';
+      if (code && !/^[0-9]{2}$/.test(code)) {
+        setErrorMsg(
+          language === 'hi'
+            ? 'राज्य कोड 2 अंकों का होना चाहिए (उदा. 27)।'
+            : 'State code must be a 2-digit GST state code (e.g. 27).'
+        );
+        return;
+      }
+    }
+
     const cleanAddresses = addresses
       .filter((a) => a.address_line1.trim().length > 0)
       .map((a, idx, arr) => ({
@@ -214,6 +261,7 @@ export function PartyFormModal({
         address_line2: a.address_line2?.trim() || null,
         city: a.city?.trim() || null,
         state: a.state?.trim() || null,
+        state_code: a.state_code?.trim().toUpperCase() || null,
         pincode: a.pincode?.trim() || null,
         is_default: arr.some((x) => x.is_default) ? Boolean(a.is_default) : idx === 0,
       }));
@@ -235,6 +283,7 @@ export function PartyFormModal({
         p_notes: notes.trim() || null,
         p_addresses: cleanAddresses,
         p_expected_version: editingParty ? editingParty.version : null,
+        p_price_tier: priceTier,
       });
       if (error) throw error;
 
@@ -419,7 +468,7 @@ export function PartyFormModal({
                         : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
                     }`}
                   >
-                    {t('parties.youllGet')}
+                    {t('parties.youllGet')} (+)
                   </button>
                   <button
                     type="button"
@@ -430,7 +479,7 @@ export function PartyFormModal({
                         : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
                     }`}
                   >
-                    {t('parties.youllGive')}
+                    {t('parties.youllGive')} (-)
                   </button>
                 </div>
               </div>
@@ -476,7 +525,7 @@ export function PartyFormModal({
 
             {showAdvanced && (
               <div className="p-4 border-t border-[var(--border)] space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
                       {t('parties.creditLimit')}
@@ -505,6 +554,23 @@ export function PartyFormModal({
                       className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
                     />
                   </div>
+                  {(business?.pack === 'wholesale' || priceTier !== 'standard') && (
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                        Price Tier
+                      </label>
+                      <select
+                        value={priceTier}
+                        onChange={(e) => setPriceTier(e.target.value as PriceTier)}
+                        className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      >
+                        <option value="standard">Standard</option>
+                        <option value="wholesale_a">Wholesale A</option>
+                        <option value="wholesale_b">Wholesale B</option>
+                        <option value="vip">VIP</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 {/* Multi-address section */}
@@ -529,9 +595,9 @@ export function PartyFormModal({
                       {t('common.loading')}
                     </p>
                   ) : (
-                    addresses.map((addr, idx) => (
+                    addresses.map((addr) => (
                       <div
-                        key={idx}
+                        key={addr.localId}
                         className="p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] space-y-2"
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -539,7 +605,7 @@ export function PartyFormModal({
                             type="text"
                             value={addr.label}
                             onChange={(e) =>
-                              updateAddressField(idx, 'label', e.target.value)
+                              updateAddressField(addr.localId, 'label', e.target.value)
                             }
                             placeholder="Label (Billing / Godown)"
                             className="h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs font-medium w-40"
@@ -551,7 +617,7 @@ export function PartyFormModal({
                                 name="defaultPartyAddr"
                                 checked={addr.is_default}
                                 onChange={() =>
-                                  updateAddressField(idx, 'is_default', true)
+                                  updateAddressField(addr.localId, 'is_default', true)
                                 }
                               />
                               <span>
@@ -560,7 +626,7 @@ export function PartyFormModal({
                             </label>
                             <button
                               type="button"
-                              onClick={() => removeAddressRow(idx)}
+                              onClick={() => removeAddressRow(addr.localId)}
                               aria-label="Remove address"
                               className="p-1 text-[var(--give)] hover:bg-[var(--give-soft)] rounded"
                             >
@@ -574,7 +640,7 @@ export function PartyFormModal({
                           value={addr.address_line1}
                           onChange={(e) =>
                             updateAddressField(
-                              idx,
+                              addr.localId,
                               'address_line1',
                               e.target.value
                             )
@@ -587,12 +653,12 @@ export function PartyFormModal({
                           className="w-full h-10 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs sm:text-sm"
                         />
 
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                           <input
                             type="text"
                             value={addr.city ?? ''}
                             onChange={(e) =>
-                              updateAddressField(idx, 'city', e.target.value)
+                              updateAddressField(addr.localId, 'city', e.target.value)
                             }
                             placeholder={language === 'hi' ? 'शहर' : 'City'}
                             className="h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs"
@@ -601,16 +667,30 @@ export function PartyFormModal({
                             type="text"
                             value={addr.state ?? ''}
                             onChange={(e) =>
-                              updateAddressField(idx, 'state', e.target.value)
+                              updateAddressField(addr.localId, 'state', e.target.value)
                             }
                             placeholder={language === 'hi' ? 'राज्य' : 'State'}
                             className="h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs"
                           />
                           <input
                             type="text"
+                            maxLength={2}
+                            value={addr.state_code ?? ''}
+                            onChange={(e) =>
+                              updateAddressField(
+                                addr.localId,
+                                'state_code',
+                                e.target.value.toUpperCase()
+                              )
+                            }
+                            placeholder={language === 'hi' ? 'कोड (27)' : 'Code (27)'}
+                            className="h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs font-mono uppercase tabular-nums"
+                          />
+                          <input
+                            type="text"
                             value={addr.pincode ?? ''}
                             onChange={(e) =>
-                              updateAddressField(idx, 'pincode', e.target.value)
+                              updateAddressField(addr.localId, 'pincode', e.target.value)
                             }
                             placeholder={language === 'hi' ? 'पिनकोड' : 'Pincode'}
                             className="h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"

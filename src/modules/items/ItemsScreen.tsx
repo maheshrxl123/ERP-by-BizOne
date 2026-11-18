@@ -262,7 +262,7 @@ export function ItemsScreen({
       {/* KPI Strip (Stock Value hidden unless view_profit capability) */}
       <section
         className={`grid gap-3 sm:gap-4 ${
-          canViewCost ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-3'
+          canViewCost ? 'grid-cols-2 lg:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3'
         }`}
       >
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -291,7 +291,9 @@ export function ItemsScreen({
         <button
           type="button"
           onClick={() => setFilterTab('out_of_stock')}
-          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors"
+          className={`rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors ${
+            canViewCost ? '' : 'col-span-2 sm:col-span-1'
+          }`}
         >
           <p className="text-xs font-medium text-[var(--give)]">
             {t('items.outOfStockItems')}

@@ -27,7 +27,9 @@ import type {
   OpenObligationRecord,
   PartyAddressRecord,
   PartyBalanceRecord,
+  PartyItemRateRecord,
   PartyLedgerEntryRecord,
+  PartySiteRecord,
   PaymentDirection,
   PaymentRecord,
 } from '../../types/bizone';
@@ -53,13 +55,20 @@ export function PartyDetailView({
   onNewBill,
   onOpenBill,
 }: PartyDetailViewProps) {
-  const { profile, isModuleEnabled, language, showToast, t } = useApp();
+  const { business, profile, isModuleEnabled, language, showToast, t } = useApp();
 
   const [party, setParty] = useState<PartyBalanceRecord | null>(null);
   const [addresses, setAddresses] = useState<PartyAddressRecord[]>([]);
   const [obligations, setObligations] = useState<OpenObligationRecord[]>([]);
   const [ledgerRows, setLedgerRows] = useState<PartyLedgerEntryRecord[]>([]);
   const [paymentsById, setPaymentsById] = useState<Record<string, PaymentRecord>>({});
+  const [sites, setSites] = useState<PartySiteRecord[]>([]);
+  const [rateCards, setRateCards] = useState<PartyItemRateRecord[]>([]);
+  const [newSiteOpen, setNewSiteOpen] = useState(false);
+  const [siteName, setSiteName] = useState('');
+  const [sitePhone, setSitePhone] = useState('');
+  const [siteAddr, setSiteAddr] = useState('');
+  const [savingSite, setSavingSite] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -108,7 +117,7 @@ export function PartyDetailView({
     setLoading(true);
     setLoadError(null);
     try {
-      const [balRes, addrRes, obRes, ledRes, payRes] = await Promise.all([
+      const [balRes, addrRes, obRes, ledRes, payRes, sitesRes, ratesRes] = await Promise.all([
         supabase
           .from('party_balances')
           .select('*')
@@ -139,6 +148,19 @@ export function PartyDetailView({
               .select('*')
               .eq('party_id', partyId)
           : Promise.resolve({ data: [], error: null }),
+        business?.pack === 'hardware'
+          ? supabase
+              .from('party_sites')
+              .select('*')
+              .eq('party_id', partyId)
+              .order('site_name', { ascending: true })
+          : Promise.resolve({ data: [], error: null }),
+        business?.pack === 'wholesale'
+          ? supabase
+              .from('party_item_rates')
+              .select('*')
+              .eq('party_id', partyId)
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (balRes.error) throw balRes.error;
@@ -151,6 +173,8 @@ export function PartyDetailView({
       setParty(balRes.data as PartyBalanceRecord);
       setAddresses((addrRes.data as PartyAddressRecord[] | null) ?? []);
       setObligations((obRes.data as OpenObligationRecord[] | null) ?? []);
+      setSites((sitesRes.data as PartySiteRecord[] | null) ?? []);
+      setRateCards((ratesRes.data as PartyItemRateRecord[] | null) ?? []);
 
       // Compute exact chronological running balance
       const rawEntries = (ledRes.data as PartyLedgerEntryRecord[] | null) ?? [];
@@ -173,7 +197,7 @@ export function PartyDetailView({
     } finally {
       setLoading(false);
     }
-  }, [partyId, paymentsEnabled]);
+  }, [partyId, paymentsEnabled, business?.pack]);
 
   useEffect(() => {
     void loadPartyDetail();
@@ -211,6 +235,34 @@ export function PartyDetailView({
     setDueNote('');
     setDueIdempKey(`due_${crypto.randomUUID()}`);
     setDueOpen(true);
+  };
+
+  const handleSaveSite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!siteName.trim()) return;
+    setSavingSite(true);
+    try {
+      const { error } = await supabase.rpc('save_party_site', {
+        p_party_id: partyId,
+        p_site_name: siteName.trim(),
+        p_contact_name: null,
+        p_contact_phone: sitePhone.trim() || null,
+        p_address: siteAddr.trim() || null,
+        p_site_id: null,
+        p_is_active: true,
+      });
+      if (error) throw error;
+      showToast('Contractor site added.', 'success');
+      setSiteName('');
+      setSitePhone('');
+      setSiteAddr('');
+      setNewSiteOpen(false);
+      await loadPartyDetail();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to add site.', 'error');
+    } finally {
+      setSavingSite(false);
+    }
   };
 
   const handleSaveDue = async (e: React.FormEvent) => {
@@ -726,6 +778,21 @@ export function PartyDetailView({
                       linkedPayment &&
                       linkedPayment.status === 'posted';
 
+                    const typeLabel =
+                      entry.entry_type === 'payment_receive'
+                        ? t('payments.receivePayment')
+                        : entry.entry_type === 'payment_give'
+                          ? t('payments.givePayment')
+                          : entry.entry_type === 'bill'
+                            ? `Sales Bill (${t('parties.youllGet')})`
+                            : entry.entry_type === 'purchase'
+                              ? `Purchase Bill (${t('parties.youllGive')})`
+                              : entry.entry_type === 'opening_balance'
+                                ? `${t('parties.openingBalance')} (${Number(entry.signed_amount) >= 0 ? t('parties.youllGet') : t('parties.youllGive')})`
+                                : entry.entry_type === 'khata_due'
+                                  ? `Due (${Number(entry.signed_amount) >= 0 ? t('parties.youllGet') : t('parties.youllGive')})`
+                                  : entry.entry_type.replace(/_/g, ' ');
+
                     return (
                       <tr
                         key={entry.id}
@@ -750,6 +817,9 @@ export function PartyDetailView({
                             ) : (
                               <span>{entry.reference_no || entry.entry_type}</span>
                             )}
+                            <span className="text-xs text-[var(--text-muted)] font-normal">
+                              {` · ${typeLabel}`}
+                            </span>
                             {entry.is_reversed
                               ? ` · ${t('payments.reversed')}`
                               : ''}
@@ -771,11 +841,19 @@ export function PartyDetailView({
                             : '—'}
                         </td>
                         <td className="py-3 px-4 text-right tabular-nums font-semibold whitespace-nowrap">
-                          {rb > 0
-                            ? `${formatINR(rb)} Dr`
-                            : rb < 0
-                              ? `${formatINR(Math.abs(rb))} Cr`
-                              : formatINR(0)}
+                          {rb > 0 ? (
+                            <span className="text-[var(--receive-text)]">
+                              {formatINR(rb)} ({t('parties.youllGet')})
+                            </span>
+                          ) : rb < 0 ? (
+                            <span className="text-[var(--give)]">
+                              {formatINR(Math.abs(rb))} ({t('parties.youllGive')})
+                            </span>
+                          ) : (
+                            <span className="text-[var(--text-muted)]">
+                              {formatINR(0)} ({t('parties.settled')})
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           {showReverse ? (
@@ -816,6 +894,21 @@ export function PartyDetailView({
                 const showReverse =
                   canReverse && linkedPayment && linkedPayment.status === 'posted';
 
+                const typeLabel =
+                  entry.entry_type === 'payment_receive'
+                    ? t('payments.receivePayment')
+                    : entry.entry_type === 'payment_give'
+                      ? t('payments.givePayment')
+                      : entry.entry_type === 'bill'
+                        ? `Sales Bill (${t('parties.youllGet')})`
+                        : entry.entry_type === 'purchase'
+                          ? `Purchase Bill (${t('parties.youllGive')})`
+                          : entry.entry_type === 'opening_balance'
+                            ? `${t('parties.openingBalance')} (${Number(entry.signed_amount) >= 0 ? t('parties.youllGet') : t('parties.youllGive')})`
+                            : entry.entry_type === 'khata_due'
+                              ? `Due (${Number(entry.signed_amount) >= 0 ? t('parties.youllGet') : t('parties.youllGive')})`
+                              : entry.entry_type.replace(/_/g, ' ');
+
                 return (
                   <div
                     key={entry.id}
@@ -842,7 +935,7 @@ export function PartyDetailView({
                           </p>
                         )}
                         <p className="text-xs text-[var(--text-muted)] tabular-nums">
-                          {formatDate(entry.entry_date)}
+                          {formatDate(entry.entry_date)} · {typeLabel}
                           {entry.is_reversed ? ` · ${t('payments.reversed')}` : ''}
                         </p>
                       </div>
@@ -857,12 +950,11 @@ export function PartyDetailView({
                           </p>
                         )}
                         <p className="text-[11px] text-[var(--text-muted)]">
-                          Bal:{' '}
                           {rb > 0
-                            ? `${formatINR(rb)} Dr`
+                            ? `${formatINR(rb)} (${t('parties.youllGet')})`
                             : rb < 0
-                              ? `${formatINR(Math.abs(rb))} Cr`
-                              : formatINR(0)}
+                              ? `${formatINR(Math.abs(rb))} (${t('parties.youllGive')})`
+                              : `${formatINR(0)} (${t('parties.settled')})`}
                         </p>
                       </div>
                     </div>
@@ -889,6 +981,106 @@ export function PartyDetailView({
           </>
         )}
       </section>
+
+      {/* Hardware Contractor Sites */}
+      {business?.pack === 'hardware' && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">
+              Contractor Project Sites ({sites.length})
+            </h2>
+            <button
+              type="button"
+              onClick={() => setNewSiteOpen((v) => !v)}
+              className="h-8 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1"
+            >
+              <IconPlus size={14} stroke={2} />
+              <span>Add Site</span>
+            </button>
+          </div>
+          {newSiteOpen && (
+            <form
+              onSubmit={handleSaveSite}
+              className="p-4 border-b border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end"
+            >
+              <input
+                required
+                value={siteName}
+                onChange={(e) => setSiteName(e.target.value)}
+                placeholder="Site Name *"
+                className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+              />
+              <input
+                value={sitePhone}
+                onChange={(e) => setSitePhone(e.target.value)}
+                placeholder="Supervisor Phone"
+                className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+              />
+              <input
+                value={siteAddr}
+                onChange={(e) => setSiteAddr(e.target.value)}
+                placeholder="Site Location / Address"
+                className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+              />
+              <button
+                type="submit"
+                disabled={savingSite}
+                className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold"
+              >
+                {savingSite ? 'Saving...' : 'Save Site'}
+              </button>
+            </form>
+          )}
+          {sites.length === 0 ? (
+            <p className="p-4 text-xs text-[var(--text-muted)]">
+              No contractor sites added for this party.
+            </p>
+          ) : (
+            <div className="divide-y divide-[var(--border)]">
+              {sites.map((s) => (
+                <div key={s.id} className="px-4 py-2.5 flex items-center justify-between text-xs">
+                  <div>
+                    <p className="font-semibold">{s.site_name}</p>
+                    <p className="text-[var(--text-muted)]">
+                      {[s.address, s.contact_phone].filter(Boolean).join(' · ') || 'Active site'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Wholesale Price Tier & Negotiated Rate Cards */}
+      {business?.pack === 'wholesale' && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              Wholesale Tier ({party.price_tier || 'standard'}) &amp; Rate Cards
+            </h2>
+            <span className="text-xs text-[var(--text-muted)] tabular-nums">
+              {rateCards.length} custom rate(s)
+            </span>
+          </div>
+          {rateCards.length === 0 ? (
+            <p className="p-4 text-xs text-[var(--text-muted)]">
+              No item-specific negotiated rate cards yet. Configure in Wholesale Workspace.
+            </p>
+          ) : (
+            <div className="divide-y divide-[var(--border)]">
+              {rateCards.map((rc) => (
+                <div key={rc.id} className="px-4 py-2.5 flex items-center justify-between text-xs">
+                  <span className="font-mono">{rc.item_id.slice(0, 8)}</span>
+                  <span className="tabular-nums font-semibold">
+                    {formatINR(Number(rc.custom_rate))} (min {rc.min_qty})
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Modals */}
       <PartyFormModal

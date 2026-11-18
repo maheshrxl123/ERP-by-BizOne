@@ -7,7 +7,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
-import { buildDueReminderText, formatINR } from '../../core/format';
+import { buildDueReminderText, copyToClipboard, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
 import type { OpenObligationRecord, PartyBalanceRecord } from '../../types/bizone';
 
@@ -38,6 +38,7 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
 
   useEffect(() => {
     if (!open) return;
+    let active = true;
     setMsgLang(language);
     setCopied(false);
 
@@ -48,7 +49,12 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
       .eq('direction_needed', 'receive')
       .order('entry_date', { ascending: true })
       .limit(5)
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) {
+          showToast(error.message, 'error');
+          return;
+        }
         const rows = (data as Array<Pick<OpenObligationRecord, 'reference_no' | 'remaining_amount' | 'due_date'>> | null) ?? [];
         setOpenRefs(
           rows.map((r) => ({
@@ -58,7 +64,11 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
           }))
         );
       });
-  }, [open, party.party_id, language]);
+
+    return () => {
+      active = false;
+    };
+  }, [open, party.party_id, language, showToast]);
 
   const reminderText = useMemo(
     () =>
@@ -82,15 +92,15 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
     : `https://wa.me/?text=${encodeURIComponent(reminderText)}`;
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(reminderText);
+    const ok = await copyToClipboard(reminderText);
+    if (ok) {
       setCopied(true);
       showToast(
         language === 'hi' ? 'रिमाइंडर कॉपी किया गया।' : 'Reminder copied.',
         'success'
       );
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } else {
       showToast('Clipboard permission unavailable.', 'error');
     }
   };
@@ -126,7 +136,10 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
           <div>
             <h2 className="text-base font-semibold">{t('parties.reminderTitle')}</h2>
             <p className="text-xs text-[var(--text-muted)] tabular-nums">
-              {party.name} · {t('parties.youllGet')} {formatINR(party.to_receive)}
+              {party.name} ·{' '}
+              {Number(party.to_give) > 0 && Number(party.to_receive) === 0
+                ? `${t('parties.youllGive')} ${formatINR(party.to_give)}`
+                : `${t('parties.youllGet')} ${formatINR(party.to_receive)}`}
             </p>
           </div>
           <button

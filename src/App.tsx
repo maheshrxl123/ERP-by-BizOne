@@ -3,7 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { IconAlertCircle, IconCheck, IconLoader2, IconX } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconCheck,
+  IconDatabaseOff,
+  IconLanguage,
+  IconLoader2,
+  IconRefresh,
+  IconX,
+} from '@tabler/icons-react';
 import { AppProvider, useApp } from './app/AppProvider';
 import { AppShell } from './app/AppShell';
 import { OfflineIndicator } from './components/pwa/OfflineIndicator';
@@ -52,14 +60,84 @@ function ToastStack() {
 
 function RootRouter() {
   const {
+    supabaseConfigured,
     session,
     authLoading,
     checkingSetup,
     needsSetup,
     passwordRecoveryMode,
     profile,
+    language,
+    setLanguage,
     signOut,
   } = useApp();
+
+  if (!supabaseConfigured) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-4 sm:p-6">
+        <div className="max-w-lg w-full rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8 space-y-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-xl bg-[var(--primary-soft)] text-[var(--primary-dark)] flex items-center justify-center shrink-0">
+                <IconDatabaseOff size={22} stroke={2} />
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold">
+                  {language === 'hi'
+                    ? 'सुपाबेस कनेक्शन कॉन्फ़िगर नहीं है'
+                    : 'Workspace Backend Not Configured'}
+                </h1>
+                <p className="text-xs text-[var(--text-muted)]">
+                  BizOne ERP
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
+              className="h-9 px-2.5 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1 hover:bg-[var(--surface-muted)]"
+            >
+              <IconLanguage size={15} stroke={2} />
+              <span>{language === 'en' ? 'हिन्दी' : 'EN'}</span>
+            </button>
+          </div>
+
+          <p className="text-sm text-[var(--text-muted)] leading-relaxed">
+            {language === 'hi'
+              ? 'ऐप शुरू हो चुका है, लेकिन आपका सुपाबेस प्रोजेक्ट अभी जुड़ा नहीं है। अपने प्रोजेक्ट रूट में .env फ़ाइल सेट करें और सर्वर रीस्टार्ट करें।'
+              : 'The BizOne server is running, but your Supabase project credentials are not set yet. Configure the environment file at your project root and restart the server.'}
+          </p>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-4 space-y-2 text-xs">
+            <p className="font-semibold text-[var(--text)]">
+              {language === 'hi' ? 'आवश्यक एनवायरनमेंट वेरिएबल्स (.env):' : 'Required .env variables:'}
+            </p>
+            <ul className="font-mono text-[var(--text-muted)] space-y-1">
+              <li>VITE_SUPABASE_URL</li>
+              <li>VITE_SUPABASE_ANON_KEY</li>
+              <li>SUPABASE_SERVICE_ROLE_KEY</li>
+              <li>APP_ENCRYPTION_KEY</li>
+            </ul>
+            <p className="text-[var(--text-muted)] pt-1">
+              {language === 'hi' ? 'सेटअप स्क्रिप्ट चलाएं:' : 'Run provisioning & env check:'}{' '}
+              <code className="font-mono text-[var(--text)]">npm run setup</code>
+            </p>
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5"
+            >
+              <IconRefresh size={16} stroke={2} />
+              <span>{language === 'hi' ? 'पुनः जांचें' : 'Check Again'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (authLoading || checkingSetup) {
     return (

@@ -5,7 +5,6 @@ export interface ModuleDefinition {
   descriptionEn: string;
   descriptionHi: string;
   level: 'basic' | 'advanced';
-  phase: string;
   dependsOn: string[];
 }
 
@@ -17,7 +16,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Counter billing, quotations, credit notes, print and share links.',
     descriptionHi: 'काउंटर बिलिंग, कोटेशन, क्रेडिट नोट, प्रिंट और शेयर लिंक।',
     level: 'basic',
-    phase: 'P4',
     dependsOn: [],
   },
   {
@@ -27,7 +25,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Customer and supplier ledgers, opening balances, and payment reminders.',
     descriptionHi: 'ग्राहक और सप्लायर खाता, शुरुआती शेष और भुगतान रिमाइंडर।',
     level: 'basic',
-    phase: 'P2',
     dependsOn: [],
   },
   {
@@ -37,7 +34,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Item catalogue, unit conversions, multi-photo gallery, and low-stock alerts.',
     descriptionHi: 'सामान सूची, इकाई रूपांतरण, कई फोटो गैलरी और कम स्टॉक अलर्ट।',
     level: 'basic',
-    phase: 'P3',
     dependsOn: [],
   },
   {
@@ -47,7 +43,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Record supplier invoices, freight, and purchase returns.',
     descriptionHi: 'सप्लायर बिल, भाड़ा और खरीद वापसी दर्ज करें।',
     level: 'basic',
-    phase: 'P5',
     dependsOn: ['inventory', 'parties'],
   },
   {
@@ -57,7 +52,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Receive and pay via cash, UPI, bank transfer, or card.',
     descriptionHi: 'नकद, यूपीआई, बैंक या कार्ड से भुगतान प्राप्त और दर्ज करें।',
     level: 'basic',
-    phase: 'P2',
     dependsOn: ['parties'],
   },
   {
@@ -67,7 +61,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Track shop rent, electricity, transport, and daily expenses.',
     descriptionHi: 'दुकान किराया, बिजली, परिवहन और दैनिक खर्च दर्ज करें।',
     level: 'basic',
-    phase: 'P5',
     dependsOn: [],
   },
   {
@@ -77,7 +70,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Sales register, stock summary, dues ageing, and GST reports.',
     descriptionHi: 'बिक्री रजिस्टर, स्टॉक सारांश, बकाया और जीएसटी रिपोर्ट।',
     level: 'basic',
-    phase: 'P5',
     dependsOn: [],
   },
   {
@@ -87,7 +79,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'HSN/SAC codes, CGST/SGST/IGST splits, and rate summaries.',
     descriptionHi: 'HSN/SAC कोड, CGST/SGST/IGST विभाजन और कर सारांश।',
     level: 'basic',
-    phase: 'P4',
     dependsOn: [],
   },
   {
@@ -97,7 +88,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Download encrypted local snapshots and verify checksums.',
     descriptionHi: 'एन्क्रिप्टेड लोकल बैकअप डाउनलोड करें और रीस्टोर करें।',
     level: 'basic',
-    phase: 'P5',
     dependsOn: [],
   },
   {
@@ -107,7 +97,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Track lot numbers, manufacturing dates, and expiry lockouts.',
     descriptionHi: 'बैच नंबर, निर्माण तिथि और एक्सपायरी अलर्ट।',
     level: 'advanced',
-    phase: 'P6',
     dependsOn: ['inventory'],
   },
   {
@@ -117,7 +106,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Matrix stock management for apparel and multi-variant SKUs.',
     descriptionHi: 'कपड़ों और मल्टी-वेरिएंट आइटम के लिए मैट्रिक्स स्टॉक।',
     level: 'advanced',
-    phase: 'P6',
     dependsOn: ['inventory'],
   },
   {
@@ -127,7 +115,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Manage shop floor and godown stock transfers.',
     descriptionHi: 'दुकान और गोदाम के बीच स्टॉक ट्रांसफर प्रबंधित करें।',
     level: 'advanced',
-    phase: 'P7',
     dependsOn: ['inventory'],
   },
   {
@@ -137,7 +124,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Vouchers, trial balance, P&L, balance sheet, and reconciliation.',
     descriptionHi: 'वाउचर, ट्रायल बैलेंस, लाभ-हानि और बैलेंस शीट।',
     level: 'advanced',
-    phase: 'P7',
     dependsOn: ['billing'],
   },
   {
@@ -147,7 +133,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Direct GSP integration for GST e-invoicing.',
     descriptionHi: 'जीएसटी ई-इनवॉइसिंग के लिए GSP एकीकरण।',
     level: 'advanced',
-    phase: 'P7',
     dependsOn: ['tax', 'billing'],
   },
   {
@@ -157,7 +142,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Send automated bill PDFs and due reminders via owner provider.',
     descriptionHi: 'बिल और बकाया रिमाइंडर सीधे ग्राहकों को भेजें।',
     level: 'advanced',
-    phase: 'P7',
     dependsOn: [],
   },
   {
@@ -167,7 +151,6 @@ export const MODULE_REGISTRY: ModuleDefinition[] = [
     descriptionEn: 'Ask business questions in English/Hindi using your own AI API key.',
     descriptionHi: 'अपनी एआई कुंजी से व्यवसाय से जुड़े प्रश्न पूछें।',
     level: 'advanced',
-    phase: 'P7',
     dependsOn: [],
   },
 ];

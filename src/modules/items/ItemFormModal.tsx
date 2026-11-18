@@ -15,13 +15,17 @@ import {
 } from '../../components/upload/ImageUpload';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
+import { convertToBaseQty } from '../../core/units';
 import type {
   BrandRecord,
   ItemCatalogRecord,
   ItemCategoryRecord,
   ItemImageRecord,
+  ItemType,
   ItemUnitRecord,
+  PriceTier,
   UnitConversionRecord,
+  WholesaleSlab,
 } from '../../types/bizone';
 
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
@@ -40,6 +44,7 @@ interface ItemFormModalProps {
 }
 
 interface ConversionDraft {
+  localId: string;
   alternate_unit_id: string;
   conversion_factor: string;
 }
@@ -63,6 +68,7 @@ export function ItemFormModal({
   const uploadedDuringSessionRef = useRef<Set<string>>(new Set());
 
   const [name, setName] = useState('');
+  const [itemType, setItemType] = useState<ItemType>('goods');
   const [sku, setSku] = useState('');
   const [barcode, setBarcode] = useState('');
   const [categoryId, setCategoryId] = useState('');
@@ -82,6 +88,9 @@ export function ItemFormModal({
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   const [notes, setNotes] = useState('');
   const [packMeta, setPackMeta] = useState<Record<string, string>>({});
+  const [wholesaleSlabs, setWholesaleSlabs] = useState<
+    Array<{ localId: string; min_qty: string; tier: PriceTier; rate: string }>
+  >([]);
 
   const [conversions, setConversions] = useState<ConversionDraft[]>([]);
   const [images, setImages] = useState<UploadedImageItem[]>([]);
@@ -118,6 +127,7 @@ export function ItemFormModal({
 
     if (item) {
       setName(item.name);
+      setItemType(item.item_type === 'service' ? 'service' : 'goods');
       setSku(item.sku || '');
       setBarcode(item.barcode || '');
       setCategoryId(item.category_id || '');
@@ -147,8 +157,19 @@ export function ItemFormModal({
       }
       setPackMeta(pm);
 
+      const slabsRaw = Array.isArray(item.wholesale_slabs) ? item.wholesale_slabs : [];
+      setWholesaleSlabs(
+        slabsRaw.map((s) => ({
+          localId: crypto.randomUUID(),
+          min_qty: String(s.min_qty ?? 1),
+          tier: (s.tier || 'standard') as PriceTier,
+          rate: String(s.rate ?? 0),
+        }))
+      );
+
       setConversions(
         initialConversions.map((c) => ({
+          localId: c.id || crypto.randomUUID(),
           alternate_unit_id: c.alternate_unit_id,
           conversion_factor: String(c.conversion_factor),
         }))
@@ -166,6 +187,7 @@ export function ItemFormModal({
       setShowAdvanced(Boolean(item.allow_negative_stock || item.notes || Object.keys(pm).length > 0));
     } else {
       setName('');
+      setItemType(business?.pack === 'service' ? 'service' : 'goods');
       setSku('');
       setBarcode('');
       setCategoryId('');
@@ -183,15 +205,24 @@ export function ItemFormModal({
       setAllowNegativeStock(false);
       setNotes('');
       setPackMeta({});
+      setWholesaleSlabs([]);
       setConversions([]);
       setImages([]);
-      setShowAdvanced(false);
+      setShowAdvanced(
+        Boolean(
+          business?.pack &&
+            ['medical', 'hardware', 'kirana', 'clothing', 'service'].includes(
+              business.pack
+            )
+        )
+      );
     }
   }, [
     open,
     item,
     defaultPcsId,
     business?.tax_mode,
+    business?.pack,
     initialConversions,
     initialImages,
     signedUrlCache,
@@ -274,7 +305,11 @@ export function ItemFormModal({
     if (!available) return;
     setConversions((prev) => [
       ...prev,
-      { alternate_unit_id: available.id, conversion_factor: '10' },
+      {
+        localId: crypto.randomUUID(),
+        alternate_unit_id: available.id,
+        conversion_factor: '10',
+      },
     ]);
   };
 
@@ -313,6 +348,10 @@ export function ItemFormModal({
       setError('Low stock alert level cannot be negative.');
       return;
     }
+    if (!item && (!Number.isFinite(openQty) || openQty < 0)) {
+      setError('Opening stock cannot be negative.');
+      return;
+    }
 
     const cleanConvs: Array<{
       alternate_unit_id: string;
@@ -322,6 +361,10 @@ export function ItemFormModal({
       if (!c.alternate_unit_id) continue;
       if (c.alternate_unit_id === baseUnitId) {
         setError('Alternate unit cannot be identical to base unit.');
+        return;
+      }
+      if (cleanConvs.some((x) => x.alternate_unit_id === c.alternate_unit_id)) {
+        setError('Duplicate alternate unit conversion.');
         return;
       }
       const factor = Number(c.conversion_factor);
@@ -335,6 +378,22 @@ export function ItemFormModal({
       });
     }
 
+    if (!item && openQty > 0) {
+      const selectedBase = units.find((u) => u.id === baseUnitId);
+      try {
+        convertToBaseQty({
+          qty: openQty,
+          unitId: openingUnitId || baseUnitId,
+          baseUnitId,
+          baseAllowDecimal: selectedBase?.allow_decimal ?? true,
+          conversions: cleanConvs,
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Invalid opening stock quantity.');
+        return;
+      }
+    }
+
     const cleanImages = images.map((img, idx) => ({
       file_id: img.fileId,
       sort_order: idx,
@@ -345,6 +404,19 @@ export function ItemFormModal({
     for (const [k, v] of Object.entries(packMeta)) {
       if (v.trim()) cleanPackMeta[k] = v.trim();
     }
+
+    const cleanSlabs: WholesaleSlab[] = [];
+    for (const s of wholesaleSlabs) {
+      const mq = Number(s.min_qty);
+      const rt = Number(s.rate);
+      if (!Number.isFinite(mq) || mq <= 0 || !Number.isFinite(rt) || rt < 0) {
+        setError('Wholesale slab min qty must be > 0 and rate >= 0.');
+        return;
+      }
+      cleanSlabs.push({ min_qty: mq, tier: s.tier, rate: rt });
+    }
+
+    const isService = itemType === 'service';
 
     setSaving(true);
     try {
@@ -362,15 +434,17 @@ export function ItemFormModal({
         p_gst_rate: Number(gstRate || 0),
         p_hsn_code: hsnCode.trim() || null,
         p_tax_inclusive: taxInclusive,
-        p_low_stock_alert: alertQty,
-        p_allow_negative_stock: allowNegativeStock,
-        p_opening_stock: item ? 0 : Math.max(0, openQty),
-        p_opening_unit_id: item ? null : openingUnitId || baseUnitId,
+        p_low_stock_alert: isService ? 0 : alertQty,
+        p_allow_negative_stock: isService ? true : allowNegativeStock,
+        p_opening_stock: item || isService ? 0 : Math.max(0, openQty),
+        p_opening_unit_id: item || isService ? null : openingUnitId || baseUnitId,
         p_pack_metadata: cleanPackMeta,
         p_notes: notes.trim() || null,
         p_conversions: cleanConvs,
         p_images: cleanImages,
         p_expected_version: item?.version ?? null,
+        p_item_type: itemType,
+        p_wholesale_slabs: cleanSlabs,
       });
 
       if (rpcErr) throw rpcErr;
@@ -458,8 +532,37 @@ export function ItemFormModal({
             </div>
           )}
 
-          {/* Core Identity */}
+          {/* Item Type & Core Identity */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div className="sm:col-span-2 flex flex-wrap items-center justify-between gap-2 pb-1">
+              <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
+                {(
+                  [
+                    { id: 'goods', label: language === 'hi' ? 'सामान (Goods / Stock)' : 'Goods (Tracked Stock)' },
+                    { id: 'service', label: language === 'hi' ? 'सेवा (Service / No Stock)' : 'Service (Non-Stock)' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setItemType(opt.id)}
+                    className={`h-9 px-3 text-xs font-medium ${
+                      itemType === opt.id
+                        ? 'bg-[var(--primary)] text-[var(--on-primary)]'
+                        : 'bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {itemType === 'service' && (
+                <span className="text-[11px] text-[var(--text-muted)]">
+                  Stock deduction skipped automatically on bills
+                </span>
+              )}
+            </div>
+
             <div className="sm:col-span-2">
               <label className="block text-xs font-medium mb-1">
                 {t('items.name')} *
@@ -468,7 +571,7 @@ export function ItemFormModal({
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g., Fortune Mustard Oil 1L"
+                placeholder={itemType === 'service' ? 'e.g., AC Servicing & Gas Refill' : 'e.g., Fortune Mustard Oil 1L'}
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                 required
               />
@@ -670,13 +773,13 @@ export function ItemFormModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
               <div>
                 <label className="block text-xs font-medium mb-1">
-                  {t('items.hsnCode')}
+                  {itemType === 'service' ? 'SAC / HSN Code' : t('items.hsnCode')}
                 </label>
                 <input
                   type="text"
                   value={hsnCode}
                   onChange={(e) => setHsnCode(e.target.value)}
-                  placeholder="e.g., 1514"
+                  placeholder={itemType === 'service' ? 'e.g., 998714' : 'e.g., 1514'}
                   className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
                 />
               </div>
@@ -689,6 +792,114 @@ export function ItemFormModal({
                 <span>{t('items.taxInclusive')}</span>
               </label>
             </div>
+
+            {(business?.pack === 'wholesale' || wholesaleSlabs.length > 0) && (
+              <div className="pt-3 border-t border-[var(--border)] space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">
+                    Wholesale Tier &amp; Bulk Qty Slabs
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setWholesaleSlabs((prev) => [
+                        ...prev,
+                        {
+                          localId: crypto.randomUUID(),
+                          min_qty: '10',
+                          tier: 'standard',
+                          rate: sellingPrice || '0',
+                        },
+                      ])
+                    }
+                    className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                  >
+                    <IconPlus size={14} stroke={2.5} />
+                    <span>Add Price Slab</span>
+                  </button>
+                </div>
+                {wholesaleSlabs.length === 0 ? (
+                  <p className="text-[11px] text-[var(--text-muted)]">
+                    Define min-qty or party-tier rates (Standard / Wholesale A / Wholesale B / VIP).
+                  </p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {wholesaleSlabs.map((slab) => (
+                      <div key={slab.localId} className="grid grid-cols-12 gap-2 items-center">
+                        <div className="col-span-3">
+                          <input
+                            type="number"
+                            min="1"
+                            step="any"
+                            value={slab.min_qty}
+                            onChange={(e) =>
+                              setWholesaleSlabs((prev) =>
+                                prev.map((r) =>
+                                  r.localId === slab.localId ? { ...r, min_qty: e.target.value } : r
+                                )
+                              )
+                            }
+                            placeholder="Min Qty"
+                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                          />
+                        </div>
+                        <div className="col-span-4">
+                          <select
+                            value={slab.tier}
+                            onChange={(e) =>
+                              setWholesaleSlabs((prev) =>
+                                prev.map((r) =>
+                                  r.localId === slab.localId
+                                    ? { ...r, tier: e.target.value as PriceTier }
+                                    : r
+                                )
+                              )
+                            }
+                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                          >
+                            <option value="standard">All / Standard</option>
+                            <option value="wholesale_a">Wholesale A</option>
+                            <option value="wholesale_b">Wholesale B</option>
+                            <option value="vip">VIP</option>
+                          </select>
+                        </div>
+                        <div className="col-span-4">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={slab.rate}
+                            onChange={(e) =>
+                              setWholesaleSlabs((prev) =>
+                                prev.map((r) =>
+                                  r.localId === slab.localId ? { ...r, rate: e.target.value } : r
+                                )
+                              )
+                            }
+                            placeholder="Rate ₹"
+                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                          />
+                        </div>
+                        <div className="col-span-1 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWholesaleSlabs((prev) =>
+                                prev.filter((r) => r.localId !== slab.localId)
+                              )
+                            }
+                            aria-label="Remove slab"
+                            className="p-1.5 rounded text-[var(--give)] hover:bg-[var(--give-soft)]"
+                          >
+                            <IconTrash size={14} stroke={2} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Units, Conversions & Stock */}
@@ -703,7 +914,14 @@ export function ItemFormModal({
                   onChange={(e) => {
                     const nextId = e.target.value;
                     setBaseUnitId(nextId);
-                    if (!openingUnitId || openingUnitId === baseUnitId) {
+                    setConversions((prev) =>
+                      prev.filter((row) => row.alternate_unit_id !== nextId)
+                    );
+                    if (
+                      !openingUnitId ||
+                      openingUnitId === baseUnitId ||
+                      openingUnitId === nextId
+                    ) {
                       setOpeningUnitId(nextId);
                     }
                   }}
@@ -718,7 +936,7 @@ export function ItemFormModal({
                 </select>
               </div>
 
-              {!item && (
+              {!item && itemType === 'goods' && (
                 <div>
                   <label className="block text-xs font-medium mb-1">
                     {t('items.openingStock')}
@@ -748,20 +966,22 @@ export function ItemFormModal({
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-medium mb-1">
-                  {t('items.lowStockAlert')}
-                </label>
-                <input
-                  type="number"
-                  step="any"
-                  min="0"
-                  inputMode="decimal"
-                  value={lowStockAlert}
-                  onChange={(e) => setLowStockAlert(e.target.value)}
-                  className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                />
-              </div>
+              {itemType === 'goods' && (
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    {t('items.lowStockAlert')}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    inputMode="decimal"
+                    value={lowStockAlert}
+                    onChange={(e) => setLowStockAlert(e.target.value)}
+                    className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Alternate unit conversions */}
@@ -787,23 +1007,27 @@ export function ItemFormModal({
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {conversions.map((conv, idx) => (
+                  {conversions.map((conv) => (
                     <div
-                      key={idx}
+                      key={conv.localId}
                       className="flex flex-wrap items-center gap-2 text-xs"
                     >
                       <span className="text-[var(--text-muted)]">1</span>
                       <select
                         value={conv.alternate_unit_id}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const nextAltId = e.target.value;
                           setConversions((prev) =>
-                            prev.map((row, i) =>
-                              i === idx
-                                ? { ...row, alternate_unit_id: e.target.value }
+                            prev.map((row) =>
+                              row.localId === conv.localId
+                                ? { ...row, alternate_unit_id: nextAltId }
                                 : row
                             )
-                          )
-                        }
+                          );
+                          if (openingUnitId === conv.alternate_unit_id) {
+                            setOpeningUnitId(nextAltId || baseUnitId);
+                          }
+                        }}
                         className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
                       >
                         {units
@@ -823,8 +1047,8 @@ export function ItemFormModal({
                         value={conv.conversion_factor}
                         onChange={(e) =>
                           setConversions((prev) =>
-                            prev.map((row, i) =>
-                              i === idx
+                            prev.map((row) =>
+                              row.localId === conv.localId
                                 ? { ...row, conversion_factor: e.target.value }
                                 : row
                             )
@@ -837,11 +1061,14 @@ export function ItemFormModal({
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
+                        onClick={() => {
                           setConversions((prev) =>
-                            prev.filter((_, i) => i !== idx)
-                          )
-                        }
+                            prev.filter((row) => row.localId !== conv.localId)
+                          );
+                          if (openingUnitId === conv.alternate_unit_id) {
+                            setOpeningUnitId(baseUnitId);
+                          }
+                        }}
                         aria-label="Remove conversion"
                         className="p-1.5 rounded text-[var(--give)] hover:bg-[var(--give-soft)] ml-auto"
                       >
@@ -889,17 +1116,51 @@ export function ItemFormModal({
             </button>
             {showAdvanced && (
               <div className="p-4 space-y-3.5 border-t border-[var(--border)]">
-                <label className="inline-flex items-center gap-2 text-xs font-medium">
-                  <input
-                    type="checkbox"
-                    checked={allowNegativeStock}
-                    onChange={(e) => setAllowNegativeStock(e.target.checked)}
-                  />
-                  <span>{t('items.allowNegativeStock')}</span>
-                </label>
+                {itemType === 'goods' && (
+                  <label className="inline-flex items-center gap-2 text-xs font-medium">
+                    <input
+                      type="checkbox"
+                      checked={allowNegativeStock}
+                      onChange={(e) => setAllowNegativeStock(e.target.checked)}
+                    />
+                    <span>{t('items.allowNegativeStock')}</span>
+                  </label>
+                )}
+
+                {business?.pack === 'kirana' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Shelf / Rack Location
+                      </label>
+                      <input
+                        type="text"
+                        value={packMeta.shelf || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, shelf: e.target.value }))
+                        }
+                        placeholder="e.g., Rack A-2"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      />
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-xs font-medium pt-4">
+                      <input
+                        type="checkbox"
+                        checked={packMeta.loose_weight === 'true'}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({
+                            ...p,
+                            loose_weight: e.target.checked ? 'true' : '',
+                          }))
+                        }
+                      />
+                      <span>Enable Loose Weight (₹ ↔ Qty) Billing</span>
+                    </label>
+                  </div>
+                )}
 
                 {business?.pack === 'medical' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium mb-1">
                         Salt / Generic Composition
@@ -928,16 +1189,81 @@ export function ItemFormModal({
                         <option value="">OTC / Normal</option>
                         <option value="H">Schedule H</option>
                         <option value="H1">Schedule H1</option>
+                        <option value="X">Schedule X</option>
+                        <option value="NRX">NRx</option>
                       </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Manufacturer / Lab
+                      </label>
+                      <input
+                        type="text"
+                        value={packMeta.manufacturer || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, manufacturer: e.target.value }))
+                        }
+                        placeholder="e.g., Cipla / Sun Pharma"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {business?.pack === 'clothing' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Fabric / Material
+                      </label>
+                      <input
+                        type="text"
+                        value={packMeta.fabric || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, fabric: e.target.value }))
+                        }
+                        placeholder="e.g., 100% Cotton"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Collection / Season
+                      </label>
+                      <input
+                        type="text"
+                        value={packMeta.season || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, season: e.target.value }))
+                        }
+                        placeholder="e.g., Summer / Festive"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      />
                     </div>
                   </div>
                 )}
 
                 {business?.pack === 'hardware' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-medium mb-1">
-                        Coverage / Dimension (e.g. Sq Ft per Box)
+                        Sq.Ft per Box / Coverage
+                      </label>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={packMeta.sqft_per_box || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, sqft_per_box: e.target.value }))
+                        }
+                        placeholder="e.g., 16"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Coverage Note
                       </label>
                       <input
                         type="text"
@@ -945,7 +1271,7 @@ export function ItemFormModal({
                         onChange={(e) =>
                           setPackMeta((p) => ({ ...p, coverage: e.target.value }))
                         }
-                        placeholder="e.g., 14 sq ft"
+                        placeholder="e.g., 110 sq.ft / L"
                         className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                       />
                     </div>
@@ -964,7 +1290,44 @@ export function ItemFormModal({
                           }))
                         }
                         placeholder="e.g., 12"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {(business?.pack === 'service' || itemType === 'service') && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        SAC Code
+                      </label>
+                      <input
+                        type="text"
+                        value={packMeta.sac_code || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({ ...p, sac_code: e.target.value }))
+                        }
+                        placeholder="e.g., 998714"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        Est. Duration (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={packMeta.duration_mins || ''}
+                        onChange={(e) =>
+                          setPackMeta((p) => ({
+                            ...p,
+                            duration_mins: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g., 60"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
                       />
                     </div>
                   </div>

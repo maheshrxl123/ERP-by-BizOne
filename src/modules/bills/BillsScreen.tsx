@@ -89,6 +89,7 @@ export function BillsScreen({
       ]);
 
       if (listRes.error) throw listRes.error;
+      if (sumRes.error) throw sumRes.error;
       setBills((listRes.data as BillRecord[] | null) ?? []);
       if (sumRes.data) {
         setSummary(sumRes.data as BillingSummary);

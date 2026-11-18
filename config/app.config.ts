@@ -20,7 +20,7 @@ export const APP_CONFIG = {
   appName: import.meta.env.VITE_APP_NAME || 'BizOne ERP',
   maintainer: 'BizOne Technologies',
   license: 'Apache-2.0',
-  version: '0.1.0-phase1',
+  version: '1.0.0',
   defaultLocale: 'en-IN',
   currencyCode: 'INR',
   currencySymbol: '₹',

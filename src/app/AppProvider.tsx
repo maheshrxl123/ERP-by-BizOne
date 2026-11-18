@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from 'react';
-import { supabase } from '../core/supabase';
+import { isSupabaseConfigured, supabase } from '../core/supabase';
 import enDict from '../i18n/en.json';
 import hiDict from '../i18n/hi.json';
 import type {
@@ -35,6 +35,7 @@ interface SignedUrlEntry {
 const SIGNED_URL_TTL_MS = 500 * 1000;
 
 interface AppContextValue {
+  supabaseConfigured: boolean;
   session: Session | null;
   authLoading: boolean;
   passwordRecoveryMode: boolean;
@@ -154,6 +155,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refreshSetupStatus = useCallback(async () => {
+    if (!isSupabaseConfigured) {
+      setNeedsSetup(false);
+      setCheckingSetup(false);
+      return;
+    }
     setCheckingSetup(true);
     try {
       const res = await fetch('/api/setup/status');
@@ -208,7 +214,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshWorkspace = useCallback(async () => {
-    if (!userId) {
+    if (!isSupabaseConfigured || !userId) {
       prefsHydratedForUserRef.current = null;
       setBusiness(null);
       setProfile(null);
@@ -289,6 +295,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [userId, userEmail]);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setCheckingSetup(false);
+      setAuthLoading(false);
+      return;
+    }
+
     refreshSetupStatus();
 
     supabase.auth.getSession().then(({ data }) => {
@@ -389,6 +401,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider
       value={{
+        supabaseConfigured: isSupabaseConfigured,
         session,
         authLoading,
         passwordRecoveryMode,

@@ -1,5 +1,6 @@
 import {
   IconAlertCircle,
+  IconArrowsExchange,
   IconBarcode,
   IconCheck,
   IconDeviceFloppy,
@@ -11,7 +12,8 @@ import {
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
-import { addDaysLocalIso, formatINR, todayLocalIso } from '../../core/format';
+import { FileUpload, type UploadedFileItem } from '../../components/upload/FileUpload';
+import { addDaysLocalIso, formatDate, formatINR, todayLocalIso } from '../../core/format';
 import {
   amountInWordsINR,
   calculateBillPreview,
@@ -20,13 +22,26 @@ import {
 } from '../../core/money';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
+import {
+  classifyBatchExpiry,
+  computeLooseWeightFromAmount,
+  computeMrpSavings,
+  resolveWholesaleUnitPrice,
+  sortBatchesFefo,
+} from '../../packs/registry';
 import type {
   BillLineRecord,
   BillRecord,
+  ItemBatchRecord,
   ItemCatalogRecord,
   ItemUnitRecord,
+  ItemVariantRecord,
   PartyBalanceRecord,
+  PartyItemRateRecord,
+  PartySiteRecord,
   PaymentMode,
+  SaltSubstituteRow,
+  ServiceJobRecord,
   UnitConversionRecord,
 } from '../../types/bizone';
 
@@ -48,6 +63,11 @@ interface DraftLineRow {
   unitPrice: string;
   discountPct: string;
   taxInclusive: boolean;
+  batchId: string;
+  variantId: string;
+  serialNo: string;
+  looseRsInput: string;
+  priceSource?: 'custom_rate' | 'slab' | 'base';
 }
 
 const PAYMENT_MODES: PaymentMode[] = [
@@ -72,12 +92,17 @@ export function BillFormModal({
   const taxModuleEnabled = isModuleEnabled('tax');
   const partiesEnabled = isModuleEnabled('parties');
   const paymentsEnabled = isModuleEnabled('payments');
+  const pack = business?.pack || 'general_retail';
+  const batchExpiryEnabled = isModuleEnabled('batch_expiry') || pack === 'medical';
+  const variantsEnabled = isModuleEnabled('variants') || pack === 'clothing';
   const gstActiveForBiz = Boolean(business?.gst_registered) && taxModuleEnabled;
 
   const [docType, setDocType] = useState<'tax_invoice' | 'bill_of_supply' | 'quotation'>(
     'tax_invoice'
   );
   const [partyId, setPartyId] = useState<string>('');
+  const [siteId, setSiteId] = useState<string>('');
+  const [jobId, setJobId] = useState<string>('');
   const [billDate, setBillDate] = useState(todayLocalIso());
   const [dueDate, setDueDate] = useState('');
   const [validUntil, setValidUntil] = useState('');
@@ -87,6 +112,18 @@ export function BillFormModal({
   const [notes, setNotes] = useState('');
   const [terms, setTerms] = useState('');
 
+  // Medical Prescription & Substitutes
+  const [rxPatientName, setRxPatientName] = useState('');
+  const [rxPatientAge, setRxPatientAge] = useState('');
+  const [rxPatientPhone, setRxPatientPhone] = useState('');
+  const [rxDoctorName, setRxDoctorName] = useState('');
+  const [rxDoctorRegNo, setRxDoctorRegNo] = useState('');
+  const [rxNotes, setRxNotes] = useState('');
+  const [rxAttachment, setRxAttachment] = useState<UploadedFileItem | null>(null);
+  const [subTargetLineId, setSubTargetLineId] = useState<string | null>(null);
+  const [substitutes, setSubstitutes] = useState<SaltSubstituteRow[]>([]);
+  const [loadingSubstitutes, setLoadingSubstitutes] = useState(false);
+
   const [lines, setLines] = useState<DraftLineRow[]>([]);
   const [paidAmount, setPaidAmount] = useState('');
   const [paidTouched, setPaidTouched] = useState(false);
@@ -94,7 +131,12 @@ export function BillFormModal({
   const [paymentReference, setPaymentReference] = useState('');
 
   const [parties, setParties] = useState<PartyBalanceRecord[]>([]);
+  const [partySites, setPartySites] = useState<PartySiteRecord[]>([]);
+  const [partyRatesByItem, setPartyRatesByItem] = useState<Record<string, PartyItemRateRecord>>({});
+  const [serviceJobs, setServiceJobs] = useState<ServiceJobRecord[]>([]);
   const [catalogItems, setCatalogItems] = useState<ItemCatalogRecord[]>([]);
+  const [batchesByItem, setBatchesByItem] = useState<Record<string, ItemBatchRecord[]>>({});
+  const [variantsByItem, setVariantsByItem] = useState<Record<string, ItemVariantRecord[]>>({});
   const [conversionsByItem, setConversionsByItem] = useState<
     Record<string, Array<{ unitId: string; code: string; factor: number }>>
   >({});
@@ -110,35 +152,102 @@ export function BillFormModal({
   const cashierMaxDiscount = Number(business?.cashier_max_discount_pct ?? 10);
   const allowCashierPriceReduction = Boolean(business?.allow_cashier_price_override);
 
+  const loadPartyPackDetails = useCallback(
+    async (pid: string) => {
+      if (!pid || !partiesEnabled) {
+        setPartySites([]);
+        setPartyRatesByItem({});
+        return;
+      }
+      const [sitesRes, ratesRes] = await Promise.all([
+        pack === 'hardware'
+          ? supabase
+              .from('party_sites')
+              .select('*')
+              .eq('party_id', pid)
+              .eq('is_active', true)
+              .order('site_name')
+          : Promise.resolve({ data: [], error: null }),
+        pack === 'wholesale'
+          ? supabase
+              .from('party_item_rates')
+              .select('*')
+              .eq('party_id', pid)
+          : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (!sitesRes.error) {
+        setPartySites((sitesRes.data as PartySiteRecord[] | null) ?? []);
+      }
+      if (!ratesRes.error) {
+        const rateMap: Record<string, PartyItemRateRecord> = {};
+        for (const r of (ratesRes.data as PartyItemRateRecord[] | null) ?? []) {
+          rateMap[r.item_id] = r;
+        }
+        setPartyRatesByItem(rateMap);
+      }
+    },
+    [pack, partiesEnabled]
+  );
+
   const loadMasterData = useCallback(async () => {
     setLoadingMaster(true);
     try {
-      const [itemsRes, convRes, unitsRes, partyRes, addrRes] = await Promise.all([
-        supabase
-          .from('item_catalog_view')
-          .select('*')
-          .eq('is_active', true)
-          .order('name')
-          .limit(300),
-        supabase
-          .from('unit_conversions')
-          .select('item_id, alternate_unit_id, conversion_factor'),
-        supabase.from('item_units').select('id, code'),
-        partiesEnabled
-          ? supabase
-              .from('party_balances')
-              .select('*')
-              .eq('is_active', true)
-              .order('name')
-              .limit(300)
-          : Promise.resolve({ data: [], error: null }),
-        partiesEnabled
-          ? supabase
-              .from('party_addresses')
-              .select('party_id, state_code, is_default')
-              .order('is_default', { ascending: false })
-          : Promise.resolve({ data: [], error: null }),
-      ]);
+      const [itemsRes, convRes, unitsRes, partyRes, addrRes, batchRes, varRes, jobRes] =
+        await Promise.all([
+          supabase
+            .from('item_catalog_view')
+            .select('*')
+            .eq('is_active', true)
+            .order('name')
+            .limit(300),
+          supabase
+            .from('unit_conversions')
+            .select('item_id, alternate_unit_id, conversion_factor'),
+          supabase.from('item_units').select('id, code'),
+          partiesEnabled
+            ? supabase
+                .from('party_balances')
+                .select('*')
+                .eq('is_active', true)
+                .order('name')
+                .limit(300)
+            : Promise.resolve({ data: [], error: null }),
+          partiesEnabled
+            ? supabase
+                .from('party_addresses')
+                .select('party_id, state_code, is_default')
+                .order('is_default', { ascending: false })
+            : Promise.resolve({ data: [], error: null }),
+          batchExpiryEnabled
+            ? supabase
+                .from('item_batches')
+                .select('*')
+                .eq('is_active', true)
+                .gt('qty_on_hand', 0)
+                .order('expiry_date', { ascending: true })
+            : Promise.resolve({ data: [], error: null }),
+          variantsEnabled
+            ? supabase
+                .from('item_variants')
+                .select('*')
+                .eq('is_active', true)
+                .order('size')
+            : Promise.resolve({ data: [], error: null }),
+          pack === 'service'
+            ? supabase
+                .from('service_jobs')
+                .select('*')
+                .in('status', ['open', 'in_progress', 'completed'])
+                .order('created_at', { ascending: false })
+                .limit(100)
+            : Promise.resolve({ data: [], error: null }),
+        ]);
+
+      if (itemsRes.error) throw itemsRes.error;
+      if (convRes.error) throw convRes.error;
+      if (unitsRes.error) throw unitsRes.error;
+      if (partyRes.error) throw partyRes.error;
+      if (addrRes.error) throw addrRes.error;
 
       const unitCodeById: Record<string, string> = {};
       for (const u of (unitsRes.data as ItemUnitRecord[] | null) ?? []) {
@@ -172,6 +281,18 @@ export function BillFormModal({
         }
       }
 
+      const bMap: Record<string, ItemBatchRecord[]> = {};
+      for (const b of (batchRes.data as ItemBatchRecord[] | null) ?? []) {
+        if (!bMap[b.item_id]) bMap[b.item_id] = [];
+        bMap[b.item_id].push(b);
+      }
+
+      const vMap: Record<string, ItemVariantRecord[]> = {};
+      for (const v of (varRes.data as ItemVariantRecord[] | null) ?? []) {
+        if (!vMap[v.item_id]) vMap[v.item_id] = [];
+        vMap[v.item_id].push(v);
+      }
+
       const addrStateMap: Record<string, string> = {};
       for (const a of (addrRes.data as Array<{
         party_id: string;
@@ -184,9 +305,20 @@ export function BillFormModal({
 
       setCatalogItems(itemsList);
       setConversionsByItem(convMap);
+      setBatchesByItem(bMap);
+      setVariantsByItem(vMap);
+      setServiceJobs((jobRes.data as ServiceJobRecord[] | null) ?? []);
       setParties((partyRes.data as PartyBalanceRecord[] | null) ?? []);
       setPartyAddressesById(addrStateMap);
-      return { itemsList, convMap, partyList: (partyRes.data as PartyBalanceRecord[] | null) ?? [], addrStateMap };
+      return {
+        itemsList,
+        convMap,
+        bMap,
+        vMap,
+        unitCodeById,
+        partyList: (partyRes.data as PartyBalanceRecord[] | null) ?? [],
+        addrStateMap,
+      };
     } catch (err) {
       setErrorMsg(
         err instanceof Error ? err.message : 'Unable to load items and parties.'
@@ -195,7 +327,7 @@ export function BillFormModal({
     } finally {
       setLoadingMaster(false);
     }
-  }, [partiesEnabled]);
+  }, [partiesEnabled, batchExpiryEnabled, variantsEnabled, pack]);
 
   useEffect(() => {
     if (!open) return;
@@ -203,6 +335,15 @@ export function BillFormModal({
     setItemSearch('');
     setPaymentMode('cash');
     setPaymentReference('');
+    setRxPatientName('');
+    setRxPatientAge('');
+    setRxPatientPhone('');
+    setRxDoctorName('');
+    setRxDoctorRegNo('');
+    setRxNotes('');
+    setRxAttachment(null);
+    setSubTargetLineId(null);
+    setSubstitutes([]);
     setIdempotencyKey(`bill_${crypto.randomUUID()}`);
 
     const init = async () => {
@@ -216,6 +357,11 @@ export function BillFormModal({
             : editingDraft.doc_type;
         setDocType(draftType);
         setPartyId(editingDraft.party_id || '');
+        setSiteId(editingDraft.site_id || '');
+        setJobId(editingDraft.job_id || '');
+        if (editingDraft.party_id) {
+          void loadPartyPackDetails(editingDraft.party_id);
+        }
         setBillDate(editingDraft.bill_date || todayLocalIso());
         setDueDate(editingDraft.due_date || '');
         setValidUntil(editingDraft.valid_until || '');
@@ -229,19 +375,116 @@ export function BillFormModal({
         setPaidTouched(false);
         setPaidAmount('');
 
-        const { data: draftLines } = await supabase
+        const { data: draftLines, error: dlErr } = await supabase
           .from('bill_lines')
           .select('*')
           .eq('bill_id', editingDraft.id)
           .order('line_no', { ascending: true });
+        if (dlErr) {
+          setErrorMsg(dlErr.message);
+          return;
+        }
+
+        const dlRows = (draftLines as BillLineRecord[] | null) ?? [];
+        const itemsById = new Map<string, ItemCatalogRecord>(
+          master.itemsList.map((x) => [x.id, x])
+        );
+        const convByItem = { ...master.convMap };
+
+        const missingIds = Array.from(
+          new Set(
+            dlRows
+              .map((dl) => dl.item_id)
+              .filter((id): id is string => Boolean(id) && !itemsById.has(id))
+          )
+        );
+        if (missingIds.length > 0) {
+          const { data: extraItems, error: extraErr } = await supabase
+            .from('item_catalog_view')
+            .select('*')
+            .in('id', missingIds);
+          if (extraErr) {
+            setErrorMsg(extraErr.message);
+            return;
+          }
+          for (const it of (extraItems as ItemCatalogRecord[] | null) ?? []) {
+            itemsById.set(it.id, it);
+            convByItem[it.id] = [
+              { unitId: it.base_unit_id, code: it.base_unit_code, factor: 1 },
+            ];
+          }
+          const { data: extraConvs } = await supabase
+            .from('unit_conversions')
+            .select('item_id, alternate_unit_id, conversion_factor')
+            .in('item_id', missingIds);
+          for (const c of (extraConvs as UnitConversionRecord[] | null) ?? []) {
+            if (!c.item_id || !convByItem[c.item_id]) continue;
+            const code = master.unitCodeById[c.alternate_unit_id];
+            if (!code) continue;
+            if (!convByItem[c.item_id].some((x) => x.unitId === c.alternate_unit_id)) {
+              convByItem[c.item_id].push({
+                unitId: c.alternate_unit_id,
+                code,
+                factor: Number(c.conversion_factor),
+              });
+            }
+          }
+        }
 
         const mapped: DraftLineRow[] = [];
-        for (const dl of (draftLines as BillLineRecord[] | null) ?? []) {
-          const item = master.itemsList.find((x) => x.id === dl.item_id);
-          if (!item) continue;
-          const unitOptions = master.convMap[item.id] ?? [
+        for (const dl of dlRows) {
+          const fallbackItem: ItemCatalogRecord = {
+            id: dl.item_id || dl.id,
+            name: dl.item_name,
+            sku: dl.sku,
+            barcode: null,
+            category_id: null,
+            category_name: null,
+            brand_id: null,
+            brand_name: null,
+            base_unit_id: dl.entered_unit_id,
+            base_unit_code: dl.entered_unit_code,
+            base_unit_name_en: dl.entered_unit_code,
+            base_unit_name_hi: dl.entered_unit_code,
+            base_unit_allow_decimal: true,
+            selling_price: Number(dl.catalog_unit_price ?? dl.unit_price),
+            mrp: null,
+            purchase_price: null,
+            gst_rate: Number(dl.gst_rate ?? 0),
+            hsn_code: dl.hsn_code,
+            tax_inclusive: Boolean(dl.tax_inclusive),
+            low_stock_alert: 0,
+            allow_negative_stock: true,
+            primary_image_file_id: null,
+            pack_metadata: {},
+            notes: null,
+            is_active: false,
+            is_demo: false,
+            version: 1,
+            created_at: editingDraft.created_at,
+            updated_at: editingDraft.updated_at,
+            qty_on_hand: 0,
+            last_movement_at: null,
+            is_out_of_stock: false,
+            is_low_stock: false,
+            stock_value: null,
+            image_count: 0,
+            conversions_count: 0,
+          };
+          const item = (dl.item_id && itemsById.get(dl.item_id)) || fallbackItem;
+          const baseOptions = convByItem[item.id] ?? [
             { unitId: item.base_unit_id, code: item.base_unit_code, factor: 1 },
           ];
+          const unitOptions = baseOptions.some((u) => u.unitId === dl.entered_unit_id)
+            ? baseOptions
+            : [
+                ...baseOptions,
+                {
+                  unitId: dl.entered_unit_id,
+                  code: dl.entered_unit_code,
+                  factor: Number(dl.conversion_factor || 1),
+                },
+              ];
           mapped.push({
             localId: dl.id,
             item,
@@ -251,6 +494,11 @@ export function BillFormModal({
             unitPrice: String(dl.unit_price),
             discountPct: String(dl.discount_pct),
             taxInclusive: Boolean(dl.tax_inclusive),
+            batchId: dl.batch_id || '',
+            variantId: dl.variant_id || '',
+            serialNo: String((dl.line_meta as Record<string, unknown> | undefined)?.serial_no || ''),
+            looseRsInput: '',
+            priceSource: 'base',
           });
         }
         setLines(mapped);
@@ -260,6 +508,14 @@ export function BillFormModal({
         setDocType(initType);
         const initPartyId = defaultPartyId || '';
         setPartyId(initPartyId);
+        setSiteId('');
+        setJobId('');
+        if (initPartyId) {
+          void loadPartyPackDetails(initPartyId);
+        } else {
+          setPartySites([]);
+          setPartyRatesByItem({});
+        }
         setBillDate(todayLocalIso());
         setDueDate('');
         setValidUntil('');
@@ -291,10 +547,13 @@ export function BillFormModal({
     business?.state_code,
     business?.invoice_terms,
     loadMasterData,
+    loadPartyPackDetails,
   ]);
 
   const handlePartyChange = (nextPartyId: string) => {
     setPartyId(nextPartyId);
+    setSiteId('');
+    void loadPartyPackDetails(nextPartyId);
     if (!nextPartyId) {
       setPlaceOfSupply((business?.state_code || '').toUpperCase());
       setDueDate('');
@@ -314,24 +573,70 @@ export function BillFormModal({
     }
   };
 
+  const selectedPartyObj = useMemo(
+    () => parties.find((p) => p.party_id === partyId) ?? null,
+    [parties, partyId]
+  );
+
+  const resolvePriceForLine = useCallback(
+    (item: ItemCatalogRecord, qty: number, factor: number) => {
+      if (pack !== 'wholesale') {
+        return {
+          unitPrice: roundHalfUp(Number(item.selling_price) * factor, 2),
+          source: 'base' as const,
+        };
+      }
+      return resolveWholesaleUnitPrice({
+        basePrice: Number(item.selling_price),
+        priceTier: selectedPartyObj?.price_tier || 'standard',
+        qty,
+        slabs: item.wholesale_slabs,
+        partyCustomRate: partyRatesByItem[item.id] ?? null,
+        conversionFactor: factor,
+      });
+    },
+    [pack, selectedPartyObj?.price_tier, partyRatesByItem]
+  );
+
   const addItemToBill = (item: ItemCatalogRecord) => {
     setLines((prev) => {
-      const existingIdx = prev.findIndex(
-        (l) => l.item.id === item.id && l.enteredUnitId === item.base_unit_id
-      );
+      const canMerge =
+        pack !== 'clothing' && pack !== 'medical' && pack !== 'hardware';
+      const existingIdx = canMerge
+        ? prev.findIndex(
+            (l) => l.item.id === item.id && l.enteredUnitId === item.base_unit_id
+          )
+        : -1;
       if (existingIdx >= 0) {
-        return prev.map((row, idx) =>
-          idx === existingIdx
-            ? {
-                ...row,
-                enteredQty: String(roundHalfUp(Number(row.enteredQty || 0) + 1, 3)),
-              }
-            : row
-        );
+        return prev.map((row, idx) => {
+          if (idx !== existingIdx) return row;
+          const nextQty = roundHalfUp(Number(row.enteredQty || 0) + 1, 3);
+          const resolved = resolvePriceForLine(row.item, nextQty, 1);
+          return {
+            ...row,
+            enteredQty: String(nextQty),
+            unitPrice: pack === 'wholesale' ? String(resolved.unitPrice) : row.unitPrice,
+            priceSource: resolved.source,
+          };
+        });
       }
       const unitOptions = conversionsByItem[item.id] ?? [
         { unitId: item.base_unit_id, code: item.base_unit_code, factor: 1 },
       ];
+      const fefoBatch = batchExpiryEnabled
+        ? sortBatchesFefo(batchesByItem[item.id] ?? [], billDate || todayLocalIso())[0]
+        : undefined;
+      const defaultVar = variantsEnabled
+        ? (variantsByItem[item.id] ?? []).find((v) => v.qty_on_hand > 0) ??
+          (variantsByItem[item.id] ?? [])[0]
+        : undefined;
+      const baseResolved = resolvePriceForLine(item, 1, 1);
+      const initialPrice =
+        fefoBatch?.selling_rate != null
+          ? roundHalfUp(Number(fefoBatch.selling_rate), 2)
+          : defaultVar?.selling_price != null
+            ? roundHalfUp(Number(defaultVar.selling_price), 2)
+            : baseResolved.unitPrice;
       return [
         ...prev,
         {
@@ -340,13 +645,65 @@ export function BillFormModal({
           enteredQty: '1',
           enteredUnitId: item.base_unit_id,
           unitOptions,
-          unitPrice: String(roundHalfUp(Number(item.selling_price), 2)),
+          unitPrice: String(initialPrice),
           discountPct: '0',
           taxInclusive: Boolean(item.tax_inclusive),
+          batchId: fefoBatch?.id || '',
+          variantId: defaultVar?.id || '',
+          serialNo: '',
+          looseRsInput: '',
+          priceSource: baseResolved.source,
         },
       ];
     });
     setItemSearch('');
+  };
+
+  const handleOpenSubstitutes = async (lineId: string, itemId: string) => {
+    setSubTargetLineId(lineId);
+    setLoadingSubstitutes(true);
+    setSubstitutes([]);
+    const { data, error } = await supabase.rpc('get_salt_substitutes', {
+      p_item_id: itemId,
+    });
+    setLoadingSubstitutes(false);
+    if (error) {
+      showToast(error.message, 'error');
+      return;
+    }
+    setSubstitutes((data as SaltSubstituteRow[] | null) ?? []);
+  };
+
+  const handleSwapSubstitute = (sub: SaltSubstituteRow) => {
+    if (!subTargetLineId) return;
+    const found = catalogItems.find((it) => it.id === sub.id);
+    if (!found) {
+      showToast('Substitute item not in active catalog.', 'error');
+      return;
+    }
+    const unitOptions = conversionsByItem[found.id] ?? [
+      { unitId: found.base_unit_id, code: found.base_unit_code, factor: 1 },
+    ];
+    const fefo = sortBatchesFefo(batchesByItem[found.id] ?? [], billDate || todayLocalIso())[0];
+    setLines((prev) =>
+      prev.map((row) =>
+        row.localId === subTargetLineId
+          ? {
+              ...row,
+              item: found,
+              enteredUnitId: found.base_unit_id,
+              unitOptions,
+              batchId: fefo?.id || '',
+              variantId: '',
+              unitPrice: String(
+                roundHalfUp(Number(fefo?.selling_rate ?? found.selling_price), 2)
+              ),
+            }
+          : row
+      )
+    );
+    setSubTargetLineId(null);
+    setSubstitutes([]);
   };
 
   const filteredCatalog = useMemo(() => {
@@ -384,16 +741,58 @@ export function BillFormModal({
     setLines((prev) =>
       prev.map((row) => {
         if (row.localId !== localId) return row;
+        const nextRow = { ...row, ...patch };
         if (patch.enteredUnitId && patch.enteredUnitId !== row.enteredUnitId) {
           const opt = row.unitOptions.find((u) => u.unitId === patch.enteredUnitId);
           const factor = opt?.factor ?? 1;
+          const resolved = resolvePriceForLine(
+            row.item,
+            Number(nextRow.enteredQty || 1),
+            factor
+          );
           return {
-            ...row,
-            ...patch,
-            unitPrice: String(roundHalfUp(Number(row.item.selling_price) * factor, 2)),
+            ...nextRow,
+            unitPrice: String(resolved.unitPrice),
+            priceSource: resolved.source,
           };
         }
-        return { ...row, ...patch };
+        if (patch.enteredQty !== undefined && pack === 'wholesale') {
+          const opt = row.unitOptions.find((u) => u.unitId === nextRow.enteredUnitId);
+          const factor = opt?.factor ?? 1;
+          const resolved = resolvePriceForLine(
+            row.item,
+            Number(patch.enteredQty || 0),
+            factor
+          );
+          return {
+            ...nextRow,
+            unitPrice: String(resolved.unitPrice),
+            priceSource: resolved.source,
+          };
+        }
+        if (patch.batchId !== undefined && patch.batchId !== row.batchId) {
+          const batch = (batchesByItem[row.item.id] ?? []).find(
+            (b) => b.id === patch.batchId
+          );
+          if (batch?.selling_rate != null) {
+            return {
+              ...nextRow,
+              unitPrice: String(roundHalfUp(Number(batch.selling_rate), 2)),
+            };
+          }
+        }
+        if (patch.variantId !== undefined && patch.variantId !== row.variantId) {
+          const vr = (variantsByItem[row.item.id] ?? []).find(
+            (v) => v.id === patch.variantId
+          );
+          if (vr?.selling_price != null) {
+            return {
+              ...nextRow,
+              unitPrice: String(roundHalfUp(Number(vr.selling_price), 2)),
+            };
+          }
+        }
+        return nextRow;
       })
     );
   };
@@ -461,6 +860,29 @@ export function BillFormModal({
     return warnings;
   }, [canOverrideUnrestricted, lines, allowCashierPriceReduction, cashierMaxDiscount]);
 
+  const requiresPrescription = useMemo(() => {
+    if (pack !== 'medical' || docType === 'quotation') return false;
+    return lines.some((l) =>
+      ['H', 'H1', 'X', 'NRX'].includes(
+        String(l.item.pack_metadata?.schedule || '').toUpperCase()
+      )
+    );
+  }, [pack, docType, lines]);
+
+  const totalMrpSavings = useMemo(
+    () =>
+      lines.reduce((acc, row) => {
+        const opt = row.unitOptions.find((u) => u.unitId === row.enteredUnitId);
+        const factor = opt?.factor ?? 1;
+        const unitMrp = row.item.mrp ? Number(row.item.mrp) * factor : null;
+        return (
+          acc +
+          computeMrpSavings(unitMrp, Number(row.unitPrice || 0), Number(row.enteredQty || 0))
+        );
+      }, 0),
+    [lines]
+  );
+
   const buildRpcLines = () =>
     lines.map((l) => ({
       item_id: l.item.id,
@@ -469,6 +891,9 @@ export function BillFormModal({
       unit_price: roundHalfUp(Number(l.unitPrice || 0), 2),
       discount_pct: roundHalfUp(Number(l.discountPct || 0), 2),
       tax_inclusive: l.taxInclusive,
+      batch_id: l.batchId || null,
+      variant_id: l.variantId || null,
+      line_meta: l.serialNo.trim() ? { serial_no: l.serialNo.trim() } : {},
     }));
 
   const handleSubmit = async (actionMode: 'draft' | 'issued') => {
@@ -493,6 +918,16 @@ export function BillFormModal({
       setErrorMsg(linePolicyViolations[0]);
       return;
     }
+    if (
+      actionMode === 'issued' &&
+      requiresPrescription &&
+      (!rxPatientName.trim() || !rxDoctorName.trim())
+    ) {
+      setErrorMsg(
+        'Schedule H/H1/X medicines require Patient Name and Prescribing Doctor Name.'
+      );
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -511,6 +946,8 @@ export function BillFormModal({
           p_notes: notes.trim() || null,
           p_terms: terms.trim() || null,
           p_lines: rpcLines,
+          p_site_id: siteId || null,
+          p_job_id: jobId || null,
         });
         if (error) throw error;
         showToast(
@@ -526,6 +963,18 @@ export function BillFormModal({
             : partyId
               ? effectivePaidNumber
               : calc.grandTotal;
+        const rxPayload =
+          rxPatientName.trim() || rxDoctorName.trim() || rxAttachment
+            ? {
+                patient_name: rxPatientName.trim(),
+                patient_age: rxPatientAge.trim() || null,
+                patient_phone: rxPatientPhone.trim() || null,
+                doctor_name: rxDoctorName.trim(),
+                doctor_reg_no: rxDoctorRegNo.trim() || null,
+                notes: rxNotes.trim() || null,
+                attachment_file_id: rxAttachment?.fileId ?? null,
+              }
+            : null;
         const { data, error } = await supabase.rpc('issue_bill', {
           p_draft_id: editingDraft?.id ?? null,
           p_doc_type: docType,
@@ -543,6 +992,9 @@ export function BillFormModal({
           p_payment_mode: paymentMode,
           p_payment_reference: paymentReference.trim() || null,
           p_idempotency_key: idempotencyKey,
+          p_site_id: siteId || null,
+          p_job_id: jobId || null,
+          p_prescription: rxPayload,
         });
         if (error) throw error;
         const issued = data as BillRecord;
@@ -703,6 +1155,62 @@ export function BillFormModal({
             </div>
           </div>
 
+          {((pack === 'hardware' && partyId && partySites.length > 0) ||
+            (pack === 'service' && serviceJobs.length > 0) ||
+            (pack === 'wholesale' && selectedPartyObj)) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs">
+              {pack === 'hardware' && partyId && partySites.length > 0 && (
+                <div>
+                  <label className="block font-medium text-[var(--text-muted)] mb-1">
+                    Contractor Delivery Site
+                  </label>
+                  <select
+                    value={siteId}
+                    onChange={(e) => setSiteId(e.target.value)}
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                  >
+                    <option value="">Default party address</option>
+                    {partySites.map((st) => (
+                      <option key={st.id} value={st.id}>
+                        {st.site_name}
+                        {st.contact_phone ? ` (${st.contact_phone})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {pack === 'service' && serviceJobs.length > 0 && (
+                <div>
+                  <label className="block font-medium text-[var(--text-muted)] mb-1">
+                    Link Service Job / Work Order
+                  </label>
+                  <select
+                    value={jobId}
+                    onChange={(e) => setJobId(e.target.value)}
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                  >
+                    <option value="">Standalone bill (no job)</option>
+                    {serviceJobs.map((jb) => (
+                      <option key={jb.id} value={jb.id}>
+                        {jb.job_number} — {jb.title} ({jb.status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {pack === 'wholesale' && selectedPartyObj && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[var(--text-muted)]">B2B Price Tier:</span>
+                  <span className="font-semibold uppercase text-[var(--primary-dark)]">
+                    {(selectedPartyObj.price_tier || 'standard').replace(/_/g, ' ')}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
           {gstActiveForBiz && docType !== 'bill_of_supply' && (
             <div className="flex flex-wrap items-center gap-3 p-3 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs">
               <div className="flex items-center gap-2">
@@ -796,15 +1304,152 @@ export function BillFormModal({
                   <tbody className="divide-y divide-[var(--border)]">
                     {lines.map((row, idx) => {
                       const lineCalc = calc.lines[idx];
+                      const itemBatches = batchesByItem[row.item.id] ?? [];
+                      const itemVariants = variantsByItem[row.item.id] ?? [];
+                      const hasWarranty =
+                        pack === 'hardware' &&
+                        Number(row.item.pack_metadata?.warranty_months || 0) > 0;
+                      const saltName = row.item.pack_metadata?.salt
+                        ? String(row.item.pack_metadata.salt)
+                        : '';
+                      const scheduleClass = row.item.pack_metadata?.schedule
+                        ? String(row.item.pack_metadata.schedule).toUpperCase()
+                        : '';
+                      const selectedUnitOpt = row.unitOptions.find(
+                        (u) => u.unitId === row.enteredUnitId
+                      );
+                      const mrpSav = computeMrpSavings(
+                        row.item.mrp
+                          ? Number(row.item.mrp) * (selectedUnitOpt?.factor ?? 1)
+                          : null,
+                        Number(row.unitPrice || 0),
+                        Number(row.enteredQty || 0)
+                      );
                       return (
                         <tr key={row.localId}>
-                          <td className="py-2.5 px-3 min-w-[160px]">
+                          <td className="py-2.5 px-3 min-w-[200px]">
                             <p className="font-medium">{row.item.name}</p>
                             <p className="text-[11px] text-[var(--text-muted)] tabular-nums">
                               Stock: {row.item.qty_on_hand} {row.item.base_unit_code}
                               {row.item.hsn_code ? ` · HSN ${row.item.hsn_code}` : ''}
                               {row.taxInclusive && calc.gstApplied ? ' · Tax Incl.' : ''}
+                              {scheduleClass ? ` · Sch ${scheduleClass}` : ''}
+                              {row.priceSource === 'custom_rate'
+                                ? ' · Rate Card'
+                                : row.priceSource === 'slab'
+                                  ? ' · Qty Slab'
+                                  : ''}
                             </p>
+                            {pack === 'kirana' && mrpSav > 0 && (
+                              <p className="text-[11px] text-[var(--receive-text)] tabular-nums">
+                                Save {formatINR(mrpSav)} off MRP
+                              </p>
+                            )}
+                            {pack === 'kirana' && row.item.base_unit_allow_decimal && (
+                              <div className="mt-1.5 flex items-center gap-1.5">
+                                <span className="text-[10px] text-[var(--text-muted)]">₹→Wt:</span>
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="1"
+                                  value={row.looseRsInput}
+                                  placeholder="₹ amt"
+                                  onChange={(e) => {
+                                    const rsVal = e.target.value;
+                                    const num = Number(rsVal);
+                                    const computed = computeLooseWeightFromAmount(
+                                      num,
+                                      Number(row.unitPrice || row.item.selling_price),
+                                      1
+                                    );
+                                    updateLine(row.localId, {
+                                      looseRsInput: rsVal,
+                                      enteredQty:
+                                        computed.enteredQty > 0
+                                          ? String(computed.enteredQty)
+                                          : row.enteredQty,
+                                    });
+                                  }}
+                                  className="w-20 h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] tabular-nums"
+                                />
+                              </div>
+                            )}
+                            {batchExpiryEnabled && itemBatches.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                <select
+                                  aria-label={`Batch for ${row.item.name}`}
+                                  value={row.batchId}
+                                  onChange={(e) =>
+                                    updateLine(row.localId, { batchId: e.target.value })
+                                  }
+                                  className="h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] tabular-nums"
+                                >
+                                  <option value="">Auto FEFO Batch</option>
+                                  {itemBatches.map((b) => {
+                                    const expStatus = classifyBatchExpiry(
+                                      b.expiry_date,
+                                      billDate || todayLocalIso()
+                                    );
+                                    return (
+                                      <option
+                                        key={b.id}
+                                        value={b.id}
+                                        disabled={expStatus === 'expired'}
+                                      >
+                                        {b.batch_no} · Exp {formatDate(b.expiry_date)} · Qty{' '}
+                                        {b.qty_on_hand}
+                                        {expStatus === 'expired' ? ' (EXPIRED)' : ''}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                                {pack === 'medical' && saltName && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleOpenSubstitutes(row.localId, row.item.id)
+                                    }
+                                    className="h-7 px-2 rounded border border-[var(--border)] text-[11px] text-[var(--primary-dark)] inline-flex items-center gap-1 hover:bg-[var(--surface-muted)]"
+                                  >
+                                    <IconArrowsExchange size={12} stroke={2} />
+                                    <span>Substitutes</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            {variantsEnabled && itemVariants.length > 0 && (
+                              <div className="mt-1.5">
+                                <select
+                                  aria-label={`Variant for ${row.item.name}`}
+                                  value={row.variantId}
+                                  onChange={(e) =>
+                                    updateLine(row.localId, { variantId: e.target.value })
+                                  }
+                                  className="h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px]"
+                                >
+                                  <option value="">Select Size / Colour</option>
+                                  {itemVariants.map((v) => (
+                                    <option key={v.id} value={v.id}>
+                                      {v.size} / {v.color} · Qty {v.qty_on_hand}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            {hasWarranty && (
+                              <div className="mt-1.5">
+                                <input
+                                  type="text"
+                                  value={row.serialNo}
+                                  onChange={(e) =>
+                                    updateLine(row.localId, { serialNo: e.target.value })
+                                  }
+                                  placeholder={`Serial # (${row.item.pack_metadata?.warranty_months}m warranty)`}
+                                  className="w-44 h-7 px-2 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] font-mono"
+                                />
+                              </div>
+                            )}
                           </td>
                           <td className="py-2 px-2">
                             <input
@@ -898,6 +1543,103 @@ export function BillFormModal({
               </div>
             )}
           </div>
+
+          {subTargetLineId && (
+            <div className="p-3.5 rounded-xl border border-[var(--primary-dark)]/40 bg-[var(--surface-muted)] space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Same-Salt Substitutes</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSubTargetLineId(null);
+                    setSubstitutes([]);
+                  }}
+                  className="text-[var(--text-muted)] hover:text-[var(--text)]"
+                >
+                  Close
+                </button>
+              </div>
+              {loadingSubstitutes ? (
+                <p className="text-[var(--text-muted)]">Searching substitutes...</p>
+              ) : substitutes.length === 0 ? (
+                <p className="text-[var(--text-muted)]">No active in-stock substitutes found for this salt.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {substitutes.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => handleSwapSubstitute(sub)}
+                      className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:border-[var(--primary-dark)] text-left"
+                    >
+                      <div className="font-medium">{sub.name}</div>
+                      <div className="text-[11px] text-[var(--text-muted)] tabular-nums">
+                        {formatINR(Number(sub.selling_price))} · Stock {sub.qty_on_hand} {sub.base_unit_code}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {requiresPrescription && (
+            <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-3">
+              <p className="text-xs sm:text-sm font-semibold text-amber-800 dark:text-amber-300">
+                Schedule H / H1 / X Medicine Prescription Required
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs">
+                <input
+                  type="text"
+                  value={rxPatientName}
+                  onChange={(e) => setRxPatientName(e.target.value)}
+                  placeholder="Patient Full Name *"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+                <input
+                  type="text"
+                  value={rxPatientAge}
+                  onChange={(e) => setRxPatientAge(e.target.value)}
+                  placeholder="Age / Gender (optional)"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+                <input
+                  type="tel"
+                  value={rxPatientPhone}
+                  onChange={(e) => setRxPatientPhone(e.target.value)}
+                  placeholder="Patient Phone (optional)"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+                <input
+                  type="text"
+                  value={rxDoctorName}
+                  onChange={(e) => setRxDoctorName(e.target.value)}
+                  placeholder="Prescribing Doctor Name *"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+                <input
+                  type="text"
+                  value={rxDoctorRegNo}
+                  onChange={(e) => setRxDoctorRegNo(e.target.value)}
+                  placeholder="Doctor Reg. No. (optional)"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+                <input
+                  type="text"
+                  value={rxNotes}
+                  onChange={(e) => setRxNotes(e.target.value)}
+                  placeholder="Rx Notes (optional)"
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                />
+              </div>
+              <FileUpload
+                label="Upload Prescription Image / PDF (optional)"
+                purpose="prescription"
+                value={rxAttachment}
+                onChange={setRxAttachment}
+              />
+            </div>
+          )}
 
           {linePolicyViolations.length > 0 && (
             <div className="p-3 rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs text-amber-800 dark:text-amber-300 space-y-1">
@@ -1019,6 +1761,12 @@ export function BillFormModal({
                   <dd className="tabular-nums">{formatINR(calc.grandTotal)}</dd>
                 </div>
               </dl>
+
+              {pack === 'kirana' && totalMrpSavings > 0 && (
+                <p className="text-xs font-medium text-[var(--receive-text)] tabular-nums">
+                  Customer MRP Savings: {formatINR(totalMrpSavings)}
+                </p>
+              )}
 
               <p className="text-[11px] text-[var(--text-muted)] leading-snug">
                 {amountInWordsINR(calc.grandTotal)}

@@ -1775,7 +1775,7 @@ $$;
 -- Void an Issued Bill (Owner & Manager only)
 CREATE OR REPLACE FUNCTION public.void_bill(
   p_bill_id uuid,
-  p_reason text
+  p_reason text DEFAULT ''
 )
 RETURNS public.bills
 LANGUAGE plpgsql

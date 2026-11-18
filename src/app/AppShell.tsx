@@ -1,19 +1,28 @@
 import {
+  IconBell,
+  IconBook,
+  IconBriefcase,
   IconBuildingStore,
+  IconBuildingWarehouse,
+  IconCalculator,
   IconCash,
   IconChartBar,
   IconChevronLeft,
   IconChevronRight,
   IconCreditCard,
+  IconFileSpreadsheet,
   IconHelp,
   IconHome,
   IconLanguage,
   IconLogout,
   IconMenu2,
+  IconMessage,
   IconMoon,
   IconPackage,
   IconPlus,
   IconReceipt,
+  IconRobot,
+  IconScale,
   IconSearch,
   IconSettings,
   IconShoppingBag,
@@ -24,25 +33,38 @@ import {
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { GlobalSearchModal } from '../components/GlobalSearchModal';
-import { ModulePhasePlaceholder } from '../components/ModulePhasePlaceholder';
 import { RequireModule, RequireRole } from '../components/RequireGuards';
 import { PWAInstallButton } from '../components/pwa/PWAInstallButton';
 import { getInitials } from '../core/format';
 import { hasCapability, ROLE_LABELS } from '../core/permissions';
+import { AccountingScreen } from '../modules/accounting/AccountingScreen';
+import { AiAssistantScreen } from '../modules/ai/AiAssistantScreen';
+import { BillsScreen } from '../modules/bills/BillsScreen';
 import {
   HomeScreen,
   type AppDestination,
+  type NavigationAction,
 } from '../modules/dashboard/HomeScreen';
-import { BillsScreen } from '../modules/bills/BillsScreen';
+import { ImportExportPanel } from '../modules/data/ImportExportPanel';
+import { ExpensesScreen } from '../modules/expenses/ExpensesScreen';
+import { AdvancedGstScreen } from '../modules/gst/AdvancedGstScreen';
 import { HelpScreen } from '../modules/help/HelpScreen';
 import { ItemsScreen, type ItemFilterTab } from '../modules/items/ItemsScreen';
+import { MessagingScreen } from '../modules/messaging/MessagingScreen';
+import { NotificationsScreen } from '../modules/notifications/NotificationsScreen';
+import { OperationsScreen } from '../modules/operations/OperationsScreen';
+import { PackWorkspaceScreen } from '../modules/packs/PackWorkspaceScreen';
 import { PartiesScreen } from '../modules/parties/PartiesScreen';
 import { PaymentsScreen } from '../modules/payments/PaymentsScreen';
+import { PosLiteScreen } from '../modules/pos/PosLiteScreen';
 import { UserProfileScreen } from '../modules/profile/UserProfileScreen';
+import { PurchasesScreen } from '../modules/purchases/PurchasesScreen';
+import { ReportsScreen } from '../modules/reports/ReportsScreen';
 import {
   SettingsScreen,
   type SettingsTabKey,
 } from '../modules/settings/SettingsScreen';
+import { getPackWorkspaceTitle } from '../packs/registry';
 import { useApp } from './AppProvider';
 
 export function AppShell() {
@@ -65,15 +87,7 @@ export function AppShell() {
   const [navItemId, setNavItemId] = useState<string | null>(null);
   const [navBillId, setNavBillId] = useState<string | null>(null);
   const [navItemFilter, setNavItemFilter] = useState<ItemFilterTab | null>(null);
-  const [navAction, setNavAction] = useState<
-    | 'add-party'
-    | 'add-item'
-    | 'receive-payment'
-    | 'give-payment'
-    | 'new-bill'
-    | 'new-quotation'
-    | null
-  >(null);
+  const [navAction, setNavAction] = useState<NavigationAction | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
@@ -113,14 +127,7 @@ export function AppShell() {
         itemId?: string | null;
         billId?: string | null;
         itemFilter?: ItemFilterTab | null;
-        action?:
-          | 'add-party'
-          | 'add-item'
-          | 'receive-payment'
-          | 'give-payment'
-          | 'new-bill'
-          | 'new-quotation'
-          | null;
+        action?: NavigationAction | null;
       }
     ) => {
       setDest(next);
@@ -212,6 +219,73 @@ export function AppShell() {
         isModuleEnabled('reports') && hasCapability(profile?.role, 'reports'),
     },
     {
+      id: 'pos',
+      label: t('nav.pos'),
+      icon: IconCalculator,
+      visible:
+        isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills'),
+    },
+    {
+      id: 'accounting',
+      label: t('nav.accounting'),
+      icon: IconBook,
+      visible:
+        isModuleEnabled('accounting') &&
+        ['owner', 'manager', 'accountant'].includes(profile?.role ?? ''),
+    },
+    {
+      id: 'gst',
+      label: t('nav.gst'),
+      icon: IconScale,
+      visible:
+        isModuleEnabled('tax') &&
+        ['owner', 'manager', 'accountant'].includes(profile?.role ?? ''),
+    },
+    {
+      id: 'operations',
+      label: t('nav.operations'),
+      icon: IconBuildingWarehouse,
+      visible:
+        (isModuleEnabled('inventory') || isModuleEnabled('locations')) &&
+        ['owner', 'manager', 'storekeeper', 'cashier', 'accountant'].includes(
+          profile?.role ?? ''
+        ),
+    },
+    {
+      id: 'messaging',
+      label: t('nav.messaging'),
+      icon: IconMessage,
+      visible:
+        isModuleEnabled('messaging') &&
+        ['owner', 'manager', 'cashier', 'accountant'].includes(profile?.role ?? ''),
+    },
+    {
+      id: 'ai',
+      label: t('nav.ai'),
+      icon: IconRobot,
+      visible: isModuleEnabled('ai'),
+    },
+    {
+      id: 'pack',
+      label: getPackWorkspaceTitle(business?.pack, language),
+      icon: IconBriefcase,
+      visible: true,
+    },
+    {
+      id: 'data',
+      label: t('nav.data'),
+      icon: IconFileSpreadsheet,
+      visible: ['owner', 'manager', 'storekeeper', 'accountant'].includes(
+        profile?.role ?? ''
+      ),
+    },
+    {
+      id: 'notifications',
+      label: t('nav.notifications'),
+      icon: IconBell,
+      visible: true,
+    },
+    {
       id: 'settings',
       label: t('nav.settings'),
       icon: IconSettings,
@@ -222,48 +296,71 @@ export function AppShell() {
   const sidebarItems = rawSidebarItems.filter((item) => item.visible);
 
   const rawQuickActionItems: Array<{
+    key: string;
     id: AppDestination;
+    action: NavigationAction;
     label: string;
     icon: typeof IconReceipt;
     visible: boolean;
   }> = [
     {
+      key: 'new-bill',
       id: 'bills',
+      action: 'new-bill',
       label: t('quick.newBill'),
       icon: IconReceipt,
       visible:
         isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills'),
     },
     {
+      key: 'receive-payment',
       id: 'payments',
+      action: 'receive-payment',
       label: t('quick.receivePayment'),
       icon: IconCash,
       visible:
         isModuleEnabled('payments') && hasCapability(profile?.role, 'payments'),
     },
     {
+      key: 'give-payment',
+      id: 'payments',
+      action: 'give-payment',
+      label: t('quick.givePayment'),
+      icon: IconCash,
+      visible:
+        isModuleEnabled('payments') && hasCapability(profile?.role, 'payments'),
+    },
+    {
+      key: 'add-party',
       id: 'parties',
+      action: 'add-party',
       label: t('quick.addParty'),
       icon: IconUsers,
       visible:
         isModuleEnabled('parties') && hasCapability(profile?.role, 'parties'),
     },
     {
+      key: 'add-item',
       id: 'items',
+      action: 'add-item',
       label: t('quick.addItem'),
       icon: IconPackage,
       visible:
         isModuleEnabled('inventory') && hasCapability(profile?.role, 'items'),
     },
     {
+      key: 'add-expense',
       id: 'expenses',
+      action: 'add-expense',
       label: t('quick.addExpense'),
       icon: IconCreditCard,
       visible:
         isModuleEnabled('expenses') && hasCapability(profile?.role, 'expenses'),
     },
     {
+      key: 'new-purchase',
       id: 'purchases',
+      action: 'new-purchase',
       label: t('quick.newPurchase'),
       icon: IconShoppingBag,
       visible:
@@ -273,14 +370,14 @@ export function AppShell() {
   const quickActionItems = rawQuickActionItems.filter((item) => item.visible);
 
   return (
-    <div className="min-h-screen flex bg-[var(--bg)] text-[var(--text)]">
-      {/* Desktop: ONE Primary Sidebar only (240px expanded / 72px collapsed) */}
+    <div className="min-h-screen md:h-screen md:overflow-hidden flex bg-[var(--bg)] text-[var(--text)]">
+      {/* Desktop: ONE Primary Sidebar only (240px expanded / 72px collapsed) with dedicated scroll */}
       <aside
-        className={`no-print hidden md:flex flex-col shrink-0 border-r border-[var(--border)] bg-[var(--surface)] transition-[width] duration-150 ${
+        className={`no-print hidden md:flex flex-col shrink-0 h-screen max-h-screen overflow-hidden border-r border-[var(--border)] bg-[var(--surface)] transition-[width] duration-150 ${
           sidebarCollapsed ? 'w-[72px]' : 'w-[240px]'
         }`}
       >
-        <div className="h-14 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
+        <div className="h-14 shrink-0 px-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
           {!sidebarCollapsed && (
             <button
               type="button"
@@ -317,7 +414,7 @@ export function AppShell() {
           </button>
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-2 space-y-1">
+        <nav className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-2 space-y-1">
           {sidebarItems.map((item) => {
             const Icon = item.icon;
             const active = dest === item.id;
@@ -344,7 +441,7 @@ export function AppShell() {
       </aside>
 
       {/* Main Column */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="flex-1 min-w-0 md:h-screen md:overflow-y-auto overscroll-contain flex flex-col">
         {/* Top App Bar */}
         <header className="no-print h-14 sticky top-0 z-30 border-b border-[var(--border)] bg-[var(--surface)] px-4 sm:px-6 flex items-center justify-between gap-3">
           {/* Mobile Business Name */}
@@ -403,6 +500,20 @@ export function AppShell() {
             >
               <IconLanguage size={16} stroke={2} />
               <span>{language === 'en' ? 'हिं' : 'EN'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate('notifications')}
+              aria-label={t('nav.notifications')}
+              title={t('nav.notifications')}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg border transition-colors ${
+                dest === 'notifications'
+                  ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                  : 'border-[var(--border)] hover:bg-[var(--surface-muted)] text-[var(--text)]'
+              }`}
+            >
+              <IconBell size={17} stroke={2} />
             </button>
 
             <button
@@ -565,10 +676,19 @@ export function AppShell() {
             </RequireModule>
           )}
           {dest === 'purchases' && (
-            <ModulePhasePlaceholder
-              moduleKey="purchases"
-              onNavigate={navigate}
-            />
+            <RequireModule moduleKey="purchases" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'storekeeper', 'accountant']}
+                onNavigate={navigate}
+              >
+                <PurchasesScreen
+                  initialAction={
+                    navAction === 'new-purchase' ? 'new-purchase' : null
+                  }
+                  onActionConsumed={clearNavIntent}
+                />
+              </RequireRole>
+            </RequireModule>
           )}
           {dest === 'payments' && (
             <RequireModule moduleKey="payments" onNavigate={navigate}>
@@ -592,13 +712,107 @@ export function AppShell() {
             </RequireModule>
           )}
           {dest === 'expenses' && (
-            <ModulePhasePlaceholder
-              moduleKey="expenses"
-              onNavigate={navigate}
-            />
+            <RequireModule moduleKey="expenses" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'cashier', 'accountant']}
+                onNavigate={navigate}
+              >
+                <ExpensesScreen
+                  initialAction={
+                    navAction === 'add-expense' ? 'add-expense' : null
+                  }
+                  onActionConsumed={clearNavIntent}
+                />
+              </RequireRole>
+            </RequireModule>
           )}
           {dest === 'reports' && (
-            <ModulePhasePlaceholder moduleKey="reports" onNavigate={navigate} />
+            <RequireModule moduleKey="reports" onNavigate={navigate}>
+              <RequireRole
+                roles={[
+                  'owner',
+                  'manager',
+                  'cashier',
+                  'storekeeper',
+                  'accountant',
+                  'viewer',
+                ]}
+                onNavigate={navigate}
+              >
+                <ReportsScreen />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'pos' && (
+            <RequireModule moduleKey="billing" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'cashier', 'accountant']}
+                onNavigate={navigate}
+              >
+                <PosLiteScreen />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'accounting' && (
+            <RequireModule moduleKey="accounting" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'accountant']}
+                onNavigate={navigate}
+              >
+                <AccountingScreen />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'gst' && (
+            <RequireModule moduleKey="tax" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'accountant']}
+                onNavigate={navigate}
+              >
+                <AdvancedGstScreen />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'operations' && (
+            <RequireRole
+              roles={['owner', 'manager', 'storekeeper', 'cashier', 'accountant']}
+              onNavigate={navigate}
+            >
+              <OperationsScreen />
+            </RequireRole>
+          )}
+          {dest === 'messaging' && (
+            <RequireModule moduleKey="messaging" onNavigate={navigate}>
+              <RequireRole
+                roles={['owner', 'manager', 'cashier', 'accountant']}
+                onNavigate={navigate}
+              >
+                <MessagingScreen
+                  onOpenSettings={() => navigate('settings', 'integrations')}
+                />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'ai' && (
+            <RequireModule moduleKey="ai" onNavigate={navigate}>
+              <AiAssistantScreen
+                onOpenSettings={() => navigate('settings', 'integrations')}
+              />
+            </RequireModule>
+          )}
+          {dest === 'pack' && <PackWorkspaceScreen onNavigate={navigate} />}
+          {dest === 'notifications' && (
+            <NotificationsScreen onNavigate={navigate} />
+          )}
+          {dest === 'data' && (
+            <RequireRole
+              roles={['owner', 'manager', 'storekeeper', 'accountant']}
+              onNavigate={navigate}
+            >
+              <div className="max-w-6xl mx-auto p-4 sm:p-6">
+                <ImportExportPanel />
+              </div>
+            </RequireRole>
           )}
         </main>
       </div>
@@ -669,6 +883,15 @@ export function AppShell() {
               'payments',
               'expenses',
               'reports',
+              'pos',
+              'accounting',
+              'gst',
+              'operations',
+              'messaging',
+              'ai',
+              'pack',
+              'data',
+              'notifications',
               'settings',
               'profile',
               'help',
@@ -712,26 +935,16 @@ export function AppShell() {
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {quickActionItems.map((action) => {
-                  const Icon = action.icon;
+                {quickActionItems.map((actionItem) => {
+                  const Icon = actionItem.icon;
                   return (
                     <button
-                      key={action.id}
+                      key={actionItem.key}
                       type="button"
                       onClick={() => {
-                        if (action.id === 'bills') {
-                          navigate('bills', undefined, { action: 'new-bill' });
-                        } else if (action.id === 'parties') {
-                          navigate('parties', undefined, { action: 'add-party' });
-                        } else if (action.id === 'items') {
-                          navigate('items', undefined, { action: 'add-item' });
-                        } else if (action.id === 'payments') {
-                          navigate('payments', undefined, {
-                            action: 'receive-payment',
-                          });
-                        } else {
-                          navigate(action.id);
-                        }
+                        navigate(actionItem.id, undefined, {
+                          action: actionItem.action,
+                        });
                       }}
                       className="min-h-[56px] p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] flex items-center gap-3 text-left"
                     >
@@ -740,7 +953,7 @@ export function AppShell() {
                         stroke={2}
                         className="text-[var(--primary-dark)] shrink-0"
                       />
-                      <span className="text-sm font-medium">{action.label}</span>
+                      <span className="text-sm font-medium">{actionItem.label}</span>
                     </button>
                   );
                 })}

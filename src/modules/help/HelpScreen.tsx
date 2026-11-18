@@ -4,28 +4,92 @@ import { useApp } from '../../app/AppProvider';
 
 const HELP_TOPICS = [
   {
+    titleEn: 'Billing, Quotations & Returns',
+    titleHi: 'बिलिंग, कोटेशन और बिक्री वापसी',
+    bodyEn:
+      'Create Tax Invoices, Bills of Supply, and Quotations with CGST+SGST or IGST determined automatically by Place of Supply. Convert quotations to invoices or record partial/full Sales Returns (Credit Notes) with instant stock & khata sync.',
+    bodyHi:
+      'आपूर्ति राज्य (Place of Supply) के अनुसार CGST+SGST या IGST के साथ टैक्स इनवॉइस, बिल ऑफ सप्लाई और कोटेशन बनाएं। कोटेशन को बिल में बदलें या क्रेडिट नोट (वापसी) दर्ज करें।',
+  },
+  {
+    titleEn: 'Parties & Khata Ledger',
+    titleHi: 'पार्टी और खाता बही',
+    bodyEn:
+      'Track customers and suppliers with running credit balances ("You\'ll get" / "You\'ll give"), overdue alerts, bilingual WhatsApp/UPI payment reminders, and printable/CSV statements.',
+    bodyHi:
+      'ग्राहकों और सप्लायरों का बकाया खाता ("लेना है" / "देना है"), देय तिथि अलर्ट, व्हाट्सएप/यूपीआई रिमाइंडर और प्रिंट/CSV स्टेटमेंट प्रबंधित करें।',
+  },
+  {
+    titleEn: 'Payments & Bill Allocations',
+    titleHi: 'भुगतान और बिल समायोजन',
+    bodyEn:
+      'Record received or given payments by Cash, UPI, Card, Bank Transfer, or Cheque. Auto-allocate payments FIFO to oldest open dues or choose specific bills manually, and reverse erroneous entries with an audit trail.',
+    bodyHi:
+      'नकद, यूपीआई, कार्ड, बैंक या चेक से भुगतान दर्ज करें और पुराने बिलों में स्वतः या मैन्युअल रूप से समायोजित करें। गलत प्रविष्टि को सुरक्षित रूप से रिवर्स भी किया जा सकता है।',
+  },
+  {
+    titleEn: 'Items, Units & Live Stock',
+    titleHi: 'सामान, इकाइयाँ और स्टॉक',
+    bodyEn:
+      'Manage catalogue items with SKU, auto-generated barcodes, multi-photo galleries, and alternate unit conversions (e.g. 1 Box = 12 Pcs). Every bill, return, and stock adjustment writes to an immutable stock ledger.',
+    bodyHi:
+      'SKU, बारकोड लेबल, एक से अधिक फोटो और वैकल्पिक इकाइयों (जैसे 1 बॉक्स = 12 पीस) के साथ सामान सूची और लाइव स्टॉक ट्रैक करें।',
+  },
+  {
     titleEn: 'Single-Business & Role Access',
     titleHi: 'सिंगल-बिज़नेस और भूमिका एक्सेस',
     bodyEn:
-      'One BizOne workspace serves one business. Only the Business Owner can add staff, switch modules, or modify business settings.',
+      'One BizOne workspace serves one business. Owners manage staff, modules, and price/discount override policies; Managers, Cashiers, Storekeepers, Accountants, and Viewers see only their permitted tools.',
     bodyHi:
-      'एक बिज़वन वर्कस्पेस एक व्यवसाय के लिए है। केवल ओनर ही स्टाफ जोड़ सकते हैं और मॉड्यूल बदल सकते हैं।',
+      'एक बिज़वन वर्कस्पेस एक व्यवसाय के लिए है। ओनर स्टाफ, मॉड्यूल और छूट सीमा तय करते हैं; अन्य भूमिकाएं केवल अनुमत स्क्रीन ही देख सकती हैं।',
   },
   {
-    titleEn: 'User Profile vs Business Profile',
-    titleHi: 'उपयोगकर्ता प्रोफ़ाइल बनाम व्यवसाय प्रोफ़ाइल',
+    titleEn: 'Print, Thermal Layouts & Share Links',
+    titleHi: 'प्रिंट, थर्मल और शेयर लिंक',
     bodyEn:
-      'Every signed-in staff member can update their own display name, phone number, profile photo, and password under My Profile. Business logo and GSTIN live in Settings.',
+      'Print invoices in A4, A5, or 80mm thermal layout with shop logo and UPI QR code, or generate expiring view-only customer share links.',
     bodyHi:
-      'हर लॉग-इन स्टाफ मेरी प्रोफ़ाइल में अपना नाम, फोन, फोटो और पासवर्ड बदल सकता है। व्यवसाय का लोगो और GSTIN सेटिंग्स में हैं।',
+      'दुकान के लोगो और यूपीआई क्यूआर के साथ A4, A5 या 80mm थर्मल में बिल प्रिंट करें या ग्राहक के लिए समय-सीमित शेयर लिंक बनाएं।',
   },
   {
-    titleEn: 'Private File & Photo Storage',
-    titleHi: 'सुरक्षित फाइल और फोटो स्टोरेज',
+    titleEn: 'User Profile & Private Storage',
+    titleHi: 'प्रोफ़ाइल और सुरक्षित फाइल स्टोरेज',
     bodyEn:
-      'Profile photos, business logos, and UPI QR images are stored in a private Supabase Storage bucket and served through short-lived signed URLs.',
+      'Staff can update their name, phone, avatar, and password under My Profile. Business logos, UPI QR images, and item photos are stored privately with short-lived signed URLs.',
     bodyHi:
-      'प्रोफ़ाइल फोटो, लोगो और यूपीआई क्यूआर निजी सुपाबेस स्टोरेज में सुरक्षित रखे जाते हैं।',
+      'स्टाफ मेरी प्रोफ़ाइल में अपना नाम, फोन, फोटो और पासवर्ड बदल सकते हैं। सभी फोटो निजी स्टोरेज में सुरक्षित रहती हैं।',
+  },
+  {
+    titleEn: 'Purchases & Supplier Returns',
+    titleHi: 'खरीद और सप्लायर वापसी',
+    bodyEn:
+      'Enter supplier purchase bills with freight, GST input tax, and optional scanned bill attachments. Posting updates stock and supplier Khata automatically, and Purchase Returns (Debit Notes) deduct stock cleanly.',
+    bodyHi:
+      'भाड़ा, इनपुट जीएसटी और बिल स्कैन के साथ सप्लायर खरीद बिल दर्ज करें। इससे स्टॉक और सप्लायर खाता अपने आप अपडेट होता है।',
+  },
+  {
+    titleEn: 'Daily Expenses & Receipt Uploads',
+    titleHi: 'दैनिक खर्च और रसीद अपलोड',
+    bodyEn:
+      'Log rent, electricity, transport, salaries, and miscellaneous expenses with payment mode and receipt files. Cashiers can view and manage only their own logged expenses.',
+    bodyHi:
+      'किराया, बिजली, परिवहन, वेतन और अन्य खर्च रसीद के साथ दर्ज करें। कैशियर केवल अपने द्वारा दर्ज किए गए खर्च ही देख सकते हैं।',
+  },
+  {
+    titleEn: 'Day Book, GST & Standard Reports',
+    titleHi: 'डे बुक, जीएसटी और मानक रिपोर्ट',
+    bodyEn:
+      'Review reconciled Day Book, Cash Book, Bank Book, Profit Estimate, GST Output vs Input summary, HSN totals, Stock Valuation, Party Dues Ageing, and export CSV or printable reports.',
+    bodyHi:
+      'डे बुक, कैश व बैंक बुक, अनुमानित लाभ, जीएसटी व HSN सारांश, स्टॉक मूल्यांकन और पार्टी बकाया अवधि (Ageing) देखें और CSV/प्रिंट करें।',
+  },
+  {
+    titleEn: 'Local Backup & Owner Restore',
+    titleHi: 'लोकल बैकअप और ओनर रीस्टोर',
+    bodyEn:
+      'Export complete workspace JSON snapshots verified by SHA-256 checksums under Settings -> Backup & Storage. Only the Owner can restore a snapshot, after password verification and an automatic pre-restore safety download.',
+    bodyHi:
+      'सेटिंग्स -> बैकअप और स्टोरेज से SHA-256 सत्यापित JSON बैकअप डाउनलोड करें। केवल ओनर पासवर्ड सत्यापन के बाद बैकअप रीस्टोर कर सकते हैं।',
   },
   {
     titleEn: 'Optional Integrations',
@@ -59,7 +123,9 @@ export function HelpScreen() {
           {t('nav.help')}
         </h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">
-          Quick start documentation and keyboard shortcuts for BizOne ERP Phase 1.
+          {language === 'hi'
+            ? 'बिज़वन ईआरपी उपयोग मार्गदर्शिका और कीबोर्ड शॉर्टकट।'
+            : 'Quick start documentation and keyboard shortcuts for BizOne ERP.'}
         </p>
       </div>
 

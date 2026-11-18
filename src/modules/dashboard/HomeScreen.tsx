@@ -1,29 +1,30 @@
 import {
   IconAlertCircle,
+  IconAlertTriangle,
   IconArrowDownLeft,
+  IconArrowRight,
   IconArrowUpRight,
+  IconBell,
+  IconBriefcase,
+  IconChartBar,
   IconCheck,
-  IconChevronRight,
-  IconCircleCheck,
-  IconClock,
-  IconHistory,
-  IconPackage,
+  IconCircleDashed,
+  IconFileSpreadsheet,
+  IconPlus,
   IconReceipt,
-  IconRefresh,
+  IconSettings,
+  IconShoppingBag,
   IconUsers,
+  IconWallet,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { BUSINESS_PACKS } from '../../../config/app.config';
 import { useApp } from '../../app/AppProvider';
-import { formatDateTime, formatINR } from '../../core/format';
+import { formatDate, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
-import type {
-  BillingSummary,
-  InventorySummary,
-  KhataTotalsSummary,
-} from '../../types/bizone';
-import type { ItemFilterTab } from '../items/ItemsScreen';
+import type { DashboardMetrics } from '../../types/bizone';
+import type { SettingsTabKey } from '../settings/SettingsScreen';
 
 export type AppDestination =
   | 'home'
@@ -34,421 +35,681 @@ export type AppDestination =
   | 'payments'
   | 'expenses'
   | 'reports'
+  | 'pos'
+  | 'accounting'
+  | 'gst'
+  | 'operations'
+  | 'messaging'
+  | 'ai'
+  | 'pack'
+  | 'data'
+  | 'notifications'
   | 'settings'
   | 'profile'
   | 'help';
 
+export type NavigationAction =
+  | 'new-bill'
+  | 'new-quotation'
+  | 'receive-payment'
+  | 'give-payment'
+  | 'add-party'
+  | 'add-item'
+  | 'new-purchase'
+  | 'add-expense';
+
 interface HomeScreenProps {
   onNavigate: (
     dest: AppDestination,
-    settingsTab?: string,
-    opts?: {
-      partyId?: string | null;
-      itemId?: string | null;
-      billId?: string | null;
-      itemFilter?: ItemFilterTab | null;
-      action?:
-        | 'add-party'
-        | 'add-item'
-        | 'receive-payment'
-        | 'give-payment'
-        | 'new-bill'
-        | 'new-quotation'
-        | null;
+    settingsTab?: SettingsTabKey,
+    options?: {
+      action?: NavigationAction;
+      itemLowStockOnly?: boolean;
+      partyFilter?: 'all' | 'receive' | 'give';
     }
   ) => void;
 }
 
-export function HomeScreen({ onNavigate }: HomeScreenProps) {
-  const {
-    business,
-    profile,
-    staff,
-    modules,
-    auditLogs,
-    workspaceError,
-    refreshWorkspace,
-    showToast,
-    isModuleEnabled,
-    language,
-    t,
-  } = useApp();
+const INITIAL_METRICS: DashboardMetrics = {
+  today_sales: 0,
+  today_gross_sales: 0,
+  today_returns: 0,
+  month_sales: 0,
+  today_purchases: 0,
+  month_purchases: 0,
+  today_expenses: 0,
+  month_expenses: 0,
+  cash_in_today: 0,
+  cash_out_today: 0,
+  net_cash_today: 0,
+  total_receivable: 0,
+  total_payable: 0,
+  low_stock_count: 0,
+  out_of_stock_count: 0,
+  unread_notifications_count: 0,
+  last_backup_at: null,
+  daily_trend: [],
+  recent_bills: [],
+};
 
-  const [dismissing, setDismissing] = useState(false);
-  const [khataSummary, setKhataSummary] = useState<KhataTotalsSummary | null>(null);
-  const [invSummary, setInvSummary] = useState<InventorySummary | null>(null);
-  const [billSummary, setBillSummary] = useState<BillingSummary | null>(null);
+export function HomeScreen({ onNavigate }: HomeScreenProps) {
+  const { business, profile, modules, language, isModuleEnabled, t } = useApp();
+
+  const [metrics, setMetrics] = useState<DashboardMetrics>(INITIAL_METRICS);
+  const [unreadAlertsCount, setUnreadAlertsCount] = useState(0);
+  const [loadingMetrics, setLoadingMetrics] = useState(true);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+
+  const loadMetrics = useCallback(async () => {
+    setLoadingMetrics(true);
+    setMetricsError(null);
+    try {
+      const [metricsRes, notifRes] = await Promise.all([
+        supabase.rpc('get_dashboard_metrics'),
+        supabase.rpc('sync_system_notifications'),
+      ]);
+
+      if (metricsRes.error) throw metricsRes.error;
+      const data = metricsRes.data;
+
+      if (data && typeof data === 'object') {
+        const d = data as Partial<DashboardMetrics>;
+        const nextMetrics: DashboardMetrics = {
+          today_sales: Number(d.today_sales ?? 0),
+          today_gross_sales: Number(d.today_gross_sales ?? 0),
+          today_returns: Number(d.today_returns ?? 0),
+          month_sales: Number(d.month_sales ?? 0),
+          today_purchases: Number(d.today_purchases ?? 0),
+          month_purchases: Number(d.month_purchases ?? 0),
+          today_expenses: Number(d.today_expenses ?? 0),
+          month_expenses: Number(d.month_expenses ?? 0),
+          cash_in_today: Number(d.cash_in_today ?? 0),
+          cash_out_today: Number(d.cash_out_today ?? 0),
+          net_cash_today: Number(d.net_cash_today ?? 0),
+          total_receivable: Number(d.total_receivable ?? 0),
+          total_payable: Number(d.total_payable ?? 0),
+          low_stock_count: Number(d.low_stock_count ?? 0),
+          out_of_stock_count: Number(d.out_of_stock_count ?? 0),
+          unread_notifications_count: Number(d.unread_notifications_count ?? 0),
+          last_backup_at:
+            typeof d.last_backup_at === 'string' ? d.last_backup_at : null,
+          daily_trend: Array.isArray(d.daily_trend) ? d.daily_trend : [],
+          recent_bills: Array.isArray(d.recent_bills) ? d.recent_bills : [],
+        };
+        setMetrics(nextMetrics);
+        setUnreadAlertsCount(nextMetrics.unread_notifications_count);
+      }
+
+      if (!notifRes.error && notifRes.data && typeof notifRes.data === 'object') {
+        const nd = notifRes.data as {
+          unread_count?: number;
+          notifications?: Array<{ is_read?: boolean }>;
+        };
+        const rows = Array.isArray(nd.notifications) ? nd.notifications : [];
+        setUnreadAlertsCount(
+          Number(nd.unread_count ?? rows.filter((n) => !n.is_read).length)
+        );
+      }
+    } catch (err) {
+      setMetricsError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to load dashboard metrics. Please try again.'
+      );
+    } finally {
+      setLoadingMetrics(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMetrics();
+  }, [loadMetrics]);
+
+  const packInfo = BUSINESS_PACKS.find((p) => p.key === business?.pack);
 
   const isOwner = profile?.role === 'owner';
-  const enabledCount = modules.filter((m) => m.enabled).length;
-  const packInfo = BUSINESS_PACKS.find((p) => p.key === business?.pack);
-  const canSeeBills =
-    isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills');
-  const canSeeParties =
-    isModuleEnabled('parties') && hasCapability(profile?.role, 'parties');
-  const canSeeItems =
-    isModuleEnabled('inventory') &&
-    (hasCapability(profile?.role, 'items') ||
-      hasCapability(profile?.role, 'create_bills'));
-  const canEditItems =
-    isModuleEnabled('inventory') && hasCapability(profile?.role, 'items');
+  const canCreateBill =
+    hasCapability(profile?.role, 'create_bills') && isModuleEnabled('billing');
+  const canRecordPayment =
+    hasCapability(profile?.role, 'payments') && isModuleEnabled('payments');
+  const canCreatePurchase =
+    hasCapability(profile?.role, 'purchases') && isModuleEnabled('purchases');
+  const canCreateExpense =
+    hasCapability(profile?.role, 'expenses') && isModuleEnabled('expenses');
+  const canViewReports =
+    hasCapability(profile?.role, 'reports') && isModuleEnabled('reports');
 
-  useEffect(() => {
-    if (!canSeeParties) {
-      setKhataSummary(null);
-    } else {
-      let active = true;
-      supabase
-        .from('khata_totals_summary')
-        .select('*')
-        .maybeSingle()
-        .then(({ data }) => {
-          if (active && data) {
-            setKhataSummary(data as KhataTotalsSummary);
-          }
-        });
-      return () => {
-        active = false;
-      };
-    }
-  }, [canSeeParties]);
+  const hasLogo = Boolean(business?.logo_file_id);
+  const hasAddressOrPhone = Boolean(
+    business?.phone?.trim() || business?.address?.trim()
+  );
+  const hasGstConfigured = Boolean(
+    !business?.gst_registered || business?.gstin?.trim()
+  );
+  const hasProfileDetails = Boolean(
+    profile?.full_name?.trim() && profile?.phone?.trim()
+  );
 
-  useEffect(() => {
-    if (!canSeeItems) {
-      setInvSummary(null);
-      return;
-    }
-    let active = true;
-    supabase
-      .from('inventory_summary_view')
-      .select('*')
-      .maybeSingle()
-      .then(({ data }) => {
-        if (active && data) {
-          setInvSummary(data as InventorySummary);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [canSeeItems]);
-
-  useEffect(() => {
-    if (!canSeeBills) {
-      setBillSummary(null);
-      return;
-    }
-    let active = true;
-    supabase
-      .from('billing_summary_view')
-      .select('*')
-      .maybeSingle()
-      .then(({ data }) => {
-        if (active && data) {
-          setBillSummary(data as BillingSummary);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [canSeeBills]);
-
-  const steps = business?.onboarding_steps ?? {
-    logo: false,
-    address: false,
-    gst: false,
-    profile: false,
-    modules: false,
-  };
-
-  const checklistItems = [
+  const rawChecklistItems: Array<{
+    key: string;
+    label: string;
+    done: boolean;
+    visible: boolean;
+    action: () => void;
+  }> = [
     {
       key: 'logo',
-      done: Boolean(steps.logo || business?.logo_file_id),
       label: t('home.stepLogo'),
+      done: hasLogo,
+      visible: isOwner,
       action: () => onNavigate('settings', 'business'),
     },
     {
       key: 'address',
-      done: Boolean(steps.address || business?.address),
       label: t('home.stepAddress'),
+      done: hasAddressOrPhone,
+      visible: isOwner,
       action: () => onNavigate('settings', 'business'),
     },
     {
       key: 'gst',
-      done: Boolean(steps.gst),
       label: t('home.stepGst'),
+      done: hasGstConfigured,
+      visible: isOwner,
       action: () => onNavigate('settings', 'invoice'),
     },
     {
       key: 'profile',
-      done: Boolean(steps.profile || profile?.avatar_file_id),
       label: t('home.stepProfile'),
+      done: hasProfileDetails,
+      visible: true,
       action: () => onNavigate('profile'),
     },
     {
       key: 'modules',
-      done: Boolean(steps.modules),
       label: t('home.stepModules'),
+      done: modules.some((m) => m.enabled),
+      visible: isOwner,
       action: () => onNavigate('settings', 'modules'),
     },
   ];
 
-  const completedStepsCount = checklistItems.filter((i) => i.done).length;
+  const checklistItems = rawChecklistItems.filter((i) => i.visible);
+  const completedSteps = checklistItems.filter((i) => i.done).length;
+  const showChecklist =
+    checklistItems.length > 0 && completedSteps < checklistItems.length;
 
-  const handleDismissOnboarding = async () => {
-    setDismissing(true);
-    try {
-      const { error } = await supabase.rpc('dismiss_onboarding');
-      if (error) throw error;
-      await refreshWorkspace();
-      showToast('Onboarding checklist dismissed.', 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to dismiss checklist.',
-        'error'
-      );
-    } finally {
-      setDismissing(false);
-    }
-  };
+  const maxTrendVal = Math.max(
+    1,
+    ...metrics.daily_trend.map((d) =>
+      Math.max(Number(d.sales || 0), Number(d.purchases || 0) + Number(d.expenses || 0))
+    )
+  );
+
+  const totalStockAlerts =
+    metrics.low_stock_count + metrics.out_of_stock_count;
 
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">
-      {workspaceError && (
-        <div className="p-4 rounded-xl border border-[var(--give)]/40 bg-[var(--give-soft)] flex items-center justify-between gap-4 text-xs sm:text-sm text-[var(--give)]">
-          <span className="inline-flex items-center gap-2">
-            <IconAlertCircle size={18} stroke={2} className="shrink-0" />
-            <span>{workspaceError}</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => refreshWorkspace()}
-            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--give)]/40 bg-[var(--surface)] text-xs font-medium text-[var(--text)]"
-          >
-            <IconRefresh size={14} stroke={2} />
-            <span>{t('common.retry')}</span>
-          </button>
-        </div>
-      )}
-
-      {/* Greeting & Business header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      {/* Header & Primary Action Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-2 border-b border-[var(--border)]">
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {business?.name ?? t('app.name')}
+            {business?.name || t('app.name')}
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
-            {language === 'hi' ? packInfo?.labelHi : packInfo?.labelEn} ·{' '}
-            {business?.gst_registered
-              ? `GSTIN ${business.gstin || 'Pending'}`
-              : 'Non-GST'}
+            {packInfo
+              ? `${language === 'hi' ? packInfo.labelHi : packInfo.labelEn} • ${
+                  business?.gst_registered
+                    ? `GSTIN: ${business.gstin || 'Pending'}`
+                    : language === 'hi'
+                      ? 'बिना जीएसटी बिलिंग'
+                      : 'Non-GST Billing'
+                }`
+              : t('app.tagline')}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {canSeeBills && (
+          <button
+            type="button"
+            onClick={() => onNavigate('notifications')}
+            className={`h-10 px-3.5 rounded-lg border text-xs sm:text-sm font-medium inline-flex items-center gap-2 transition-colors ${
+              unreadAlertsCount > 0
+                ? 'border-[var(--warning)]/50 bg-[var(--warning-soft)] text-[var(--text)]'
+                : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-[var(--text)]'
+            }`}
+          >
+            <IconBell
+              size={17}
+              stroke={2}
+              className={
+                unreadAlertsCount > 0
+                  ? 'text-[var(--warning)]'
+                  : 'text-[var(--text-muted)]'
+              }
+            />
+            <span>{language === 'hi' ? 'अलर्ट' : 'Alerts'}</span>
+            {unreadAlertsCount > 0 && (
+              <span className="font-mono font-bold tabular-nums text-[var(--give)]">
+                ({unreadAlertsCount})
+              </span>
+            )}
+          </button>
+
+          {canCreateBill && (
             <button
               type="button"
               onClick={() => onNavigate('bills', undefined, { action: 'new-bill' })}
-              className="h-11 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 transition-opacity"
+              className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95"
             >
-              <IconReceipt size={18} stroke={2} />
+              <IconPlus size={17} stroke={2.2} />
               <span>{t('quick.newBill')}</span>
             </button>
           )}
-          {canEditItems && (
+          {canRecordPayment && (
             <button
               type="button"
-              onClick={() => onNavigate('items', undefined, { action: 'add-item' })}
-              className="h-11 px-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
+              onClick={() =>
+                onNavigate('payments', undefined, { action: 'receive-payment' })
+              }
+              className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5"
             >
-              <IconPackage size={18} stroke={2} />
-              <span>{t('quick.addItem')}</span>
+              <IconArrowDownLeft
+                size={17}
+                stroke={2}
+                className="text-[var(--receive-text)]"
+              />
+              <span>{t('quick.receivePayment')}</span>
+            </button>
+          )}
+          {canCreatePurchase && (
+            <button
+              type="button"
+              onClick={() =>
+                onNavigate('purchases', undefined, { action: 'new-purchase' })
+              }
+              className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5"
+            >
+              <IconShoppingBag
+                size={17}
+                stroke={2}
+                className="text-[var(--primary-dark)]"
+              />
+              <span>{t('quick.newPurchase')}</span>
+            </button>
+          )}
+          {canCreateExpense && (
+            <button
+              type="button"
+              onClick={() =>
+                onNavigate('expenses', undefined, { action: 'add-expense' })
+              }
+              className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5"
+            >
+              <IconWallet size={17} stroke={2} className="text-[var(--give)]" />
+              <span>{t('quick.addExpense')}</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Key numbers grid (Phone-first 2x2 -> Desktop 4-col) */}
-      <section
-        aria-label="Daily business metrics"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4"
-      >
-        <button
-          type="button"
-          onClick={() => canSeeBills && onNavigate('bills')}
-          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors"
+      {/* Error banner */}
+      {metricsError && (
+        <div
+          role="alert"
+          className="rounded-xl border border-[var(--give)] bg-[var(--give-soft)] p-3.5 flex items-center justify-between gap-3 text-xs sm:text-sm text-[var(--give)]"
         >
-          <p className="text-xs font-medium text-[var(--text-muted)]">
-            {t('home.todaySales')}
-          </p>
-          <p className="mt-2 text-xl sm:text-2xl font-semibold tabular-nums text-[var(--text)]">
-            {formatINR(Number(billSummary?.today_sales ?? 0))}
-          </p>
-        </button>
-
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
-          <p className="text-xs font-medium text-[var(--text-muted)]">
-            {t('home.cashReceived')}
-          </p>
-          <p className="mt-2 text-xl sm:text-2xl font-semibold tabular-nums text-[var(--text)]">
-            {formatINR(Number(khataSummary?.today_received ?? 0))}
-          </p>
+          <div className="flex items-center gap-2 font-medium">
+            <IconAlertCircle size={18} stroke={2} className="shrink-0" />
+            <span>{metricsError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadMetrics()}
+            className="h-8 px-3 rounded-lg bg-[var(--surface)] border border-[var(--border)] text-xs font-semibold text-[var(--text)] shrink-0"
+          >
+            {t('common.retry')}
+          </button>
         </div>
-
-        <button
-          type="button"
-          onClick={() => canSeeParties && onNavigate('parties')}
-          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors"
-        >
-          <div className="flex items-center gap-1 text-xs font-medium text-[var(--receive-text)]">
-            <IconArrowDownLeft size={15} stroke={2} />
-            <span>{t('home.youllGet')}</span>
-          </div>
-          <p className="mt-2 text-xl sm:text-2xl font-semibold tabular-nums text-[var(--receive-text)]">
-            {formatINR(Number(khataSummary?.total_to_receive ?? 0))}
-          </p>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => canSeeParties && onNavigate('parties')}
-          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 text-left hover:bg-[var(--surface-muted)] transition-colors"
-        >
-          <div className="flex items-center gap-1 text-xs font-medium text-[var(--give)]">
-            <IconArrowUpRight size={15} stroke={2} />
-            <span>{t('home.youllGive')}</span>
-          </div>
-          <p className="mt-2 text-xl sm:text-2xl font-semibold tabular-nums text-[var(--give)]">
-            {formatINR(Number(khataSummary?.total_to_give ?? 0))}
-          </p>
-        </button>
-      </section>
-
-      {canSeeParties && (khataSummary?.overdue_parties_count ?? 0) > 0 && (
-        <button
-          type="button"
-          onClick={() => onNavigate('parties')}
-          className="w-full p-4 rounded-xl border border-[var(--give)]/30 bg-[var(--give-soft)] flex items-center justify-between gap-4 text-left hover:opacity-95"
-        >
-          <div className="flex items-center gap-3">
-            <IconClock size={20} stroke={2} className="text-[var(--give)] shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-[var(--give)]">
-                {language === 'hi'
-                  ? `${khataSummary?.overdue_parties_count} पार्टियों का बकाया देय तिथि से अधिक हो गया है`
-                  : `${khataSummary?.overdue_parties_count} ${
-                      khataSummary?.overdue_parties_count === 1 ? 'party has' : 'parties have'
-                    } overdue balances`}
-              </p>
-              <p className="text-xs text-[var(--text-muted)]">
-                {language === 'hi'
-                  ? 'बकाया देखने और रिमाइंडर भेजने के लिए क्लिक करें'
-                  : 'Open Parties & Khata to review dues and send reminders'}
-              </p>
-            </div>
-          </div>
-          <IconChevronRight size={18} stroke={2} className="text-[var(--give)] shrink-0" />
-        </button>
       )}
 
-      {canSeeItems && (invSummary?.low_stock_count ?? 0) > 0 && (
+      {/* 6 Primary KPI Cards */}
+      <section aria-label="Business Summary" className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+        {/* 1. Today's Sales */}
+        <button
+          type="button"
+          onClick={() => onNavigate('bills')}
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>{t('home.todaySales')}</span>
+            <IconReceipt size={17} stroke={2} className="text-[var(--primary-dark)]" />
+          </div>
+          <div className="mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight">
+            {loadingMetrics ? '—' : formatINR(metrics.today_sales)}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between text-xs text-[var(--text-muted)]">
+            <span className="font-mono tabular-nums">
+              {loadingMetrics
+                ? t('common.loading')
+                : `${t('purchases.monthPurchases')}: ${formatINR(metrics.month_sales)}`}
+            </span>
+          </div>
+        </button>
+
+        {/* 2. Cash / Bank In Today */}
+        <button
+          type="button"
+          onClick={() => onNavigate('payments')}
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>{t('home.cashReceived')}</span>
+            <IconArrowDownLeft
+              size={17}
+              stroke={2}
+              className="text-[var(--receive-text)]"
+            />
+          </div>
+          <div className="mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight text-[var(--receive-text)]">
+            {loadingMetrics ? '—' : formatINR(metrics.cash_in_today)}
+          </div>
+          <div className="mt-1.5 text-xs text-[var(--text-muted)] font-mono tabular-nums">
+            {loadingMetrics
+              ? t('common.loading')
+              : `${
+                  language === 'hi' ? 'आज भुगतान (Out)' : 'Out today'
+                }: ${formatINR(metrics.cash_out_today)}`}
+          </div>
+        </button>
+
+        {/* 3. To Receive (You'll Get) */}
         <button
           type="button"
           onClick={() =>
-            onNavigate('items', undefined, { itemFilter: 'low_stock' })
+            onNavigate('parties', undefined, { partyFilter: 'receive' })
           }
-          className="w-full p-4 rounded-xl border border-amber-500/35 bg-amber-500/10 flex items-center justify-between gap-4 text-left hover:opacity-95"
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
         >
-          <div className="flex items-center gap-3">
-            <IconPackage size={20} stroke={2} className="text-amber-600 shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-                {language === 'hi'
-                  ? `${invSummary?.low_stock_count} सामान कम स्टॉक स्तर पर हैं`
-                  : `${invSummary?.low_stock_count} ${
-                      invSummary?.low_stock_count === 1 ? 'item is' : 'items are'
-                    } low on stock`}
-              </p>
-              <p className="text-xs text-[var(--text-muted)]">
-                {language === 'hi'
-                  ? 'कम स्टॉक वाले सामान देखने और स्टॉक जोड़ने के लिए क्लिक करें'
-                  : 'Open Items & Inventory to review low-stock items and reorder levels'}
-              </p>
-            </div>
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>{t('home.youllGet')}</span>
+            <IconUsers size={17} stroke={2} className="text-[var(--receive-text)]" />
           </div>
-          <IconChevronRight size={18} stroke={2} className="text-amber-600 shrink-0" />
+          <div className="mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight text-[var(--receive-text)]">
+            {loadingMetrics ? '—' : formatINR(metrics.total_receivable)}
+          </div>
+          <div className="mt-1.5 text-xs text-[var(--text-muted)]">
+            {loadingMetrics
+              ? t('common.loading')
+              : language === 'hi'
+                ? 'ग्राहकों से लेना बाकी (To Receive)'
+                : 'Customer receivables due'}
+          </div>
         </button>
-      )}
 
+        {/* 4. To Pay (You'll Give) */}
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate('parties', undefined, { partyFilter: 'give' })
+          }
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>{t('home.youllGive')}</span>
+            <IconArrowUpRight size={17} stroke={2} className="text-[var(--give)]" />
+          </div>
+          <div className="mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight text-[var(--give)]">
+            {loadingMetrics ? '—' : formatINR(metrics.total_payable)}
+          </div>
+          <div className="mt-1.5 text-xs text-[var(--text-muted)]">
+            {loadingMetrics
+              ? t('common.loading')
+              : language === 'hi'
+                ? 'सप्लायर को देना बाकी (To Pay)'
+                : 'Supplier payables due'}
+          </div>
+        </button>
+
+        {/* 5. Purchases & Expenses Today */}
+        <button
+          type="button"
+          onClick={() => onNavigate('purchases')}
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>
+              {t('purchases.todayPurchases')} &amp; {t('nav.expenses')}
+            </span>
+            <IconShoppingBag
+              size={17}
+              stroke={2}
+              className="text-[var(--primary-dark)]"
+            />
+          </div>
+          <div className="mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight">
+            {loadingMetrics
+              ? '—'
+              : formatINR(metrics.today_purchases + metrics.today_expenses)}
+          </div>
+          <div className="mt-1.5 text-xs text-[var(--text-muted)] font-mono tabular-nums">
+            {loadingMetrics
+              ? t('common.loading')
+              : `Pur: ${formatINR(metrics.today_purchases)} • Exp: ${formatINR(
+                  metrics.today_expenses
+                )}`}
+          </div>
+        </button>
+
+        {/* 6. Low Stock & Out of Stock Alerts */}
+        <button
+          type="button"
+          onClick={() =>
+            onNavigate('items', undefined, {
+              itemLowStockOnly: totalStockAlerts > 0,
+            })
+          }
+          className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 sm:p-5 text-left hover:border-[var(--primary-dark)] transition-colors"
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-medium text-[var(--text-muted)]">
+            <span>{t('items.lowStock')}</span>
+            <IconAlertTriangle
+              size={17}
+              stroke={2}
+              className={
+                totalStockAlerts > 0
+                  ? 'text-[var(--warning)]'
+                  : 'text-[var(--text-muted)]'
+              }
+            />
+          </div>
+          <div
+            className={`mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight ${
+              totalStockAlerts > 0 ? 'text-[var(--warning)]' : ''
+            }`}
+          >
+            {loadingMetrics ? '—' : String(totalStockAlerts)}
+          </div>
+          <div className="mt-1.5 text-xs text-[var(--text-muted)]">
+            {loadingMetrics
+              ? t('common.loading')
+              : `${metrics.low_stock_count} low stock • ${metrics.out_of_stock_count} out of stock`}
+          </div>
+        </button>
+      </section>
+
+      {/* Main Two-Column Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* A3 Onboarding Checklist (Owner) or Workspace Snapshot */}
+        {/* Left Column (2 cols): 7-Day Operating Trend + Onboarding Checklist (when incomplete) */}
         <div className="lg:col-span-2 space-y-6">
-          {isOwner && !business?.onboarding_completed && (
-            <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-              <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between gap-4">
+          {/* 7-Day Operating Trend */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-base font-semibold">
+                  {language === 'hi'
+                    ? 'पिछले 7 दिनों का व्यापार रुझान'
+                    : '7-Day Operating Trend'}
+                </h2>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {language === 'hi'
+                    ? 'दैनिक बिक्री बनाम खरीद और खर्च'
+                    : 'Daily sales compared against purchases and expenses'}
+                </p>
+              </div>
+              <div className="flex items-center gap-4 text-xs">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-[var(--primary-dark)]" />
+                  <span>{language === 'hi' ? 'बिक्री' : 'Sales'}</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-[var(--give)]" />
+                  <span>
+                    {language === 'hi' ? 'खरीद + खर्च' : 'Purchases + Expenses'}
+                  </span>
+                </span>
+              </div>
+            </div>
+
+            {metrics.daily_trend.length === 0 ? (
+              <p className="text-xs text-[var(--text-muted)] py-8 text-center">
+                {language === 'hi'
+                  ? 'चार्ट डेटा लोड हो रहा है...'
+                  : 'No trend data available yet.'}
+              </p>
+            ) : (
+              <div className="grid grid-cols-7 gap-2 sm:gap-3 pt-2 items-end h-44">
+                {metrics.daily_trend.map((pt) => {
+                  const salesVal = Number(pt.sales || 0);
+                  const outVal = Number(pt.purchases || 0) + Number(pt.expenses || 0);
+                  const salesPct = Math.max(
+                    4,
+                    Math.round((salesVal / maxTrendVal) * 100)
+                  );
+                  const outPct = Math.max(
+                    4,
+                    Math.round((outVal / maxTrendVal) * 100)
+                  );
+                  const shortLabel = pt.day.slice(5);
+
+                  const toBarHeightClass = (pct: number) => {
+                    if (pct >= 90) return 'h-full';
+                    if (pct >= 75) return 'h-5/6';
+                    if (pct >= 60) return 'h-4/6';
+                    if (pct >= 45) return 'h-3/6';
+                    if (pct >= 30) return 'h-2/6';
+                    if (pct >= 15) return 'h-1/6';
+                    return 'h-2';
+                  };
+
+                  return (
+                    <div
+                      key={pt.day}
+                      className="flex flex-col items-center justify-end h-full gap-1.5"
+                    >
+                      <div className="w-full flex items-end justify-center gap-1.5 h-32 px-1">
+                        <div
+                          title={`Sales: ${formatINR(salesVal)}`}
+                          className={`w-3 sm:w-4 rounded-t bg-[var(--primary-dark)] transition-all ${toBarHeightClass(salesPct)}`}
+                        />
+                        <div
+                          title={`Purchases + Expenses: ${formatINR(outVal)}`}
+                          className={`w-3 sm:w-4 rounded-t bg-[var(--give)] opacity-80 transition-all ${toBarHeightClass(outPct)}`}
+                        />
+                      </div>
+                      <span className="text-[11px] font-mono tabular-nums text-[var(--text-muted)]">
+                        {shortLabel}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {canViewReports && (
+              <div className="pt-3 border-t border-[var(--border)] flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="text-[var(--text-muted)] font-mono tabular-nums">
+                  {language === 'hi' ? 'इस महीने कुल बिक्री' : 'Month Sales'}:{' '}
+                  <span className="font-semibold text-[var(--text)]">
+                    {formatINR(metrics.month_sales)}
+                  </span>{' '}
+                  • {language === 'hi' ? 'खरीद' : 'Purchases'}:{' '}
+                  <span className="font-semibold text-[var(--text)]">
+                    {formatINR(metrics.month_purchases)}
+                  </span>{' '}
+                  • {language === 'hi' ? 'खर्च' : 'Expenses'}:{' '}
+                  <span className="font-semibold text-[var(--text)]">
+                    {formatINR(metrics.month_expenses)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('reports')}
+                  className="font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                >
+                  <span>
+                    {language === 'hi'
+                      ? 'डे-बुक और रिपोर्ट खोलें'
+                      : 'Open Day Book & Reports'}
+                  </span>
+                  <IconArrowRight size={14} stroke={2} />
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* Onboarding Checklist (shown only when setup is incomplete) */}
+          {showChecklist && (
+            <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+              <div className="flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-base font-semibold">
-                    {completedStepsCount === checklistItems.length
-                      ? t('home.onboardingDone')
-                      : t('home.onboardingTitle')}
+                    {t('home.onboardingTitle')}
                   </h2>
-                  <p className="text-xs text-[var(--text-muted)] mt-0.5 tabular-nums">
-                    {completedStepsCount} of {checklistItems.length} completed
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                    {language === 'hi'
+                      ? 'अपनी दुकान का सेटअप पूरा करने के लिए ये चरण पूरे करें।'
+                      : 'Complete these setup steps to get your business workspace ready.'}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleDismissOnboarding}
-                    disabled={dismissing}
-                    className="px-3 py-1.5 rounded-lg border border-[var(--border)] text-xs font-medium hover:bg-[var(--surface-muted)]"
-                  >
-                    {dismissing ? 'Saving...' : 'Mark Complete'}
-                  </button>
-                  <IconCircleCheck
-                    size={20}
-                    stroke={2}
-                    className={
-                      completedStepsCount === checklistItems.length
-                        ? 'text-[var(--receive-text)]'
-                        : 'text-[var(--text-muted)]'
-                    }
-                  />
-                </div>
+                <span className="text-xs font-mono font-semibold tabular-nums text-[var(--primary-dark)]">
+                  {completedSteps}/{checklistItems.length}
+                </span>
               </div>
 
-              <div className="divide-y divide-[var(--border)]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {checklistItems.map((item) => (
                   <button
                     key={item.key}
                     type="button"
                     onClick={item.action}
-                    className="w-full min-h-[56px] px-5 py-3 flex items-center justify-between gap-3 text-left hover:bg-[var(--surface-muted)] transition-colors"
+                    className="w-full min-h-[48px] px-3.5 py-2.5 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-muted)] flex items-center justify-between gap-3 text-left transition-colors"
                   >
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {item.done ? (
+                        <span className="w-5 h-5 rounded-full bg-[var(--receive-soft)] text-[var(--receive-text)] flex items-center justify-center shrink-0">
+                          <IconCheck size={14} stroke={2.5} />
+                        </span>
+                      ) : (
+                        <IconCircleDashed
+                          size={20}
+                          stroke={2}
+                          className="text-[var(--text-muted)] shrink-0"
+                        />
+                      )}
                       <span
-                        className={`w-6 h-6 rounded-full flex items-center justify-center border ${
+                        className={`text-xs sm:text-sm truncate ${
                           item.done
-                            ? 'bg-[var(--receive-soft)] border-[var(--receive)] text-[var(--receive-text)]'
-                            : 'border-[var(--border)] text-transparent'
-                        }`}
-                      >
-                        <IconCheck size={14} stroke={2.5} />
-                      </span>
-                      <span
-                        className={`text-sm font-medium ${
-                          item.done
-                            ? 'text-[var(--text-muted)] line-through'
-                            : 'text-[var(--text)]'
+                            ? 'line-through text-[var(--text-muted)]'
+                            : 'font-medium text-[var(--text)]'
                         }`}
                       >
                         {item.label}
                       </span>
                     </div>
-                    <IconChevronRight
-                      size={18}
+                    <IconArrowRight
+                      size={15}
                       stroke={2}
                       className="text-[var(--text-muted)] shrink-0"
                     />
@@ -457,98 +718,183 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
               </div>
             </section>
           )}
+        </div>
 
-          {/* Recent Activity (Owner audit_logs) */}
-          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-            <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
-              <IconHistory size={18} stroke={2} className="text-[var(--text-muted)]" />
+        {/* Right Column (1 col): Recent Bills + Quick Workspace Shortcuts */}
+        <div className="space-y-6">
+          {/* Recent Bills */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
+            <div className="flex items-center justify-between">
               <h2 className="text-base font-semibold">
-                {t('home.recentActivity')}
+                {language === 'hi' ? 'हाल के बिल' : 'Recent Bills'}
               </h2>
+              <button
+                type="button"
+                onClick={() => onNavigate('bills')}
+                className="text-xs font-semibold text-[var(--primary-dark)] hover:underline"
+              >
+                {language === 'hi' ? 'सभी देखें' : 'View All'}
+              </button>
             </div>
-            {auditLogs.length === 0 ? (
-              <div className="p-6 text-sm text-[var(--text-muted)]">
-                {t('home.noActivity')}
+
+            {metrics.recent_bills.length === 0 ? (
+              <div className="py-8 text-center space-y-3">
+                <p className="text-xs sm:text-sm text-[var(--text-muted)]">
+                  {t('bills.emptyTitle')}
+                </p>
+                {canCreateBill && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onNavigate('bills', undefined, { action: 'new-bill' })
+                    }
+                    className="h-9 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
+                  >
+                    <IconPlus size={15} stroke={2.2} />
+                    <span>{t('quick.newBill')}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-[var(--border)]">
-                {auditLogs.slice(0, 8).map((log) => (
-                  <div
-                    key={log.id}
-                    className="px-5 py-3 flex items-center justify-between gap-4 text-xs sm:text-sm"
+                {metrics.recent_bills.map((bill) => (
+                  <button
+                    key={bill.id}
+                    type="button"
+                    onClick={() => onNavigate('bills')}
+                    className="w-full py-3 flex items-center justify-between gap-3 text-left hover:bg-[var(--surface-muted)] px-2 rounded-lg transition-colors"
                   >
                     <div className="min-w-0">
-                      <p className="font-medium text-[var(--text)] truncate">
-                        {log.action}
-                      </p>
-                      <p className="text-xs text-[var(--text-muted)] truncate">
-                        {log.actor_email || 'System'} · {log.entity_type}
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-semibold">
+                          {bill.bill_number || 'DRAFT'}
+                        </span>
+                        <span className="text-sm font-medium truncate">
+                          {bill.party_name}
+                        </span>
+                      </div>
+                      <div className="text-xs text-[var(--text-muted)] mt-0.5">
+                        {formatDate(bill.bill_date)}
+                      </div>
                     </div>
-                    <span className="text-xs text-[var(--text-muted)] tabular-nums whitespace-nowrap shrink-0">
-                      {formatDateTime(log.created_at)}
-                    </span>
-                  </div>
+                    <div className="text-right shrink-0">
+                      <div className="text-sm font-mono font-semibold tabular-nums">
+                        {formatINR(bill.grand_total)}
+                      </div>
+                      <div
+                        className={`text-[11px] font-medium ${
+                          bill.payment_status === 'paid'
+                            ? 'text-[var(--receive-text)]'
+                            : bill.status === 'voided'
+                              ? 'text-[var(--text-muted)] line-through'
+                              : 'text-[var(--give)]'
+                        }`}
+                      >
+                        {bill.status === 'voided'
+                          ? t('bills.statuses.voided')
+                          : bill.payment_status === 'paid'
+                            ? t('bills.statuses.paid')
+                            : bill.payment_status === 'partial'
+                              ? `${t('bills.balanceDue')}: ${formatINR(bill.balance_due)}`
+                              : t('bills.statuses.unpaid')}
+                      </div>
+                    </div>
+                  </button>
                 ))}
               </div>
             )}
           </section>
-        </div>
 
-        {/* Right Column: Business Snapshot */}
-        <aside className="space-y-4">
-          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4">
-            <h2 className="text-base font-semibold">
-              {t('home.workspaceSummary')}
+          {/* Quick Workspace Shortcuts */}
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-3">
+            <h2 className="text-sm font-semibold text-[var(--text-muted)]">
+              {language === 'hi' ? 'त्वरित नेविगेशन' : 'Quick Workspace Shortcuts'}
             </h2>
-
-            <dl className="space-y-3 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-[var(--text-muted)]">
-                  {t('home.activePack')}
-                </dt>
-                <dd className="font-medium">
-                  {language === 'hi' ? packInfo?.labelHi : packInfo?.labelEn}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-[var(--text-muted)]">
-                  {t('home.taxMode')}
-                </dt>
-                <dd className="font-medium capitalize">
-                  {business?.tax_mode ?? 'exclusive'}
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-[var(--text-muted)]">
-                  {t('home.teamMembers')}
-                </dt>
-                <dd className="font-medium tabular-nums inline-flex items-center gap-1">
-                  <IconUsers size={15} stroke={2} />
-                  <span>{staff.filter((s) => s.is_active).length}</span>
-                </dd>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <dt className="text-[var(--text-muted)]">
-                  {t('home.enabledModules')}
-                </dt>
-                <dd className="font-medium tabular-nums">
-                  {enabledCount} / {modules.length}
-                </dd>
-              </div>
-            </dl>
-
-            {isOwner && (
+            <div className="grid grid-cols-1 gap-2">
               <button
                 type="button"
-                onClick={() => onNavigate('settings', 'users')}
-                className="w-full h-11 rounded-lg border border-[var(--border)] text-sm font-medium hover:bg-[var(--surface-muted)] transition-colors"
+                onClick={() => onNavigate('pack')}
+                className="w-full h-11 px-3.5 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-muted)] flex items-center justify-between text-xs sm:text-sm font-medium transition-colors"
               >
-                Manage Staff & Settings
+                <span className="inline-flex items-center gap-2.5">
+                  <IconBriefcase
+                    size={17}
+                    stroke={2}
+                    className="text-[var(--primary-dark)]"
+                  />
+                  <span>{t('nav.pack')}</span>
+                </span>
+                <IconArrowRight
+                  size={15}
+                  stroke={2}
+                  className="text-[var(--text-muted)]"
+                />
               </button>
-            )}
+
+              {canViewReports && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('reports')}
+                  className="w-full h-11 px-3.5 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-muted)] flex items-center justify-between text-xs sm:text-sm font-medium transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2.5">
+                    <IconChartBar
+                      size={17}
+                      stroke={2}
+                      className="text-[var(--primary-dark)]"
+                    />
+                    <span>{t('nav.reports')}</span>
+                  </span>
+                  <IconArrowRight
+                    size={15}
+                    stroke={2}
+                    className="text-[var(--text-muted)]"
+                  />
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => onNavigate('data')}
+                className="w-full h-11 px-3.5 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-muted)] flex items-center justify-between text-xs sm:text-sm font-medium transition-colors"
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <IconFileSpreadsheet
+                    size={17}
+                    stroke={2}
+                    className="text-[var(--primary-dark)]"
+                  />
+                  <span>{t('nav.data')}</span>
+                </span>
+                <IconArrowRight
+                  size={15}
+                  stroke={2}
+                  className="text-[var(--text-muted)]"
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onNavigate('settings', isOwner ? 'business' : 'appearance')}
+                className="w-full h-11 px-3.5 rounded-lg border border-[var(--border)] hover:bg-[var(--surface-muted)] flex items-center justify-between text-xs sm:text-sm font-medium transition-colors"
+              >
+                <span className="inline-flex items-center gap-2.5">
+                  <IconSettings
+                    size={17}
+                    stroke={2}
+                    className="text-[var(--primary-dark)]"
+                  />
+                  <span>{t('nav.settings')}</span>
+                </span>
+                <IconArrowRight
+                  size={15}
+                  stroke={2}
+                  className="text-[var(--text-muted)]"
+                />
+              </button>
+            </div>
           </section>
-        </aside>
+        </div>
       </div>
     </div>
   );

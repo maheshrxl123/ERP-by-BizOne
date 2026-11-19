@@ -38,6 +38,41 @@ for (const key of Object.keys(process.env)) {
   }
 }
 
+function extractUrlRef(url) {
+  const m = String(url || '').trim().match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co(?:\/|$)/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
+function extractJwtRef(token) {
+  const clean = String(token || '').trim().replace(/^["']+|["']+$/g, '');
+  const parts = clean.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return typeof decoded.ref === 'string' ? decoded.ref.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+const urlRef = extractUrlRef(process.env.VITE_SUPABASE_URL);
+const anonRef = extractJwtRef(process.env.VITE_SUPABASE_ANON_KEY);
+const serviceRef = extractJwtRef(process.env.SUPABASE_SERVICE_ROLE_KEY);
+
+if (urlRef && anonRef && urlRef !== anonRef) {
+  console.error(
+    `[check-env] MISMATCH: VITE_SUPABASE_ANON_KEY belongs to project "${anonRef}", but VITE_SUPABASE_URL points to "${urlRef}".`
+  );
+  failed = true;
+}
+
+if (urlRef && serviceRef && urlRef !== serviceRef) {
+  console.error(
+    `[check-env] MISMATCH: SUPABASE_SERVICE_ROLE_KEY belongs to project "${serviceRef}", but VITE_SUPABASE_URL points to "${urlRef}".`
+  );
+  failed = true;
+}
+
 if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
   console.warn('[check-env] Warning: SUPABASE_SERVICE_ROLE_KEY not set (trusted admin routes will be unavailable).');
 }

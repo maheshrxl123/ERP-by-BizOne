@@ -3,21 +3,14 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-dotenv.config();
+const explicitEnvKeys = new Set(
+  Object.keys(process.env).filter((k) => {
+    const v = process.env[k]?.trim() ?? '';
+    return v.length >= 2 && v !== '*';
+  })
+);
 
-// Load .env if present
-const envPath = path.resolve(process.cwd(), '.env');
-if (fs.existsSync(envPath)) {
-  const parsed = dotenv.parse(fs.readFileSync(envPath, 'utf8'));
-  for (const [k, v] of Object.entries(parsed)) {
-    const cur = process.env[k]?.trim() ?? '';
-    if ((cur.length < 2 || cur === '*') && v) {
-      process.env[k] = v;
-    }
-  }
-}
-
-// Fallback: inherit secrets from active AI Studio dev server process if running in a CLI subshell
+// Prioritize secrets from active AI Studio dev server process over stale .env entries
 try {
   if (fs.existsSync('/proc')) {
     const pids = fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d));
@@ -32,13 +25,7 @@ try {
             if (idx > 0) {
               const k = entry.slice(0, idx);
               const v = entry.slice(idx + 1).trim();
-              const cur = process.env[k]?.trim() ?? '';
-              if (
-                (cur.length < 2 || cur === '*') &&
-                v &&
-                v !== '*' &&
-                v.length >= 2
-              ) {
+              if (!explicitEnvKeys.has(k) && v && v !== '*' && v.length >= 2) {
                 process.env[k] = v;
               }
             }
@@ -51,6 +38,20 @@ try {
   }
 } catch {
   // Non-Linux or restricted /proc environment
+}
+
+dotenv.config();
+
+// Load .env only for variables still missing
+const envPath = path.resolve(process.cwd(), '.env');
+if (fs.existsSync(envPath)) {
+  const parsed = dotenv.parse(fs.readFileSync(envPath, 'utf8'));
+  for (const [k, v] of Object.entries(parsed)) {
+    const cur = process.env[k]?.trim() ?? '';
+    if ((cur.length < 2 || cur === '*') && v) {
+      process.env[k] = v;
+    }
+  }
 }
 
 console.log('=== BizOne ERP Supabase Migration & Setup Check ===');
@@ -156,6 +157,7 @@ async function applyMigrationsIfToken() {
     '0012_phase6_import_demo_backup_drive.sql',
     '0013_phase7_ai_advanced_v1.sql',
     '0014_tax_fixes_and_ai_features.sql',
+    '0015_service_role_and_phase1_grants.sql',
   ]);
 
   for (const file of migrationFiles) {
@@ -222,7 +224,7 @@ async function verifyConnectivity() {
   await applyMigrationsIfToken();
   await verifyConnectivity();
   console.log(
-    '[setup] All BizOne ERP migrations (0001..0014) are verified and live.'
+    '[setup] All BizOne ERP migrations (0001..0015) are verified and live.'
   );
 })().catch((err) => {
   console.error('[setup] Error:', err.message);

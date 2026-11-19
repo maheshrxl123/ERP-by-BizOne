@@ -1,8 +1,50 @@
 import { createClient } from '@supabase/supabase-js';
 
+function cleanEnvValue(value: string | undefined): string {
+  const trimmed = value?.trim() || '';
+  if (
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  ) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 const viteEnv = ((import.meta as { env?: Record<string, string | undefined> }).env) ?? {};
-const rawSupabaseUrl = viteEnv.VITE_SUPABASE_URL?.trim() || '';
-const rawSupabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY?.trim() || '';
+const rawSupabaseUrl = cleanEnvValue(viteEnv.VITE_SUPABASE_URL);
+const rawSupabaseAnonKey = cleanEnvValue(viteEnv.VITE_SUPABASE_ANON_KEY);
+
+function extractUrlProjectRef(url: string): string | null {
+  const match = url.match(/^https?:\/\/([a-z0-9-]+)\.supabase\.co(?:\/|$)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function extractJwtProjectRef(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    const decoded = JSON.parse(atob(padded)) as { ref?: unknown };
+    return typeof decoded.ref === 'string' ? decoded.ref.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+export const supabaseConfigMismatch: {
+  urlRef: string;
+  keyRef: string;
+} | null = (() => {
+  const urlRef = extractUrlProjectRef(rawSupabaseUrl);
+  const keyRef = extractJwtProjectRef(rawSupabaseAnonKey);
+  if (urlRef && keyRef && urlRef !== keyRef) {
+    return { urlRef, keyRef };
+  }
+  return null;
+})();
 
 export const isSupabaseConfigured =
   Boolean(rawSupabaseUrl) &&

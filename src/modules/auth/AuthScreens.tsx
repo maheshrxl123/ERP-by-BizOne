@@ -12,7 +12,18 @@ import { useState } from 'react';
 import { BUSINESS_PACKS, type BusinessPackKey } from '../../../config/app.config';
 import { useApp } from '../../app/AppProvider';
 import { isValidGstin } from '../../core/format';
-import { supabase } from '../../core/supabase';
+import { supabase, supabaseConfigMismatch } from '../../core/supabase';
+
+function formatAuthError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : fallback;
+  if (supabaseConfigMismatch || /invalid api key/i.test(raw)) {
+    if (supabaseConfigMismatch) {
+      return `Invalid API key: VITE_SUPABASE_ANON_KEY in this build belongs to project "${supabaseConfigMismatch.keyRef}", while VITE_SUPABASE_URL points to "${supabaseConfigMismatch.urlRef}". Update VITE_SUPABASE_ANON_KEY in your deployment environment variables and redeploy without build cache.`;
+    }
+    return 'Invalid API key: VITE_SUPABASE_ANON_KEY in this frontend build does not match VITE_SUPABASE_URL. Update VITE_SUPABASE_ANON_KEY in your deployment settings and redeploy.';
+  }
+  return raw;
+}
 
 export function AuthScreens() {
   const {
@@ -67,7 +78,7 @@ export function AuthScreens() {
       }
       await refreshWorkspace();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Sign in failed.');
+      setError(formatAuthError(err, 'Sign in failed.'));
     } finally {
       setSubmitting(false);
     }
@@ -89,7 +100,7 @@ export function AuthScreens() {
       setResetSent(true);
       showToast(t('auth.resetSent'), 'success');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Reset request failed.');
+      setError(formatAuthError(err, 'Reset request failed.'));
     } finally {
       setSubmitting(false);
     }
@@ -160,7 +171,7 @@ export function AuthScreens() {
       await refreshWorkspace();
       showToast('Business workspace initialized.', 'success');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Setup failed.');
+      setError(formatAuthError(err, 'Setup failed.'));
     } finally {
       setSubmitting(false);
     }
@@ -497,14 +508,17 @@ export function AuthScreens() {
               </div>
             </div>
 
-            {error && (
+            {(error || supabaseConfigMismatch) && (
               <div
                 id="auth-error"
                 role="alert"
                 className="p-3 rounded-lg bg-[var(--give-soft)] border border-[var(--give)]/30 text-xs text-[var(--give)] flex items-start gap-2"
               >
                 <IconAlertCircle size={16} stroke={2} className="shrink-0 mt-0.5" />
-                <span>{error}</span>
+                <span>
+                  {error ??
+                    `Configuration mismatch: VITE_SUPABASE_ANON_KEY in this build belongs to project "${supabaseConfigMismatch?.keyRef}", while VITE_SUPABASE_URL points to "${supabaseConfigMismatch?.urlRef}". Update VITE_SUPABASE_ANON_KEY and redeploy.`}
+                </span>
               </div>
             )}
 

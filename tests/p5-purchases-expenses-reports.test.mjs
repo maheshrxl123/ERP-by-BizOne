@@ -31,6 +31,12 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF;
+const hasLiveSupabase =
+  Boolean(SUPABASE_URL?.startsWith('https://')) &&
+  !SUPABASE_URL?.includes('YOUR_PROJECT_REF') &&
+  (SUPABASE_ANON_KEY?.length ?? 0) > 20 &&
+  (SERVICE_ROLE_KEY?.length ?? 0) > 20 &&
+  Boolean(ACCESS_TOKEN && PROJECT_REF);
 
 const VALID_PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -94,7 +100,7 @@ test('Phase P5 unit checks: CSV formula safety, SHA-256 backup verification, rol
 
   // 2. Backup packaging, SHA-256 signing & tamper detection
   const sampleSnapshot = {
-    app: 'BizOne ERP',
+    app: 'DecorBiz',
     schema_version: 'p5-v1',
     exported_at: '2026-11-13T12:00:00Z',
     exported_by: 'owner@example.com',
@@ -178,7 +184,10 @@ test('Phase P5 unit checks: CSV formula safety, SHA-256 backup verification, rol
   assert.equal(typeof sha256Hex, 'function');
 });
 
-test('Phase P5 E2E: purchase stock & cost sync, supplier balance, purchase returns, expenses & cashier isolation, day/cash/bank books, GST & profit reports, and backup/restore recovery', async () => {
+test(
+  'Phase P5 E2E: purchase stock & cost sync, supplier balance, purchase returns, expenses & cashier isolation, day/cash/bank books, GST & profit reports, and backup/restore recovery',
+  { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
+  async () => {
   assert.ok(
     SUPABASE_URL && SUPABASE_ANON_KEY && SERVICE_ROLE_KEY,
     'Supabase environment variables must be configured'
@@ -193,7 +202,7 @@ test('Phase P5 E2E: purchase stock & cost sync, supplier balance, purchase retur
   });
 
   const stamp = Date.now();
-  const password = 'BizOneP5!2026';
+  const password = 'DecorBizP5!2026';
   const today = todayLocalIso();
   const createdUserIds = [];
   const createdItemIds = [];
@@ -254,7 +263,7 @@ test('Phase P5 E2E: purchase stock & cost sync, supplier balance, purchase retur
       await supabaseAdmin.from('business').insert({
         id: 1,
         name: 'P5 Temp Business',
-        pack: 'kirana',
+        pack: 'decorbiz',
         gst_registered: true,
         gstin: '27AAPFU0939F1ZV',
         state_code: '27',
@@ -793,7 +802,7 @@ test('Phase P5 E2E: purchase stock & cost sync, supplier balance, purchase retur
 
     if (uploadedStoragePaths.length > 0) {
       await supabaseAdmin.storage
-        .from('bizone-private')
+        .from('decorbiz-private')
         .remove(uploadedStoragePaths)
         .catch(() => undefined);
     }

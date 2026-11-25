@@ -19,6 +19,7 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDateTime, formatINR } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import type {
@@ -26,7 +27,7 @@ import type {
   AiConversationRecord,
   AiMessageRecord,
   AiPlaybookRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 type AiTab = 'chat' | 'analytics' | 'drafts' | 'playbooks' | 'approvals';
 
@@ -85,9 +86,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     setCheckingProvider(true);
     try {
       const [provRes, convRes, pbRes, propRes, partyRes] = await Promise.all([
-        fetch('/api/ai/providers', {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        }).then((r) => (r.ok ? r.json() : { hasConfiguredProvider: false, hasBuiltInGemini: false })),
+        erpFetch('/api/erp/ai/providers', session.access_token).then((r) =>
+          r.ok ? r.json() : { hasConfiguredProvider: false, hasBuiltInGemini: false }
+        ),
         supabase
           .from('ai_conversations')
           .select('*')
@@ -157,12 +158,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token || !promptInput.trim()) return;
     setSending(true);
     try {
-      const res = await fetch('/api/ai/chat', {
+      const res = await erpFetch('/api/erp/ai/chat', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: promptInput.trim(),
           language: chatLang,
@@ -210,9 +208,8 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token) return;
     setRunningAnalytics(true);
     try {
-      const res = await fetch('/api/ai/analytics', {
+      const res = await erpFetch('/api/erp/ai/analytics', session.access_token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Analytics failed.');
@@ -233,12 +230,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     }
     setGeneratingDraft(true);
     try {
-      const res = await fetch('/api/ai/smart-draft-message', {
+      const res = await erpFetch('/api/erp/ai/smart-draft-message', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           kind: draftKind,
           language: draftLang,
@@ -259,12 +253,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token) return;
     setRunningPlaybook(playbookKey);
     try {
-      const res = await fetch('/api/ai/playbooks/run', {
+      const res = await erpFetch('/api/erp/ai/playbooks/run', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playbookKey }),
       });
       const data = await res.json();
@@ -302,12 +293,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token || !isOwner) return;
     setDecidingId(id);
     try {
-      const res = await fetch(`/api/ai/proposals/${id}/approve`, {
+      const res = await erpFetch(`/api/erp/ai/proposals/${id}/approve`, session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
       const data = await res.json();
@@ -325,12 +313,9 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     if (!session?.access_token || !isOwner) return;
     setDecidingId(id);
     try {
-      const res = await fetch(`/api/ai/proposals/${id}/reject`, {
+      const res = await erpFetch(`/api/erp/ai/proposals/${id}/reject`, session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Rejected by Business Owner' }),
       });
       const data = await res.json();
@@ -353,7 +338,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <IconRobot size={24} stroke={2} className="text-[var(--primary-dark)]" />
             <span>
-              {language === 'hi' ? 'बिज़वन एआई एजेंट (वैकल्पिक)' : 'BizOne AI Agent (Optional)'}
+              {language === 'hi' ? 'डेकोरबिज़ एआई एजेंट (वैकल्पिक)' : 'DecorBiz AI Agent (Optional)'}
             </span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
@@ -548,7 +533,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
                   >
                     <div className="flex items-center justify-between gap-3 text-[11px] text-[var(--text-muted)] mb-1">
                       <span className="font-semibold uppercase">
-                        {m.role === 'user' ? 'You' : `BizOne AI (${m.provider || 'provider'})`}
+                        {m.role === 'user' ? 'You' : `DecorBiz AI (${m.provider || 'provider'})`}
                       </span>
                       <span className="tabular-nums">{formatDateTime(m.created_at)}</span>
                     </div>

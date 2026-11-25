@@ -16,8 +16,7 @@ import type {
   PartyBalanceRecord,
   PartyRecord,
   PartyType,
-  PriceTier,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 interface PartyFormModalProps {
   open: boolean;
@@ -48,11 +47,10 @@ export function PartyFormModal({
   onClose,
   onSaved,
 }: PartyFormModalProps) {
-  const { business, language, showToast, t } = useApp();
+  const { language, showToast, t } = useApp();
 
   const [name, setName] = useState('');
   const [partyType, setPartyType] = useState<PartyType>('customer');
-  const [priceTier, setPriceTier] = useState<PriceTier>('standard');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [gstin, setGstin] = useState('');
@@ -74,7 +72,6 @@ export function PartyFormModal({
     if (editingParty) {
       setName(editingParty.name);
       setPartyType(editingParty.party_type);
-      setPriceTier((editingParty.price_tier as PriceTier) || 'standard');
       setPhone(editingParty.phone ?? '');
       setEmail(editingParty.email ?? '');
       setGstin(editingParty.gstin ?? '');
@@ -88,8 +85,7 @@ export function PartyFormModal({
         Boolean(
           editingParty.credit_limit > 0 ||
             editingParty.credit_days > 0 ||
-            editingParty.notes ||
-            (editingParty.price_tier && editingParty.price_tier !== 'standard')
+            editingParty.notes
         )
       );
 
@@ -120,7 +116,6 @@ export function PartyFormModal({
     } else {
       setName('');
       setPartyType('customer');
-      setPriceTier('standard');
       setPhone('');
       setEmail('');
       setGstin('');
@@ -283,7 +278,6 @@ export function PartyFormModal({
         p_notes: notes.trim() || null,
         p_addresses: cleanAddresses,
         p_expected_version: editingParty ? editingParty.version : null,
-        p_price_tier: priceTier,
       });
       if (error) throw error;
 
@@ -525,7 +519,7 @@ export function PartyFormModal({
 
             {showAdvanced && (
               <div className="p-4 border-t border-[var(--border)] space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
                       {t('parties.creditLimit')}
@@ -554,23 +548,6 @@ export function PartyFormModal({
                       className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
                     />
                   </div>
-                  {(business?.pack === 'wholesale' || priceTier !== 'standard') && (
-                    <div>
-                      <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                        Price Tier
-                      </label>
-                      <select
-                        value={priceTier}
-                        onChange={(e) => setPriceTier(e.target.value as PriceTier)}
-                        className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      >
-                        <option value="standard">Standard</option>
-                        <option value="wholesale_a">Wholesale A</option>
-                        <option value="wholesale_b">Wholesale B</option>
-                        <option value="vip">VIP</option>
-                      </select>
-                    </div>
-                  )}
                 </div>
 
                 {/* Multi-address section */}

@@ -1,4 +1,4 @@
-import type { UnitConversionRecord } from '../types/bizone';
+import type { UnitConversionRecord } from '../types/decorbiz';
 
 export function roundQty(value: number): number {
   if (!Number.isFinite(value)) return 0;

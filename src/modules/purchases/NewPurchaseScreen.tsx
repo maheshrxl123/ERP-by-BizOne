@@ -19,6 +19,7 @@ import { BarcodeScanBar } from '../../components/barcode/BarcodeScanBar';
 import { playScanBeep, useBarcodeWedge } from '../../components/barcode/useBarcodeWedge';
 import { FileUpload, type UploadedFileItem } from '../../components/upload/FileUpload';
 import { addDaysLocalIso, formatINR, todayLocalIso } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { calculateBillPreview, convertRateTaxMode, roundHalfUp } from '../../core/money';
 import { supabase } from '../../core/supabase';
 import type {
@@ -29,8 +30,9 @@ import type {
   PaymentMode,
   PurchaseBillRecord,
   PurchaseLineRecord,
+  SupplierPriceListRecord,
   UnitConversionRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 export interface NewPurchaseScreenProps {
   editingDraft?: PurchaseBillRecord | null;
@@ -42,6 +44,10 @@ export interface NewPurchaseScreenProps {
 interface DraftPurchaseLine {
   localId: string;
   item: ItemCatalogRecord;
+  variantId?: string;
+  shade?: string;
+  batchLot?: string;
+  supplierPriceHint?: string;
   enteredQty: string;
   enteredUnitId: string;
   unitOptions: Array<{ unitId: string; code: string; factor: number }>;
@@ -49,11 +55,7 @@ interface DraftPurchaseLine {
   discountPct: string;
   taxInclusive: boolean;
   gstRate: string;
-  batchNo: string;
-  expiryDate: string;
   mrp: string;
-  sellingRate: string;
-  variantId: string;
 }
 
 interface ScannedLineReview {
@@ -68,8 +70,6 @@ interface ScannedLineReview {
   discount_pct: number;
   gst_rate: number;
   tax_inclusive: boolean;
-  batch_no: string | null;
-  expiry_date: string | null;
   mrp: number | null;
 }
 
@@ -119,9 +119,7 @@ export function NewPurchaseScreen({
   const taxModuleEnabled = isModuleEnabled('tax');
   const partiesEnabled = isModuleEnabled('parties');
   const paymentsEnabled = isModuleEnabled('payments');
-  const pack = business?.pack || 'general_retail';
-  const batchExpiryEnabled = isModuleEnabled('batch_expiry') || pack === 'medical';
-  const variantsEnabled = isModuleEnabled('variants') || pack === 'clothing';
+  const supplierPriceListsEnabled = isModuleEnabled('supplier_price_lists');
   const isStorekeeper = profile?.role === 'storekeeper';
 
   const [partyId, setPartyId] = useState<string>('');
@@ -150,6 +148,7 @@ export function NewPurchaseScreen({
   const [suppliers, setSuppliers] = useState<PartyBalanceRecord[]>([]);
   const [catalogItems, setCatalogItems] = useState<ItemCatalogRecord[]>([]);
   const [variantsByItem, setVariantsByItem] = useState<Record<string, ItemVariantRecord[]>>({});
+  const [supplierPriceLists, setSupplierPriceLists] = useState<SupplierPriceListRecord[]>([]);
   const [conversionsByItem, setConversionsByItem] = useState<
     Record<string, Array<{ unitId: string; code: string; factor: number }>>
   >({});
@@ -189,7 +188,7 @@ export function NewPurchaseScreen({
   const loadMasterData = useCallback(async () => {
     setLoadingMaster(true);
     try {
-      const [itemsRes, convRes, unitsRes, partyRes, addrRes, varRes] = await Promise.all([
+      const [itemsRes, convRes, unitsRes, varRes, splRes, partyRes, addrRes] = await Promise.all([
         supabase
           .from('item_catalog_view')
           .select('*')
@@ -200,6 +199,15 @@ export function NewPurchaseScreen({
           .from('unit_conversions')
           .select('item_id, alternate_unit_id, conversion_factor'),
         supabase.from('item_units').select('id, code'),
+        supabase
+          .from('item_variants_view')
+          .select('*')
+          .eq('is_active', true)
+          .order('variant_name')
+          .limit(600),
+        supplierPriceListsEnabled
+          ? supabase.from('supplier_price_lists').select('*').eq('is_active', true)
+          : Promise.resolve({ data: [], error: null }),
         partiesEnabled
           ? supabase
               .from('party_balances')
@@ -215,20 +223,25 @@ export function NewPurchaseScreen({
               .select('party_id, state_code, is_default')
               .order('is_default', { ascending: false })
           : Promise.resolve({ data: [], error: null }),
-        variantsEnabled
-          ? supabase.from('item_variants').select('*').eq('is_active', true).order('size')
-          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (itemsRes.error) throw itemsRes.error;
       if (convRes.error) throw convRes.error;
       if (unitsRes.error) throw unitsRes.error;
+      if (varRes.error) throw varRes.error;
+      if (splRes.error) throw splRes.error;
       if (partyRes.error) throw partyRes.error;
       if (addrRes.error) throw addrRes.error;
 
       const unitCodeById: Record<string, string> = {};
       for (const u of (unitsRes.data as ItemUnitRecord[] | null) ?? []) {
         unitCodeById[u.id] = u.code;
+      }
+
+      const varMap: Record<string, ItemVariantRecord[]> = {};
+      for (const v of (varRes.data as ItemVariantRecord[] | null) ?? []) {
+        if (!varMap[v.item_id]) varMap[v.item_id] = [];
+        varMap[v.item_id].push(v);
       }
 
       const itemsList = (itemsRes.data as ItemCatalogRecord[] | null) ?? [];
@@ -264,15 +277,10 @@ export function NewPurchaseScreen({
         }
       }
 
-      const vMap: Record<string, ItemVariantRecord[]> = {};
-      for (const v of (varRes.data as ItemVariantRecord[] | null) ?? []) {
-        if (!vMap[v.item_id]) vMap[v.item_id] = [];
-        vMap[v.item_id].push(v);
-      }
-
       setCatalogItems(itemsList);
       setConversionsByItem(convMap);
-      setVariantsByItem(vMap);
+      setVariantsByItem(varMap);
+      setSupplierPriceLists((splRes.data as SupplierPriceListRecord[] | null) ?? []);
       setSuppliers((partyRes.data as PartyBalanceRecord[] | null) ?? []);
       setPartyAddressesById(addrStateMap);
       return {
@@ -289,7 +297,7 @@ export function NewPurchaseScreen({
     } finally {
       setLoadingMaster(false);
     }
-  }, [partiesEnabled, variantsEnabled]);
+  }, [partiesEnabled, supplierPriceListsEnabled]);
 
   useEffect(() => {
     setErrorMsg(null);
@@ -319,11 +327,10 @@ export function NewPurchaseScreen({
         setPaidAmount('0');
 
         if (editingDraft.attachment_file_id && session?.access_token) {
-          fetch('/api/files/signed-url', {
+          erpFetch('/api/erp/files/signed-url', session.access_token, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
             },
             body: JSON.stringify({ fileId: editingDraft.attachment_file_id }),
           })
@@ -364,6 +371,9 @@ export function NewPurchaseScreen({
           hydrated.push({
             localId: dl.id,
             item,
+            variantId: dl.variant_id || undefined,
+            shade: dl.shade || undefined,
+            batchLot: dl.batch_lot || undefined,
             enteredQty: String(dl.entered_qty),
             enteredUnitId: dl.entered_unit_id,
             unitOptions: opts,
@@ -371,11 +381,7 @@ export function NewPurchaseScreen({
             discountPct: String(dl.discount_pct),
             taxInclusive: Boolean(dl.tax_inclusive),
             gstRate: String(dl.gst_rate ?? item.gst_rate ?? 0),
-            batchNo: dl.batch_no || '',
-            expiryDate: dl.expiry_date || '',
             mrp: dl.mrp != null ? String(dl.mrp) : '',
-            sellingRate: dl.selling_rate != null ? String(dl.selling_rate) : '',
-            variantId: dl.variant_id || '',
           });
         }
         setLines(hydrated);
@@ -487,15 +493,12 @@ export function NewPurchaseScreen({
     (
       item: ItemCatalogRecord,
       opts?: {
-        variantIdOverride?: string;
         qtyOverride?: number;
         unitCodeOverride?: string | null;
         costOverride?: number | null;
         discountPctOverride?: number | null;
         gstRateOverride?: number | null;
         taxInclusiveOverride?: boolean;
-        batchNo?: string | null;
-        expiryDate?: string | null;
         mrp?: number | null;
       }
     ) => {
@@ -512,7 +515,20 @@ export function NewPurchaseScreen({
           ? opts.taxInclusiveOverride
           : defaultCostTaxInclusive;
 
-      const exclusiveBaseCost = Number(item.purchase_price ?? 0) * factor;
+      const activeDay = billDate || todayLocalIso();
+      const matchedSpl =
+        supplierPriceListsEnabled && partyId && opts?.costOverride == null
+          ? supplierPriceLists.find(
+              (r) =>
+                r.party_id === partyId &&
+                r.item_id === item.id &&
+                r.is_active &&
+                (!r.valid_until || r.valid_until >= activeDay)
+            ) || null
+          : null;
+
+      const exclusiveBaseCost =
+        (matchedSpl ? Number(matchedSpl.supplier_rate) : Number(item.purchase_price ?? 0)) * factor;
       const derivedCost =
         opts?.costOverride != null
           ? roundHalfUp(Number(opts.costOverride), 2)
@@ -520,23 +536,18 @@ export function NewPurchaseScreen({
             ? convertRateTaxMode(exclusiveBaseCost, gstNum, false, true)
             : roundHalfUp(exclusiveBaseCost, 2);
 
+      const hint = matchedSpl
+        ? `Supplier Rate · MOQ ${matchedSpl.moq} · ${matchedSpl.lead_time_days}d lead${matchedSpl.supplier_sku ? ` · ${matchedSpl.supplier_sku}` : ''}`
+        : undefined;
+
       const newId = `${item.id}_${Date.now()}_${Math.random()}`;
       setLines((prev) => {
         if (
           opts?.costOverride == null &&
-          !opts?.batchNo &&
-          prev.some(
-            (l) =>
-              l.item.id === item.id &&
-              l.enteredUnitId === targetUnitId &&
-              (opts?.variantIdOverride ? l.variantId === opts.variantIdOverride : !l.variantId)
-          )
+          prev.some((l) => l.item.id === item.id && l.enteredUnitId === targetUnitId && !l.variantId)
         ) {
           const existing = prev.find(
-            (l) =>
-              l.item.id === item.id &&
-              l.enteredUnitId === targetUnitId &&
-              (opts?.variantIdOverride ? l.variantId === opts.variantIdOverride : !l.variantId)
+            (l) => l.item.id === item.id && l.enteredUnitId === targetUnitId && !l.variantId
           )!;
           flashHighlight(existing.localId);
           return prev.map((l) =>
@@ -557,6 +568,7 @@ export function NewPurchaseScreen({
           {
             localId: newId,
             item,
+            supplierPriceHint: hint,
             enteredQty: String(opts?.qtyOverride ?? 1),
             enteredUnitId: targetUnitId,
             unitOptions,
@@ -564,21 +576,21 @@ export function NewPurchaseScreen({
             discountPct: String(opts?.discountPctOverride ?? 0),
             taxInclusive: useInclusive,
             gstRate: String(gstNum),
-            batchNo: opts?.batchNo || '',
-            expiryDate: opts?.expiryDate || '',
             mrp: opts?.mrp != null ? String(opts.mrp) : item.mrp != null ? String(item.mrp) : '',
-            sellingRate: String(item.selling_price ?? ''),
-            variantId: opts?.variantIdOverride || '',
           },
         ];
       });
       setItemSearch('');
     },
     [
+      billDate,
       conversionsByItem,
       defaultCostTaxInclusive,
       flashHighlight,
       gstApplied,
+      partyId,
+      supplierPriceLists,
+      supplierPriceListsEnabled,
       taxModuleEnabled,
     ]
   );
@@ -587,21 +599,6 @@ export function NewPurchaseScreen({
     (rawCode: string, allowSingleFuzzy = false): boolean => {
       const q = rawCode.trim().toLowerCase();
       if (!q) return false;
-
-      for (const [itemId, variants] of Object.entries(variantsByItem)) {
-        const matchedVar = variants.find(
-          (v) =>
-            (v.barcode && v.barcode.toLowerCase() === q) ||
-            (v.sku && v.sku.toLowerCase() === q)
-        );
-        if (matchedVar) {
-          const parent = catalogItems.find((it) => it.id === itemId);
-          if (parent) {
-            addItemLine(parent, { variantIdOverride: matchedVar.id });
-            return true;
-          }
-        }
-      }
 
       const exactItem = catalogItems.find(
         (it) =>
@@ -634,7 +631,7 @@ export function NewPurchaseScreen({
       );
       return false;
     },
-    [addItemLine, catalogItems, language, showToast, variantsByItem]
+    [addItemLine, catalogItems, language, showToast]
   );
 
   useBarcodeWedge({
@@ -661,22 +658,20 @@ export function NewPurchaseScreen({
 
       // Parallel: run AI extraction AND persist attachment to private workspace storage cleanly
       const [scanRes, uploadRes] = await Promise.all([
-        fetch('/api/ai/scan-purchase-bill', {
+        erpFetch('/api/erp/ai/scan-purchase-bill', session.access_token, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
             base64,
             mimeType: file.type || 'image/jpeg',
           }),
         }),
-        fetch('/api/files/upload', {
+        erpFetch('/api/erp/files/upload', session.access_token, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
             fileName: file.name,
@@ -728,8 +723,6 @@ export function NewPurchaseScreen({
           discount_pct: number;
           gst_rate: number;
           tax_inclusive: boolean;
-          batch_no: string | null;
-          expiry_date: string | null;
           mrp: number | null;
         }>;
       };
@@ -757,8 +750,6 @@ export function NewPurchaseScreen({
           discount_pct: Number(ln.discount_pct || 0),
           gst_rate: Number(ln.gst_rate || 0),
           tax_inclusive: Boolean(ln.tax_inclusive),
-          batch_no: ln.batch_no || null,
-          expiry_date: ln.expiry_date || null,
           mrp: ln.mrp != null ? Number(ln.mrp) : null,
         })),
       });
@@ -816,8 +807,6 @@ export function NewPurchaseScreen({
         discountPctOverride: sl.discount_pct,
         gstRateOverride: sl.gst_rate,
         taxInclusiveOverride: sl.tax_inclusive,
-        batchNo: sl.batch_no,
-        expiryDate: sl.expiry_date,
         mrp: sl.mrp,
       });
       added += 1;
@@ -836,11 +825,10 @@ export function NewPurchaseScreen({
     if (!session?.access_token || !aiOrderText.trim()) return;
     setAiParsing(true);
     try {
-      const res = await fetch('/api/ai/parse-order-text', {
+      const res = await erpFetch('/api/erp/ai/parse-order-text', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ text: aiOrderText.trim(), mode: 'purchase' }),
       });
@@ -945,17 +933,16 @@ export function NewPurchaseScreen({
   const buildRpcLines = () =>
     lines.map((l) => ({
       item_id: l.item.id,
+      variant_id: l.variantId || null,
+      shade: l.shade?.trim() || null,
+      batch_lot: l.batchLot?.trim() || null,
       entered_qty: Math.max(0, Number(l.enteredQty || 0)),
       entered_unit_id: l.enteredUnitId,
       unit_cost: Math.max(0, roundHalfUp(Number(l.unitCost || 0), 2)),
       discount_pct: Math.min(100, Math.max(0, roundHalfUp(Number(l.discountPct || 0), 2))),
       tax_inclusive: l.taxInclusive,
       gst_rate: Number(l.gstRate || 0),
-      batch_no: l.batchNo.trim() || null,
-      expiry_date: l.expiryDate || null,
       mrp: l.mrp ? roundHalfUp(Number(l.mrp), 2) : null,
-      selling_rate: l.sellingRate ? roundHalfUp(Number(l.sellingRate), 2) : null,
-      variant_id: l.variantId || null,
     }));
 
   const handleSubmit = async (actionMode: 'draft' | 'posted') => {
@@ -1103,6 +1090,7 @@ export function NewPurchaseScreen({
       )}
 
       {/* AI Supplier Invoice Scanner Card */}
+      {isModuleEnabled('ai') && (
       <section className="rounded-xl border border-[var(--primary)]/45 bg-[var(--surface)] p-4 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-start gap-2.5">
@@ -1266,7 +1254,6 @@ export function NewPurchaseScreen({
                         <div className="font-medium">{sl.raw_name}</div>
                         <div className="text-[10px] text-[var(--text-muted)]">
                           {sl.hsn_code ? `HSN ${sl.hsn_code}` : ''}
-                          {sl.batch_no ? ` · Batch ${sl.batch_no}` : ''}
                           {sl.unit_code ? ` · ${sl.unit_code}` : ''}
                         </div>
                       </td>
@@ -1312,6 +1299,7 @@ export function NewPurchaseScreen({
           </div>
         )}
       </section>
+      )}
 
       {/* Main 2-Column Workspace */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
@@ -1468,21 +1456,23 @@ export function NewPurchaseScreen({
               <span className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                 {t('bills.fastAddTitle')}
               </span>
-              <button
-                type="button"
-                onClick={() => setAiTextOpen((v) => !v)}
-                className={`h-8 px-2.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 ${
-                  aiTextOpen
-                    ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
-                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-muted)]'
-                }`}
-              >
-                <IconSparkles size={14} stroke={2} className="text-[var(--primary-dark)]" />
-                <span>{t('bills.aiSmartOrder')}</span>
-              </button>
+              {isModuleEnabled('ai') && (
+                <button
+                  type="button"
+                  onClick={() => setAiTextOpen((v) => !v)}
+                  className={`h-8 px-2.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 ${
+                    aiTextOpen
+                      ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                      : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-muted)]'
+                  }`}
+                >
+                  <IconSparkles size={14} stroke={2} className="text-[var(--primary-dark)]" />
+                  <span>{t('bills.aiSmartOrder')}</span>
+                </button>
+              )}
             </div>
 
-            {aiTextOpen && (
+            {isModuleEnabled('ai') && aiTextOpen && (
               <div className="p-3 rounded-lg border border-[var(--primary)]/40 bg-[var(--surface-muted)] space-y-2">
                 <p className="text-xs text-[var(--text-muted)]">
                   Paste supplier quote / WhatsApp list (e.g., &quot;Gupta Traders 10 box oil @ 1120, 50 kg atta @ 32&quot;):
@@ -1592,77 +1582,93 @@ export function NewPurchaseScreen({
                           <td className="px-3 py-2.5 text-[var(--text-muted)] tabular-nums align-top">
                             {idx + 1}
                           </td>
-                          <td className="px-3 py-2.5 min-w-[210px] align-top">
-                            <div className="font-medium">{row.item.name}</div>
-                            <div className="text-[11px] text-[var(--text-muted)]">
-                              Stock: {row.item.qty_on_hand} {row.item.base_unit_code}
-                              {row.item.hsn_code ? ` · HSN ${row.item.hsn_code}` : ''}
-                            </div>
-                            {batchExpiryEnabled && (
-                              <div className="mt-1.5 grid grid-cols-3 gap-1">
-                                <input
-                                  type="text"
-                                  value={row.batchNo}
-                                  placeholder="Batch #"
-                                  onChange={(e) =>
-                                    setLines((prev) =>
-                                      prev.map((x) =>
-                                        x.localId === row.localId ? { ...x, batchNo: e.target.value } : x
-                                      )
-                                    )
-                                  }
-                                  className="h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] font-mono"
-                                />
-                                <input
-                                  type="date"
-                                  value={row.expiryDate}
-                                  title="Expiry date"
-                                  onChange={(e) =>
-                                    setLines((prev) =>
-                                      prev.map((x) =>
-                                        x.localId === row.localId ? { ...x, expiryDate: e.target.value } : x
-                                      )
-                                    )
-                                  }
-                                  className="h-7 px-1 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] tabular-nums"
-                                />
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={row.mrp}
-                                  placeholder="MRP"
-                                  onChange={(e) =>
-                                    setLines((prev) =>
-                                      prev.map((x) =>
-                                        x.localId === row.localId ? { ...x, mrp: e.target.value } : x
-                                      )
-                                    )
-                                  }
-                                  className="h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] tabular-nums"
-                                />
+                          <td className="px-3 py-2.5 min-w-[220px] align-top space-y-1.5">
+                            <div>
+                              <div className="font-medium">{row.item.name}</div>
+                              <div className="text-[11px] text-[var(--text-muted)]">
+                                Stock: {row.item.qty_on_hand} {row.item.base_unit_code}
+                                {row.item.hsn_code ? ` · HSN ${row.item.hsn_code}` : ''}
                               </div>
-                            )}
-                            {variantsEnabled && (variantsByItem[row.item.id] ?? []).length > 0 && (
-                              <div className="mt-1.5">
-                                <select
-                                  value={row.variantId}
-                                  onChange={(e) =>
-                                    setLines((prev) =>
-                                      prev.map((x) =>
-                                        x.localId === row.localId ? { ...x, variantId: e.target.value } : x
+                              {row.supplierPriceHint && (
+                                <div className="text-[10px] text-[var(--primary-dark)]">
+                                  {row.supplierPriceHint}
+                                </div>
+                              )}
+                            </div>
+                            {((variantsByItem[row.item.id] ?? []).length > 0 ||
+                              row.item.product_line === 'tiles_slabs') && (
+                              <div className="space-y-1">
+                                {(variantsByItem[row.item.id] ?? []).length > 0 && (
+                                  <select
+                                    value={row.variantId || ''}
+                                    onChange={(e) => {
+                                      const vId = e.target.value || undefined;
+                                      const picked = (variantsByItem[row.item.id] ?? []).find(
+                                        (v) => v.id === vId
+                                      );
+                                      setLines((prev) =>
+                                        prev.map((x) => {
+                                          if (x.localId !== row.localId) return x;
+                                          const opt = x.unitOptions.find(
+                                            (u) => u.unitId === x.enteredUnitId
+                                          );
+                                          const factor = opt?.factor ?? 1;
+                                          const nextCost =
+                                            picked?.purchase_price != null
+                                              ? roundHalfUp(Number(picked.purchase_price) * factor, 2)
+                                              : Number(x.unitCost || 0);
+                                          return {
+                                            ...x,
+                                            variantId: vId,
+                                            shade: picked?.shade || x.shade,
+                                            batchLot: picked?.batch_lot || x.batchLot,
+                                            unitCost: String(nextCost),
+                                          };
+                                        })
+                                      );
+                                    }}
+                                    className="w-full h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px]"
+                                  >
+                                    <option value="">Standard / Base Item</option>
+                                    {(variantsByItem[row.item.id] ?? []).map((v) => (
+                                      <option key={v.id} value={v.id}>
+                                        {v.variant_name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="text"
+                                    value={row.shade || ''}
+                                    onChange={(e) =>
+                                      setLines((prev) =>
+                                        prev.map((x) =>
+                                          x.localId === row.localId
+                                            ? { ...x, shade: e.target.value }
+                                            : x
+                                        )
                                       )
-                                    )
-                                  }
-                                  className="h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px]"
-                                >
-                                  <option value="">Select Variant</option>
-                                  {(variantsByItem[row.item.id] ?? []).map((v) => (
-                                    <option key={v.id} value={v.id}>
-                                      {v.size} / {v.color} ({v.qty_on_hand})
-                                    </option>
-                                  ))}
-                                </select>
+                                    }
+                                    placeholder="Shade"
+                                    className="w-1/2 h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px]"
+                                  />
+                                  <input
+                                    type="text"
+                                    value={row.batchLot || ''}
+                                    onChange={(e) =>
+                                      setLines((prev) =>
+                                        prev.map((x) =>
+                                          x.localId === row.localId
+                                            ? { ...x, batchLot: e.target.value }
+                                            : x
+                                        )
+                                      )
+                                    }
+                                    placeholder="Batch / Lot"
+                                    className="w-1/2 h-7 px-1.5 rounded border border-[var(--border)] bg-[var(--surface)] text-[11px] font-mono"
+                                  />
+                                </div>
                               </div>
                             )}
                           </td>

@@ -17,7 +17,7 @@ export interface WorkspaceBackupEnvelope {
 export interface EncryptedBackupEnvelope {
   app: string;
   encrypted: true;
-  format: 'BIZONE_ENC_V1';
+  format: 'DECORBIZ_ENC_V1';
   kdf: 'PBKDF2-SHA256';
   iterations: number;
   cipher: 'AES-256-GCM';
@@ -86,7 +86,7 @@ export function isEncryptedBackupEnvelope(rawText: string): boolean {
       parsed &&
         typeof parsed === 'object' &&
         parsed.encrypted === true &&
-        parsed.format === 'BIZONE_ENC_V1' &&
+        parsed.format === 'DECORBIZ_ENC_V1' &&
         typeof parsed.ciphertext === 'string'
     );
   } catch {
@@ -116,9 +116,9 @@ export async function encryptBackupWithPassphrase(
   );
 
   const encryptedEnvelope: EncryptedBackupEnvelope = {
-    app: 'BizOne ERP',
+    app: 'DecorBiz',
     encrypted: true,
-    format: 'BIZONE_ENC_V1',
+    format: 'DECORBIZ_ENC_V1',
     kdf: 'PBKDF2-SHA256',
     iterations,
     cipher: 'AES-256-GCM',
@@ -144,12 +144,12 @@ export async function decryptBackupWithPassphrase(
   if (
     !parsed ||
     parsed.encrypted !== true ||
-    parsed.format !== 'BIZONE_ENC_V1' ||
+    parsed.format !== 'DECORBIZ_ENC_V1' ||
     !parsed.salt ||
     !parsed.iv ||
     !parsed.ciphertext
   ) {
-    throw new Error('File is not a valid encrypted BizOne backup.');
+    throw new Error('File is not a valid encrypted DecorBiz backup.');
   }
   const salt = base64ToBytes(parsed.salt);
   const iv = base64ToBytes(parsed.iv);

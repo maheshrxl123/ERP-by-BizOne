@@ -16,13 +16,14 @@ import { useApp } from '../../app/AppProvider';
 import { copyToClipboard, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
 import { hasCapability } from '../../core/permissions';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
 import type {
   BillLineRecord,
   BillRecord,
   BillShareLinkRecord,
   PartyBalanceRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { PaymentModal } from '../parties/PaymentModal';
 import { BillPrintPreviewModal } from './BillPrintPreviewModal';
 import { SalesReturnModal } from './SalesReturnModal';
@@ -44,7 +45,7 @@ export function BillDetailView({
   onOpenParty,
   onUpdated,
 }: BillDetailViewProps) {
-  const { profile, isModuleEnabled, language, showToast, t } = useApp();
+  const { profile, session, isModuleEnabled, language, showToast, t } = useApp();
 
   const [bill, setBill] = useState<BillRecord | null>(null);
   const [lines, setLines] = useState<BillLineRecord[]>([]);
@@ -63,9 +64,11 @@ export function BillDetailView({
   const [voiding, setVoiding] = useState(false);
   const [converting, setConverting] = useState(false);
   const [deletingDraft, setDeletingDraft] = useState(false);
+  const [creatingPayLink, setCreatingPayLink] = useState(false);
 
   const canVoid = hasCapability(profile?.role, 'void_bill');
   const canReturn = hasCapability(profile?.role, 'sales_return');
+  const onlinePaymentsEnabled = isModuleEnabled('online_payments');
   const paymentsEnabled =
     isModuleEnabled('payments') && hasCapability(profile?.role, 'payments');
 
@@ -230,6 +233,48 @@ export function BillDetailView({
       );
     } finally {
       setDeletingDraft(false);
+    }
+  };
+
+  const handleOnlinePayLink = async () => {
+    if (!bill || !session?.access_token) return;
+    setCreatingPayLink(true);
+    try {
+      const res = await erpFetch('/api/erp/online-payments/create-link', session.access_token, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          billId: bill.id,
+          amount: Number(bill.balance_due),
+        }),
+      });
+      const json = (await res.json()) as {
+        paymentUrl?: string;
+        error?: string;
+        warning?: string;
+      };
+      if (!res.ok) throw new Error(json.error || 'Unable to generate payment link.');
+      if (json.paymentUrl) {
+        await copyToClipboard(json.paymentUrl);
+        showToast(
+          json.warning ||
+            (language === 'hi'
+              ? 'ऑनलाइन भुगतान लिंक कॉपी किया गया।'
+              : 'Online payment link copied to clipboard.'),
+          'success'
+        );
+      } else {
+        showToast(json.warning || 'Payment link request logged.', 'info');
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to create online payment link.',
+        'error'
+      );
+    } finally {
+      setCreatingPayLink(false);
     }
   };
 
@@ -409,6 +454,29 @@ export function BillDetailView({
                   </button>
                 )}
 
+              {onlinePaymentsEnabled &&
+                bill.status === 'issued' &&
+                (bill.doc_type === 'tax_invoice' || bill.doc_type === 'bill_of_supply') &&
+                Number(bill.balance_due) > 0 && (
+                  <button
+                    type="button"
+                    disabled={creatingPayLink}
+                    onClick={() => void handleOnlinePayLink()}
+                    className="h-10 px-3.5 rounded-lg border border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <IconLink size={16} stroke={2} />
+                    <span>
+                      {creatingPayLink
+                        ? language === 'hi'
+                          ? 'लिंक बन रहा है...'
+                          : 'Creating...'
+                        : language === 'hi'
+                          ? 'ऑनलाइन पे लिंक'
+                          : 'Online Pay Link'}
+                    </span>
+                  </button>
+                )}
+
               {canReturn &&
                 bill.status === 'issued' &&
                 (bill.doc_type === 'tax_invoice' || bill.doc_type === 'bill_of_supply') && (
@@ -554,16 +622,12 @@ export function BillDetailView({
                     <p className="text-xs text-[var(--text-muted)]">
                       {line.sku ? `SKU ${line.sku}` : ''}
                       {line.hsn_code ? ` · HSN ${line.hsn_code}` : ''}
+                      {line.shade ? ` · Shade ${line.shade}` : ''}
+                      {line.batch_lot ? ` · Lot ${line.batch_lot}` : ''}
                       {line.conversion_factor !== 1
                         ? ` · ${line.base_qty} base units`
                         : ''}
-                      {line.variant_label ? ` · ${line.variant_label}` : ''}
-                      {line.batch_no ? ` · Batch ${line.batch_no}` : ''}
-                      {line.expiry_date ? ` · Exp ${formatDate(line.expiry_date)}` : ''}
                       {line.mrp ? ` · MRP ${formatINR(Number(line.mrp))}` : ''}
-                      {(line.line_meta as Record<string, unknown> | undefined)?.serial_no
-                        ? ` · SN ${String((line.line_meta as Record<string, unknown>).serial_no)}`
-                        : ''}
                     </p>
                   </td>
                   <td className="py-3 px-3 text-right tabular-nums whitespace-nowrap">

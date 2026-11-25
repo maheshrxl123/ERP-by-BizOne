@@ -18,12 +18,12 @@ import {
   IconWallet,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
-import { BUSINESS_PACKS } from '../../../config/app.config';
+import { DECORBIZ_PACK } from '../../../config/app.config';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
-import type { DashboardMetrics } from '../../types/bizone';
+import type { DashboardMetrics } from '../../types/decorbiz';
 import type { SettingsTabKey } from '../settings/SettingsScreen';
 
 export type AppDestination =
@@ -41,6 +41,7 @@ export type AppDestination =
   | 'operations'
   | 'messaging'
   | 'ai'
+  | 'online_store'
   | 'pack'
   | 'data'
   | 'notifications'
@@ -165,7 +166,7 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
     void loadMetrics();
   }, [loadMetrics]);
 
-  const packInfo = BUSINESS_PACKS.find((p) => p.key === business?.pack);
+  const packInfo = DECORBIZ_PACK;
 
   const isOwner = profile?.role === 'owner';
   const canCreateBill =

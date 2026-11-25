@@ -545,7 +545,7 @@ test('Phase P7 security & backup hygiene: client source never touches secrets, b
 
 test('Phase P7 v1.0 readiness: package metadata, module registry, and documentation files exist', () => {
   const pkg = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8'));
-  assert.equal(pkg.name, 'bizone-erp');
+  assert.equal(pkg.name, 'decorbiz');
   assert.equal(pkg.version, '1.0.0');
   assert.equal(pkg.scripts.start, 'node server.ts');
 

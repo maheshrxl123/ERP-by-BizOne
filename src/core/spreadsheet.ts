@@ -1,9 +1,10 @@
 /**
  * CSV & XLSX Spreadsheet Import / Template / Export Engine
- * Built around SheetJS (`xlsx`) for real CSV & Excel (.xlsx/.xls) support.
- * Pure buffer parsing/mapping/validation helpers are safe in both browser and Node tests.
+ * Built around `read-excel-file` + `write-excel-file` for XLSX and native RFC-4180 CSV.
+ * Buffer parsing/mapping/validation helpers work safely in both browser and Node tests.
  */
-import * as XLSX from 'xlsx';
+import readXlsxFile from 'read-excel-file/universal';
+import writeXlsxFile, { type Cell, type Row, type Sheet, type SheetData } from 'write-excel-file/universal';
 
 export type ImportEntityType = 'parties' | 'items';
 
@@ -23,7 +24,6 @@ export const IMPORT_FIELD_SPECS: Record<ImportEntityType, ImportFieldSpec[]> = {
     { key: 'phone', labelEn: 'Phone', labelHi: 'फ़ोन नंबर', aliases: ['phone', 'mobile', 'contact', 'mobile no', 'phone number'], example: '9876543210' },
     { key: 'email', labelEn: 'Email', labelHi: 'ईमेल', aliases: ['email', 'mail', 'email id'], example: 'accounts@sharma.example' },
     { key: 'gstin', labelEn: 'GSTIN', labelHi: 'जीएसटीआईएन', aliases: ['gstin', 'gst', 'gst number', 'gst no'], example: '27ABCDE1234F1Z5' },
-    { key: 'price_tier', labelEn: 'Price Tier (standard/wholesale_a/wholesale_b/vip)', labelHi: 'मूल्य स्तर', aliases: ['price_tier', 'tier', 'rate tier'], example: 'standard' },
     { key: 'opening_balance', labelEn: 'Opening Balance', labelHi: 'प्रारंभिक शेष', aliases: ['opening_balance', 'opening', 'balance', 'ob'], example: 2500 },
     { key: 'opening_balance_type', labelEn: 'Balance Type (to_receive/to_give)', labelHi: 'शेष प्रकार', aliases: ['opening_balance_type', 'balance_type', 'dr_cr'], example: 'to_receive' },
     { key: 'credit_limit', labelEn: 'Credit Limit', labelHi: 'क्रेडिट सीमा', aliases: ['credit_limit', 'limit'], example: 50000 },
@@ -35,23 +35,20 @@ export const IMPORT_FIELD_SPECS: Record<ImportEntityType, ImportFieldSpec[]> = {
     { key: 'notes', labelEn: 'Notes', labelHi: 'नोट्स', aliases: ['notes', 'remark', 'remarks'], example: 'Regular B2B customer' },
   ],
   items: [
-    { key: 'name', labelEn: 'Item Name *', labelHi: 'आइटम का नाम *', required: true, aliases: ['name', 'item name', 'product name', 'item', 'product'], example: 'Paracetamol 650mg Strip' },
-    { key: 'sku', labelEn: 'SKU / Code', labelHi: 'SKU / कोड', aliases: ['sku', 'item code', 'code'], example: 'MED-PCM-650' },
+    { key: 'name', labelEn: 'Item Name *', labelHi: 'आइटम का नाम *', required: true, aliases: ['name', 'item name', 'product name', 'item', 'product'], example: 'Kajaria Vitrified Floor Tile 600x600mm' },
+    { key: 'sku', labelEn: 'SKU / Code', labelHi: 'SKU / कोड', aliases: ['sku', 'item code', 'code'], example: 'TILE-KAJ-600' },
     { key: 'barcode', labelEn: 'Barcode', labelHi: 'बारकोड', aliases: ['barcode', 'ean', 'upc'], example: '8901234567890' },
     { key: 'item_type', labelEn: 'Type (goods/service)', labelHi: 'प्रकार (goods/service)', aliases: ['item_type', 'type'], example: 'goods' },
-    { key: 'category', labelEn: 'Category', labelHi: 'श्रेणी', aliases: ['category', 'group', 'category name'], example: 'Medicines' },
-    { key: 'brand', labelEn: 'Brand', labelHi: 'ब्रांड', aliases: ['brand', 'company', 'make'], example: 'Micro Labs' },
-    { key: 'unit', labelEn: 'Base Unit (pcs/kg/g/box/ltr/mtr/hr)', labelHi: 'इकाई', aliases: ['unit', 'uom', 'base_unit', 'unit code'], example: 'pcs' },
-    { key: 'selling_price', labelEn: 'Selling Price *', labelHi: 'बिक्री मूल्य *', required: true, aliases: ['selling_price', 'sale price', 'rate', 'price'], example: 32 },
-    { key: 'mrp', labelEn: 'MRP', labelHi: 'एमआरपी', aliases: ['mrp', 'max retail price'], example: 35 },
-    { key: 'purchase_price', labelEn: 'Purchase Cost', labelHi: 'खरीद मूल्य', aliases: ['purchase_price', 'cost', 'cost price', 'buy price'], example: 22 },
-    { key: 'gst_rate', labelEn: 'GST %', labelHi: 'जीएसटी %', aliases: ['gst_rate', 'gst', 'tax', 'tax %', 'tax rate'], example: 12 },
-    { key: 'hsn_code', labelEn: 'HSN / SAC Code', labelHi: 'HSN / SAC कोड', aliases: ['hsn_code', 'hsn', 'sac', 'sac_code'], example: '3004' },
+    { key: 'category', labelEn: 'Category', labelHi: 'श्रेणी', aliases: ['category', 'group', 'category name'], example: 'Vitrified Tiles' },
+    { key: 'brand', labelEn: 'Brand', labelHi: 'ब्रांड', aliases: ['brand', 'company', 'make'], example: 'Kajaria' },
+    { key: 'unit', labelEn: 'Base Unit (box/pcs/sqft/sqm/kg/ltr/mtr)', labelHi: 'इकाई', aliases: ['unit', 'uom', 'base_unit', 'unit code'], example: 'box' },
+    { key: 'selling_price', labelEn: 'Selling Price *', labelHi: 'बिक्री मूल्य *', required: true, aliases: ['selling_price', 'sale price', 'rate', 'price'], example: 850 },
+    { key: 'mrp', labelEn: 'MRP', labelHi: 'एमआरपी', aliases: ['mrp', 'max retail price'], example: 950 },
+    { key: 'purchase_price', labelEn: 'Purchase Cost', labelHi: 'खरीद मूल्य', aliases: ['purchase_price', 'cost', 'cost price', 'buy price'], example: 640 },
+    { key: 'gst_rate', labelEn: 'GST %', labelHi: 'जीएसटी %', aliases: ['gst_rate', 'gst', 'tax', 'tax %', 'tax rate'], example: 18 },
+    { key: 'hsn_code', labelEn: 'HSN / SAC Code', labelHi: 'HSN / SAC कोड', aliases: ['hsn_code', 'hsn', 'sac', 'sac_code'], example: '6907' },
     { key: 'opening_stock', labelEn: 'Opening Stock', labelHi: 'प्रारंभिक स्टॉक', aliases: ['opening_stock', 'stock', 'qty', 'opening qty'], example: 50 },
     { key: 'low_stock_alert', labelEn: 'Low Stock Alert', labelHi: 'कम स्टॉक अलर्ट', aliases: ['low_stock_alert', 'min stock', 'reorder level'], example: 10 },
-    { key: 'salt', labelEn: 'Salt / Composition (Medical)', labelHi: 'सॉल्ट (मेडिकल)', aliases: ['salt', 'composition', 'salt name'], example: 'Paracetamol 650mg' },
-    { key: 'schedule', labelEn: 'Schedule (OTC/H/H1/X)', labelHi: 'शेड्यूल (OTC/H/H1)', aliases: ['schedule', 'drug schedule'], example: 'OTC' },
-    { key: 'warranty_months', labelEn: 'Warranty Months (Hardware)', labelHi: 'वारंटी (महीने)', aliases: ['warranty_months', 'warranty'], example: 12 },
   ],
 };
 
@@ -70,6 +67,7 @@ export interface InvalidImportRow {
 }
 
 const GSTIN_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 export function normalizeHeaderKey(header: string): string {
   return String(header || '')
@@ -80,27 +78,115 @@ export function normalizeHeaderKey(header: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
-export function parseSpreadsheetBuffer(
-  data: ArrayBuffer | Uint8Array,
-  _fileName = 'import.xlsx',
-  preferredSheet?: string
-): ParsedSpreadsheetResult {
-  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-  const workbook = XLSX.read(bytes, { type: 'array', cellDates: false });
-  const sheetNames = workbook.SheetNames || [];
-  if (sheetNames.length === 0) {
-    throw new Error('Spreadsheet does not contain any sheets.');
+function parseCsvMatrix(csvInput: string): string[][] {
+  const text = csvInput.replace(/^\uFEFF/, '');
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\r') {
+      if (text[i + 1] === '\n') i += 1;
+      row.push(cell);
+      if (row.some((v) => v.trim() !== '')) rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell);
+      if (row.some((v) => v.trim() !== '')) rows.push(row);
+      row = [];
+      cell = '';
+    } else {
+      cell += ch;
+    }
   }
-  const selectedSheet =
-    preferredSheet && sheetNames.includes(preferredSheet)
-      ? preferredSheet
-      : sheetNames[0];
-  const sheet = workbook.Sheets[selectedSheet];
-  const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-    header: 1,
-    defval: '',
-    blankrows: false,
-  });
+
+  row.push(cell);
+  if (row.some((v) => v.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+function isZipMagicHeader(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b;
+}
+
+function isLegacyXlsMagicHeader(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 4 &&
+    bytes[0] === 0xd0 &&
+    bytes[1] === 0xcf &&
+    bytes[2] === 0x11 &&
+    bytes[3] === 0xe0
+  );
+}
+
+export async function parseSpreadsheetBuffer(
+  data: ArrayBuffer | Uint8Array,
+  fileName = 'import.xlsx',
+  preferredSheet?: string
+): Promise<ParsedSpreadsheetResult> {
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.byteLength === 0) {
+    throw new Error('Spreadsheet file is empty.');
+  }
+
+  if (isLegacyXlsMagicHeader(bytes)) {
+    throw new Error('Legacy binary .xls files are not supported. Please save the file as .xlsx or .csv.');
+  }
+
+  let sheetNames: string[] = [];
+  let selectedSheet = 'Sheet1';
+  let matrix: unknown[][] = [];
+
+  if (isZipMagicHeader(bytes)) {
+    const sheets = await readXlsxFile(bytes);
+    if (!sheets || sheets.length === 0) {
+      throw new Error('Spreadsheet does not contain any sheets.');
+    }
+    sheetNames = sheets.map((s) => s.sheet);
+    selectedSheet =
+      preferredSheet && sheetNames.includes(preferredSheet)
+        ? preferredSheet
+        : sheetNames[0];
+    const target = sheets.find((s) => s.sheet === selectedSheet) || sheets[0];
+    matrix = (target.data || [])
+      .map((row) =>
+        (row || []).map((cell) => {
+          if (cell instanceof Date) return cell.toISOString().slice(0, 10);
+          return cell ?? '';
+        })
+      )
+      .filter((row) => row.some((v) => String(v).trim() !== ''));
+  } else {
+    if (fileName.toLowerCase().endsWith('.xlsx')) {
+      throw new Error('Invalid .xlsx file format. Please upload a valid .xlsx or .csv file.');
+    }
+    const decoded = new TextDecoder('utf-8').decode(bytes);
+    sheetNames = ['Sheet1'];
+    selectedSheet = 'Sheet1';
+    matrix = parseCsvMatrix(decoded);
+  }
 
   if (matrix.length === 0) {
     return { sheetNames, selectedSheet, headers: [], rows: [] };
@@ -192,7 +278,7 @@ export function mapAndValidateImportRows(
   };
 
   rows.forEach((rawRow, idx) => {
-    const rowNumber = idx + 2; // 1-indexed header row + data offset
+    const rowNumber = idx + 2;
     const name = pick(rawRow, 'name');
 
     try {
@@ -216,11 +302,6 @@ export function mapAndValidateImportRows(
                 })()
               : 'customer';
 
-        const tierRaw = pick(rawRow, 'price_tier').toLowerCase();
-        const price_tier = ['standard', 'wholesale_a', 'wholesale_b', 'vip'].includes(tierRaw)
-          ? tierRaw
-          : 'standard';
-
         const ob = parseNum(pick(rawRow, 'opening_balance'), 'Opening Balance');
         const credit_limit = parseNum(pick(rawRow, 'credit_limit'), 'Credit Limit');
         const credit_days = Math.round(parseNum(pick(rawRow, 'credit_days'), 'Credit Days'));
@@ -233,7 +314,6 @@ export function mapAndValidateImportRows(
           phone: pick(rawRow, 'phone') || null,
           email: pick(rawRow, 'email') || null,
           gstin: gstin || null,
-          price_tier,
           opening_balance: ob,
           opening_balance_type,
           credit_limit,
@@ -257,8 +337,6 @@ export function mapAndValidateImportRows(
         }
         const opening_stock = parseNum(pick(rawRow, 'opening_stock'), 'Opening Stock');
         const low_stock_alert = parseNum(pick(rawRow, 'low_stock_alert'), 'Low Stock Alert');
-        const warrantyRaw = pick(rawRow, 'warranty_months');
-        const warranty_months = warrantyRaw ? Math.round(parseNum(warrantyRaw, 'Warranty Months')) : null;
 
         const typeRaw = pick(rawRow, 'item_type').toLowerCase();
         const item_type = typeRaw === 'service' ? 'service' : 'goods';
@@ -278,9 +356,6 @@ export function mapAndValidateImportRows(
           hsn_code: pick(rawRow, 'hsn_code') || null,
           opening_stock,
           low_stock_alert,
-          salt: pick(rawRow, 'salt') || null,
-          schedule: pick(rawRow, 'schedule') || null,
-          warranty_months,
         });
       }
     } catch (err) {
@@ -303,42 +378,85 @@ function sanitizeCsvCellValue(value: unknown): unknown {
   return value;
 }
 
-export function buildTemplateWorkbookBuffer(
+function encodeCsvCell(value: unknown, sanitizeFormula = true): string {
+  const safeVal = sanitizeFormula ? sanitizeCsvCellValue(value) : value;
+  const raw = safeVal === null || safeVal === undefined ? '' : String(safeVal);
+  if (/[",\n\r]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
+}
+
+function stringifyCsvRows(rows: Array<Array<unknown>>): string {
+  const body = rows
+    .map((row) => row.map((cell) => encodeCsvCell(cell, true)).join(','))
+    .join('\r\n');
+  return `\uFEFF${body}`;
+}
+
+function toExcelCell(value: unknown): Cell {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === 'boolean' || value instanceof Date || typeof value === 'string') {
+    return value;
+  }
+  return String(value);
+}
+
+function toSheetData(rows: Array<Array<unknown>>): SheetData {
+  return rows.map((row): Row => row.map((cell) => toExcelCell(cell)));
+}
+
+async function writeSheetsToXlsxUint8Array(
+  sheets: Array<{ name: string; data: SheetData }>
+): Promise<Uint8Array> {
+  const entries: Sheet<Blob>[] =
+    sheets.length > 0
+      ? sheets.map((s, idx) => ({
+          sheet: (s.name || `Sheet${idx + 1}`).slice(0, 31),
+          data: s.data,
+        }))
+      : [{ sheet: 'Sheet1', data: [[]] }];
+
+  const blob = await writeXlsxFile(entries).toBlob();
+  const ab = await blob.arrayBuffer();
+  return new Uint8Array(ab);
+}
+
+export async function buildTemplateWorkbookBuffer(
   entityType: ImportEntityType,
   format: 'xlsx' | 'csv'
-): { buffer: Uint8Array; mimeType: string; filename: string } {
+): Promise<{ buffer: Uint8Array; mimeType: string; filename: string }> {
   const specs = IMPORT_FIELD_SPECS[entityType];
   const headers = specs.map((s) => s.key);
   const sampleRow = specs.map((s) => s.example);
 
   if (format === 'csv') {
-    const csvWs = XLSX.utils.aoa_to_sheet([
-      headers.map(sanitizeCsvCellValue),
-      sampleRow.map(sanitizeCsvCellValue),
-    ]);
-    const csvText = `\uFEFF${XLSX.utils.sheet_to_csv(csvWs)}`;
+    const csvText = stringifyCsvRows([headers, sampleRow]);
     return {
       buffer: new TextEncoder().encode(csvText),
       mimeType: 'text/csv;charset=utf-8;',
-      filename: `bizone-${entityType}-template.csv`,
+      filename: `decorbiz-${entityType}-template.csv`,
     };
   }
 
-  const ws = XLSX.utils.aoa_to_sheet([headers, sampleRow]);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, entityType === 'parties' ? 'Parties' : 'Items');
-  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+  const sheetName = entityType === 'parties' ? 'Parties' : 'Items';
+  const buffer = await writeSheetsToXlsxUint8Array([
+    { name: sheetName, data: toSheetData([headers, sampleRow]) },
+  ]);
   return {
-    buffer: new Uint8Array(out),
-    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    filename: `bizone-${entityType}-template.xlsx`,
+    buffer,
+    mimeType: XLSX_MIME,
+    filename: `decorbiz-${entityType}-template.xlsx`,
   };
 }
 
-export function buildExportWorkbookBuffer(
+export async function buildExportWorkbookBuffer(
   sheets: Array<{ name: string; headers: string[]; rows: Array<Array<unknown>> }>,
   format: 'xlsx' | 'csv'
-): { buffer: Uint8Array; mimeType: string } {
+): Promise<{ buffer: Uint8Array; mimeType: string }> {
   if (format === 'csv') {
     const firstSheet = sheets[0];
     if (!firstSheet) {
@@ -347,42 +465,32 @@ export function buildExportWorkbookBuffer(
         mimeType: 'text/csv;charset=utf-8;',
       };
     }
-    const csvWs = XLSX.utils.aoa_to_sheet([
-      firstSheet.headers.map(sanitizeCsvCellValue),
-      ...firstSheet.rows.map((r) => r.map(sanitizeCsvCellValue)),
-    ]);
-    const csvText = `\uFEFF${XLSX.utils.sheet_to_csv(csvWs)}`;
+    const csvText = stringifyCsvRows([firstSheet.headers, ...firstSheet.rows]);
     return {
       buffer: new TextEncoder().encode(csvText),
       mimeType: 'text/csv;charset=utf-8;',
     };
   }
 
-  const wb = XLSX.utils.book_new();
-  sheets.forEach((s) => {
-    const ws = XLSX.utils.aoa_to_sheet([s.headers, ...s.rows]);
-    XLSX.utils.book_append_sheet(wb, ws, s.name.slice(0, 31));
-  });
-
-  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
+  const buffer = await writeSheetsToXlsxUint8Array(
+    sheets.map((s) => ({
+      name: s.name.slice(0, 31),
+      data: toSheetData([s.headers, ...s.rows]),
+    }))
+  );
   return {
-    buffer: new Uint8Array(out),
-    mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    buffer,
+    mimeType: XLSX_MIME,
   };
 }
 
 export function buildErrorCsvText(
   invalidRows: Array<{ row: number; name: string; error: string }>
 ): string {
-  const ws = XLSX.utils.aoa_to_sheet([
+  return stringifyCsvRows([
     ['Row', 'Name', 'Error'],
-    ...invalidRows.map((r) => [
-      r.row,
-      sanitizeCsvCellValue(r.name),
-      sanitizeCsvCellValue(r.error),
-    ]),
+    ...invalidRows.map((r) => [r.row, r.name, r.error]),
   ]);
-  return `\uFEFF${XLSX.utils.sheet_to_csv(ws)}`;
 }
 
 // ----------------------------------------------------------------------------
@@ -408,20 +516,20 @@ export function triggerBrowserDownload(
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function downloadImportTemplate(
+export async function downloadImportTemplate(
   entityType: ImportEntityType,
   format: 'xlsx' | 'csv'
-): void {
-  const { buffer, mimeType, filename } = buildTemplateWorkbookBuffer(entityType, format);
+): Promise<void> {
+  const { buffer, mimeType, filename } = await buildTemplateWorkbookBuffer(entityType, format);
   triggerBrowserDownload(buffer, filename, mimeType);
 }
 
-export function exportSheetsToBrowser(
+export async function exportSheetsToBrowser(
   filenameBase: string,
   sheets: Array<{ name: string; headers: string[]; rows: Array<Array<unknown>> }>,
   format: 'xlsx' | 'csv'
-): void {
-  const { buffer, mimeType } = buildExportWorkbookBuffer(sheets, format);
+): Promise<void> {
+  const { buffer, mimeType } = await buildExportWorkbookBuffer(sheets, format);
   const ext = format === 'csv' ? '.csv' : '.xlsx';
   const filename = filenameBase.endsWith(ext) ? filenameBase : `${filenameBase}${ext}`;
   triggerBrowserDownload(buffer, filename, mimeType);

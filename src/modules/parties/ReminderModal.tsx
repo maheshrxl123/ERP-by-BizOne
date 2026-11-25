@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { buildDueReminderText, copyToClipboard, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
-import type { OpenObligationRecord, PartyBalanceRecord } from '../../types/bizone';
+import type { OpenObligationRecord, PartyBalanceRecord } from '../../types/decorbiz';
 
 interface ReminderModalProps {
   open: boolean;
@@ -25,8 +25,10 @@ function sanitizeWhatsappPhone(raw: string | null | undefined): string {
 }
 
 export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
-  const { business, signedUrlCache, language, showToast, t } = useApp();
-  const [msgLang, setMsgLang] = useState<'en' | 'hi'>(language);
+  const { business, signedUrlCache, isModuleEnabled, language, showToast, t } = useApp();
+  const hindiEnabled = isModuleEnabled('hindi');
+  const messagingEnabled = isModuleEnabled('messaging');
+  const [msgLang, setMsgLang] = useState<'en' | 'hi'>(hindiEnabled ? language : 'en');
   const [openRefs, setOpenRefs] = useState<
     Array<{ referenceNo: string; remainingAmount: number; dueDate?: string | null }>
   >([]);
@@ -39,7 +41,7 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setMsgLang(language);
+    setMsgLang(hindiEnabled ? language : 'en');
     setCopied(false);
 
     supabase
@@ -74,7 +76,7 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
     () =>
       buildDueReminderText({
         lang: msgLang,
-        businessName: business?.name || 'BizOne Store',
+        businessName: business?.name || 'DecorBiz Store',
         businessPhone: business?.phone,
         upiId: business?.upi_id,
         partyName: party.name,
@@ -153,35 +155,37 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
         </div>
 
         <div className="p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-[var(--text-muted)]">
-              {language === 'hi' ? 'संदेश की भाषा' : 'Message Language'}
-            </span>
-            <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 bg-[var(--surface-muted)]">
-              <button
-                type="button"
-                onClick={() => setMsgLang('en')}
-                className={`px-3 py-1 rounded-md text-xs font-medium ${
-                  msgLang === 'en'
-                    ? 'bg-[var(--surface)] text-[var(--text)]'
-                    : 'text-[var(--text-muted)]'
-                }`}
-              >
-                English
-              </button>
-              <button
-                type="button"
-                onClick={() => setMsgLang('hi')}
-                className={`px-3 py-1 rounded-md text-xs font-medium ${
-                  msgLang === 'hi'
-                    ? 'bg-[var(--surface)] text-[var(--text)]'
-                    : 'text-[var(--text-muted)]'
-                }`}
-              >
-                हिन्दी
-              </button>
+          {hindiEnabled && (
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-[var(--text-muted)]">
+                {language === 'hi' ? 'संदेश की भाषा' : 'Message Language'}
+              </span>
+              <div className="inline-flex rounded-lg border border-[var(--border)] p-0.5 bg-[var(--surface-muted)]">
+                <button
+                  type="button"
+                  onClick={() => setMsgLang('en')}
+                  className={`px-3 py-1 rounded-md text-xs font-medium ${
+                    msgLang === 'en'
+                      ? 'bg-[var(--surface)] text-[var(--text)]'
+                      : 'text-[var(--text-muted)]'
+                  }`}
+                >
+                  English
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMsgLang('hi')}
+                  className={`px-3 py-1 rounded-md text-xs font-medium ${
+                    msgLang === 'hi'
+                      ? 'bg-[var(--surface)] text-[var(--text)]'
+                      : 'text-[var(--text-muted)]'
+                  }`}
+                >
+                  हिन्दी
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           <pre className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] text-xs sm:text-sm whitespace-pre-wrap font-sans leading-relaxed">
             {reminderText}
@@ -224,15 +228,17 @@ export function ReminderModal({ open, party, onClose }: ReminderModalProps) {
               <span>{t('parties.shareStatement')}</span>
             </button>
 
-            <a
-              href={whatsappHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="h-11 px-4 rounded-lg bg-[var(--receive)] text-white text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95"
-            >
-              <IconBrandWhatsapp size={18} stroke={2} />
-              <span>{t('parties.openWhatsapp')}</span>
-            </a>
+            {messagingEnabled && (
+              <a
+                href={whatsappHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-11 px-4 rounded-lg bg-[var(--receive)] text-white text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95"
+              >
+                <IconBrandWhatsapp size={18} stroke={2} />
+                <span>{t('parties.openWhatsapp')}</span>
+              </a>
+            )}
           </div>
         </div>
       </div>

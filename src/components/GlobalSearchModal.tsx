@@ -17,7 +17,7 @@ import type {
   ItemCatalogRecord,
   PartyBalanceRecord,
   PurchaseBillRecord,
-} from '../types/bizone';
+} from '../types/decorbiz';
 
 interface GlobalSearchModalProps {
   open: boolean;
@@ -184,7 +184,7 @@ export function GlobalSearchModal({
       {
         id: 'dest-pack',
         title: getPackWorkspaceTitle(business?.pack, language),
-        subtitle: 'Business-type workflows, batches, variants, slabs, or job cards',
+        subtitle: 'Tile & material estimator, contractor sites, and project quotations',
         action: () => onNavigate('pack'),
       },
     ];
@@ -310,7 +310,7 @@ export function GlobalSearchModal({
         action: () => onNavigate('reports'),
       });
     }
-    if (canSearchBills) {
+    if (isModuleEnabled('pos') && canSearchBills) {
       items.push({
         id: 'dest-pos',
         title: t('nav.pos'),
@@ -330,13 +330,16 @@ export function GlobalSearchModal({
       });
     }
     if (
+      isModuleEnabled('gst_returns') &&
       isModuleEnabled('tax') &&
       ['owner', 'manager', 'accountant'].includes(profile?.role ?? '')
     ) {
       items.push({
         id: 'dest-gst',
-        title: t('nav.gst'),
-        subtitle: 'GSTR-1, GSTR-3B, GSTR-2B ITC match, E-Invoice / EWB & TDS/TCS',
+        title: isModuleEnabled('einvoice') ? t('nav.gst') : 'GST Returns',
+        subtitle: isModuleEnabled('einvoice')
+          ? 'GSTR-1, GSTR-3B, GSTR-2B ITC match, E-Invoice / EWB & TDS/TCS'
+          : 'GSTR-1, GSTR-3B, GSTR-2B ITC match & TDS/TCS',
         action: () => onNavigate('gst'),
       });
     }
@@ -346,8 +349,10 @@ export function GlobalSearchModal({
     ) {
       items.push({
         id: 'dest-operations',
-        title: t('nav.operations'),
-        subtitle: 'Godown transfers, physical stock counts, orders, leads & cheque register',
+        title: isModuleEnabled('locations') ? t('nav.operations') : 'Operations',
+        subtitle: isModuleEnabled('locations')
+          ? 'Godown transfers, physical stock counts, orders, leads & cheque register'
+          : 'Physical stock counts, orders, leads & cheque register',
         action: () => onNavigate('operations'),
       });
     }
@@ -358,7 +363,9 @@ export function GlobalSearchModal({
       items.push({
         id: 'dest-messaging',
         title: t('nav.messaging'),
-        subtitle: 'WhatsApp, SMS & Email templates and delivery logs',
+        subtitle: isModuleEnabled('email_notifications')
+          ? 'WhatsApp, SMS & Email templates and delivery logs'
+          : 'WhatsApp & SMS templates and delivery logs',
         action: () => onNavigate('messaging'),
       });
     }
@@ -370,12 +377,25 @@ export function GlobalSearchModal({
         action: () => onNavigate('ai'),
       });
     }
+    if (
+      isModuleEnabled('online_store') &&
+      ['owner', 'manager'].includes(profile?.role ?? '')
+    ) {
+      items.push({
+        id: 'dest-online-store',
+        title: t('nav.onlineStore'),
+        subtitle: 'Online Store configuration & credentials',
+        action: () => onNavigate('online_store'),
+      });
+    }
 
     if (canSeeBackup) {
       items.push({
         id: 'set-backup',
         title: t('settings.tabs.backup'),
-        subtitle: 'Settings · Export JSON backup, checksum verification & storage usage',
+        subtitle: isModuleEnabled('google_drive_backup')
+          ? 'Settings · Local JSON backup, Google Drive sync & storage usage'
+          : 'Settings · Export JSON backup, checksum verification & storage usage',
         action: () => onNavigate('settings', 'backup'),
       });
     }
@@ -403,7 +423,7 @@ export function GlobalSearchModal({
         {
           id: 'set-int',
           title: t('settings.tabs.integrations'),
-          subtitle: 'Settings · Encrypted optional provider keys (Google Drive, AI)',
+          subtitle: 'Settings · Encrypted optional provider keys',
           action: () => onNavigate('settings', 'integrations'),
         },
         {
@@ -422,18 +442,15 @@ export function GlobalSearchModal({
           action: () => onNavigate('settings', 'users'),
         });
       }
-    }
 
-    for (const mod of MODULE_REGISTRY) {
-      items.push({
-        id: `mod-${mod.key}`,
-        title: language === 'hi' ? mod.nameHi : mod.nameEn,
-        subtitle: language === 'hi' ? mod.descriptionHi : mod.descriptionEn,
-        action: () =>
-          profile?.role === 'owner'
-            ? onNavigate('settings', 'modules')
-            : onNavigate('home'),
-      });
+      for (const mod of MODULE_REGISTRY) {
+        items.push({
+          id: `mod-${mod.key}`,
+          title: language === 'hi' ? mod.nameHi : mod.nameEn,
+          subtitle: language === 'hi' ? mod.descriptionHi : mod.descriptionEn,
+          action: () => onNavigate('settings', 'modules'),
+        });
+      }
     }
 
     if (!q) return items.slice(0, 8);

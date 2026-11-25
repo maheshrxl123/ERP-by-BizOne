@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useApp } from '../../app/AppProvider';
 import { formatINR } from '../../core/format';
-import type { ItemCatalogRecord } from '../../types/bizone';
+import type { ItemCatalogRecord } from '../../types/decorbiz';
 
 interface BarcodeLabelModalProps {
   open: boolean;
@@ -141,7 +141,7 @@ export function BarcodeLabelModal({
                     className="border border-neutral-300 rounded p-2.5 flex flex-col justify-between gap-1 text-center"
                   >
                     <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-600 truncate">
-                      {business?.name || 'BizOne Store'}
+                      {business?.name || 'DecorBiz Store'}
                     </p>
                     <p className="text-xs font-semibold truncate text-neutral-900">
                       {selectedItem.name}

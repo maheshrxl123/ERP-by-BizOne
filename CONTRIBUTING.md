@@ -1,6 +1,6 @@
-# Contributing to BizOne ERP
+# Contributing to DecorBiz
 
-Thank you for helping improve BizOne ERP!
+Thank you for helping improve DecorBiz!
 
 ## Development Workflow
 1. Fork and clone the repository.

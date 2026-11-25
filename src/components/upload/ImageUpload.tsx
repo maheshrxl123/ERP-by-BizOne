@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { erpFetch } from '../../core/erpFetch';
 
 export interface UploadedImageItem {
   fileId: string;
@@ -21,7 +22,7 @@ export interface UploadedImageItem {
 
 interface ImageUploadProps {
   label: string;
-  purpose: 'avatar' | 'business_logo' | 'upi_qr' | 'item_image';
+  purpose: 'avatar' | 'business_logo' | 'upi_qr' | 'item_image' | 'store_banner';
   multiple?: boolean;
   value: UploadedImageItem[];
   onChange: (next: UploadedImageItem[]) => void;
@@ -201,12 +202,9 @@ export function ImageUpload({
           ? Boolean(value[replaceIndex!]?.isPrimary)
           : nextList.length === 0;
 
-        const res = await fetch('/api/files/upload', {
+        const res = await erpFetch('/api/erp/files/upload', session.access_token, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             fileName: raw.name,
             mimeType: compressed.mimeType,
@@ -250,9 +248,8 @@ export function ImageUpload({
         previousFileId &&
         !nextList.some((x) => x.fileId === previousFileId)
       ) {
-        await fetch(`/api/files/${encodeURIComponent(previousFileId)}`, {
+        await erpFetch(`/api/erp/files/${encodeURIComponent(previousFileId)}`, session.access_token, {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${session.access_token}` },
         }).catch(() => undefined);
       }
 
@@ -281,9 +278,8 @@ export function ImageUpload({
       }
       onChange(next);
       if (!deferDelete && target?.fileId && session?.access_token) {
-        await fetch(`/api/files/${encodeURIComponent(target.fileId)}`, {
+        await erpFetch(`/api/erp/files/${encodeURIComponent(target.fileId)}`, session.access_token, {
           method: 'DELETE',
-          headers: { Authorization: `Bearer ${session.access_token}` },
         }).catch(() => undefined);
       }
     } catch (err) {

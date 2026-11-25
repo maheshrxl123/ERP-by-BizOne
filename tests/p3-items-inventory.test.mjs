@@ -23,6 +23,12 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF;
+const hasLiveSupabase =
+  Boolean(SUPABASE_URL?.startsWith('https://')) &&
+  !SUPABASE_URL?.includes('YOUR_PROJECT_REF') &&
+  (SUPABASE_ANON_KEY?.length ?? 0) > 20 &&
+  (SERVICE_ROLE_KEY?.length ?? 0) > 20 &&
+  Boolean(ACCESS_TOKEN && PROJECT_REF);
 
 const VALID_PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -178,7 +184,10 @@ test('Phase P3 unit checks: unit conversion edge cases and Hindi i18n parity', (
   assert.ok(hi.items.stockOnHand.includes('स्टॉक'));
 });
 
-test('Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative-stock policy, multi-image gallery & orphan cleanup, purchase-cost RBAC, and indexed search', async () => {
+test(
+  'Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative-stock policy, multi-image gallery & orphan cleanup, purchase-cost RBAC, and indexed search',
+  { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
+  async () => {
   assert.ok(
     SUPABASE_URL && SUPABASE_ANON_KEY && SERVICE_ROLE_KEY,
     'Supabase environment variables must be configured'
@@ -193,7 +202,7 @@ test('Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative
   });
 
   const stamp = Date.now();
-  const password = 'BizOneP3!2026';
+  const password = 'DecorBizP3!2026';
   const createdUserIds = [];
   const createdItemIds = [];
   const createdCategoryIds = [];
@@ -248,8 +257,8 @@ test('Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative
     if (!existingBiz) {
       await supabaseAdmin.from('business').insert({
         id: 1,
-        name: 'Temp P3 Store',
-        pack: 'kirana',
+        name: 'Temp P3 DecorBiz Store',
+        pack: 'decorbiz',
         gst_registered: false,
       });
       createdWorkspaceTemp = true;
@@ -388,7 +397,7 @@ test('Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative
     assert.equal(orphanDb, null, 'Orphan file DB row should be deleted');
 
     const { data: storageCheck } = await supabaseAdmin.storage
-      .from('bizone-private')
+      .from('decorbiz-private')
       .createSignedUrl(orphanImg.storage_path, 60);
     assert.equal(storageCheck, null, 'Orphan storage object should be removed');
 
@@ -723,7 +732,7 @@ test('Phase P3 E2E: Catalogue, unit conversions, ledger reconciliation, negative
     }
     if (uploadedStoragePaths.length > 0) {
       await supabaseAdmin.storage
-        .from('bizone-private')
+        .from('decorbiz-private')
         .remove(uploadedStoragePaths)
         .catch(() => undefined);
     }

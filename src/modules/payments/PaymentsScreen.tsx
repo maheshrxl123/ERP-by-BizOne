@@ -15,7 +15,7 @@ import type {
   PaymentDirection,
   PaymentMode,
   PaymentRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { PaymentModal } from '../parties/PaymentModal';
 
 interface PaymentsScreenProps {

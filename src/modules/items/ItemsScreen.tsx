@@ -14,6 +14,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
+import {
+  PRODUCT_LINES,
+  filterTaxonomyByProductLine,
+  getProductLineLabel,
+  type ProductLineKey,
+} from '../../core/productLines';
+import {
+  formatItemSpecSummary,
+  getLineFilterDefinitions,
+  matchesLineSpecFilters,
+} from '../../core/productSpecs';
 import { supabase } from '../../core/supabase';
 import { formatStockQty } from '../../core/units';
 import type {
@@ -23,7 +34,7 @@ import type {
   ItemCategoryRecord,
   ItemUnitRecord,
   UnitConversionRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { BarcodeLabelModal } from './BarcodeLabelModal';
 import { InventoryTaxonomyModal } from './InventoryTaxonomyModal';
 import { ItemDetailView } from './ItemDetailView';
@@ -45,7 +56,7 @@ export function ItemsScreen({
   initialAction,
   onActionConsumed,
 }: ItemsScreenProps) {
-  const { profile, signedUrlCache, getSignedUrl, showToast, t } = useApp();
+  const { profile, signedUrlCache, getSignedUrl, language, showToast, t } = useApp();
 
   const canEdit = hasCapability(profile?.role, 'items');
   const canAdjust = hasCapability(profile?.role, 'stock_adjustment');
@@ -66,7 +77,9 @@ export function ItemsScreen({
   const [filterTab, setFilterTab] = useState<ItemFilterTab>(
     initialFilter ?? 'all'
   );
+  const [productLineFilter, setProductLineFilter] = useState<ProductLineKey | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [specFilters, setSpecFilters] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
 
   const [addModalOpen, setAddModalOpen] = useState(false);
@@ -173,6 +186,11 @@ export function ItemsScreen({
     }
   };
 
+  const visibleCategories = useMemo(
+    () => filterTaxonomyByProductLine(categories, productLineFilter),
+    [categories, productLineFilter]
+  );
+
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return items.filter((item) => {
@@ -184,20 +202,29 @@ export function ItemsScreen({
         if (filterTab === 'out_of_stock' && !item.is_out_of_stock) return false;
       }
 
+      if (productLineFilter !== 'all') {
+        const line = item.product_line || 'other_general';
+        if (line !== productLineFilter) return false;
+        if (!matchesLineSpecFilters(item, productLineFilter, specFilters)) return false;
+      }
+
       if (categoryFilter && item.category_id !== categoryFilter) {
         return false;
       }
 
       if (!q) return true;
+      const specSummary = formatItemSpecSummary(item.product_line, item.specs).toLowerCase();
       return (
         item.name.toLowerCase().includes(q) ||
         (item.sku ?? '').toLowerCase().includes(q) ||
         (item.barcode ?? '').toLowerCase().includes(q) ||
         (item.category_name ?? '').toLowerCase().includes(q) ||
-        (item.brand_name ?? '').toLowerCase().includes(q)
+        (item.brand_name ?? '').toLowerCase().includes(q) ||
+        (item.supplier_name ?? '').toLowerCase().includes(q) ||
+        specSummary.includes(q)
       );
     });
-  }, [items, filterTab, categoryFilter, searchQuery]);
+  }, [items, filterTab, productLineFilter, specFilters, categoryFilter, searchQuery]);
 
   if (selectedItemId) {
     return (
@@ -329,6 +356,100 @@ export function ItemsScreen({
         </div>
       )}
 
+      {/* Product Line Strip (5 Locked Product Lines) */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => {
+            setProductLineFilter('all');
+            setCategoryFilter('');
+            setSpecFilters({});
+          }}
+          className={`h-9 px-3 rounded-lg border text-xs font-medium whitespace-nowrap transition-colors ${
+            productLineFilter === 'all'
+              ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+              : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          {t('items.allLines')}
+        </button>
+        {PRODUCT_LINES.map((pl) => (
+          <button
+            key={pl.key}
+            type="button"
+            onClick={() => {
+              setProductLineFilter(pl.key);
+              setCategoryFilter('');
+              setSpecFilters({});
+            }}
+            className={`h-9 px-3 rounded-lg border text-xs font-medium whitespace-nowrap transition-colors ${
+              productLineFilter === pl.key
+                ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
+            }`}
+          >
+            {language === 'hi' ? pl.shortLabelHi : pl.shortLabelEn}
+          </button>
+        ))}
+      </div>
+
+      {/* Per-Line Specification Filters */}
+      {productLineFilter !== 'all' && (() => {
+        const lineFilters = getLineFilterDefinitions(productLineFilter);
+        const hasActive = Object.values(specFilters).some((v) => v.trim() !== '');
+        if (lineFilters.length === 0) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+            {lineFilters.map((def) => {
+              const label = language === 'hi' ? def.labelHi : def.labelEn;
+              const val = specFilters[def.key] || '';
+              if (def.options) {
+                return (
+                  <select
+                    key={def.key}
+                    value={val}
+                    aria-label={label}
+                    onChange={(e) =>
+                      setSpecFilters((prev) => ({ ...prev, [def.key]: e.target.value }))
+                    }
+                    className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs min-w-32"
+                  >
+                    <option value="">All {label}</option>
+                    {def.options.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                );
+              }
+              return (
+                <input
+                  key={def.key}
+                  type="text"
+                  value={val}
+                  aria-label={label}
+                  onChange={(e) =>
+                    setSpecFilters((prev) => ({ ...prev, [def.key]: e.target.value }))
+                  }
+                  placeholder={`${label}${def.placeholder ? ` (${def.placeholder})` : ''}`}
+                  className="h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs w-36"
+                />
+              );
+            })}
+            {hasActive && (
+              <button
+                type="button"
+                onClick={() => setSpecFilters({})}
+                className="h-9 px-2.5 rounded-lg border border-[var(--border)] text-xs text-[var(--text-muted)] hover:text-[var(--text)] ml-auto"
+              >
+                {t('items.clearFilters')}
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Search + Filter Bar */}
       <div className="flex flex-col md:flex-row gap-3">
         <div className="relative flex-1">
@@ -353,7 +474,7 @@ export function ItemsScreen({
           className="h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm md:w-48"
         >
           <option value="">All Categories</option>
-          {categories.map((c) => (
+          {visibleCategories.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
             </option>
@@ -478,7 +599,11 @@ export function ItemsScreen({
                                 {item.name}
                               </p>
                               <p className="text-xs text-[var(--text-muted)] truncate">
-                                {item.sku ? `SKU ${item.sku}` : 'No SKU'}
+                                {formatItemSpecSummary(item.product_line, item.specs) ||
+                                  (item.sku ? `SKU ${item.sku}` : 'No SKU')}
+                                {item.sku && formatItemSpecSummary(item.product_line, item.specs)
+                                  ? ` · ${item.sku}`
+                                  : ''}
                                 {item.barcode ? ` · ${item.barcode}` : ''}
                                 {item.image_count > 1
                                   ? ` · ${item.image_count} photos`
@@ -488,8 +613,13 @@ export function ItemsScreen({
                           </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-[var(--text-muted)]">
-                          {item.category_name || '—'}
-                          {item.brand_name ? ` · ${item.brand_name}` : ''}
+                          <span className="font-medium text-[var(--text)] block">
+                            {getProductLineLabel(item.product_line, language)}
+                          </span>
+                          <span>
+                            {item.category_name || '—'}
+                            {item.brand_name ? ` · ${item.brand_name}` : ''}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-right font-semibold tabular-nums">
                           {formatINR(Number(item.selling_price))}
@@ -618,6 +748,7 @@ export function ItemsScreen({
 
       <ItemFormModal
         open={addModalOpen}
+        initialProductLine={productLineFilter === 'all' ? 'tiles_slabs' : productLineFilter}
         categories={categories}
         brands={brands}
         units={units}
@@ -630,6 +761,7 @@ export function ItemsScreen({
 
       <InventoryTaxonomyModal
         open={taxonomyOpen}
+        initialProductLine={productLineFilter}
         categories={categories}
         brands={brands}
         units={units}

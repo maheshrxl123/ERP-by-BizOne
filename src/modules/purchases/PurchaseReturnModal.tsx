@@ -8,7 +8,7 @@ import type {
   PaymentMode,
   PurchaseBillRecord,
   PurchaseLineRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 interface PurchaseReturnModalProps {
   open: boolean;

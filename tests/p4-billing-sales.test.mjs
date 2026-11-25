@@ -35,6 +35,12 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF;
+const hasLiveSupabase =
+  Boolean(SUPABASE_URL?.startsWith('https://')) &&
+  !SUPABASE_URL?.includes('YOUR_PROJECT_REF') &&
+  (SUPABASE_ANON_KEY?.length ?? 0) > 20 &&
+  (SERVICE_ROLE_KEY?.length ?? 0) > 20 &&
+  Boolean(ACCESS_TOKEN && PROJECT_REF);
 
 const VALID_PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -252,7 +258,10 @@ test('Phase P4 unit checks: rounding, GST inclusive/exclusive, IGST/CGST/SGST, B
   assert.ok(en.bills.partyPayModuleOff && hi.bills.partyPayModuleOff);
 });
 
-test('Phase P4 E2E: SQL/client parity, drafts, stock & Khata sync, immutability, quotations, returns, void, overrides, idempotency, UPI QR & share links', async () => {
+test(
+  'Phase P4 E2E: SQL/client parity, drafts, stock & Khata sync, immutability, quotations, returns, void, overrides, idempotency, UPI QR & share links',
+  { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
+  async () => {
   assert.ok(
     SUPABASE_URL && SUPABASE_ANON_KEY && SERVICE_ROLE_KEY,
     'Supabase environment variables must be configured'
@@ -267,7 +276,7 @@ test('Phase P4 E2E: SQL/client parity, drafts, stock & Khata sync, immutability,
   });
 
   const stamp = Date.now();
-  const password = 'BizOneP4!2026';
+  const password = 'DecorBizP4!2026';
   const createdUserIds = [];
   const createdItemIds = [];
   const createdPartyIds = [];
@@ -326,7 +335,7 @@ test('Phase P4 E2E: SQL/client parity, drafts, stock & Khata sync, immutability,
       await supabaseAdmin.from('business').insert({
         id: 1,
         name: 'P4 Temp Test Business',
-        pack: 'kirana',
+        pack: 'decorbiz',
         gst_registered: true,
         gstin: '27AAPFU0939F1ZV',
         state_code: '27',
@@ -1478,7 +1487,7 @@ test('Phase P4 E2E: SQL/client parity, drafts, stock & Khata sync, immutability,
 
     if (uploadedStoragePaths.length > 0) {
       await supabaseAdmin.storage
-        .from('bizone-private')
+        .from('decorbiz-private')
         .remove(uploadedStoragePaths)
         .catch(() => undefined);
     }

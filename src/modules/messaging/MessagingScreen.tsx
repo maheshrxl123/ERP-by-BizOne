@@ -9,8 +9,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDateTime } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
-import type { MessageLogRecord, MessageTemplateRecord } from '../../types/bizone';
+import type { MessageLogRecord, MessageTemplateRecord } from '../../types/decorbiz';
 
 type MessagingTab = 'compose' | 'templates' | 'logs';
 
@@ -19,8 +20,9 @@ interface MessagingScreenProps {
 }
 
 export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
-  const { business, profile, session, language, showToast } = useApp();
+  const { business, profile, session, language, isModuleEnabled, showToast } = useApp();
   const isOwner = profile?.role === 'owner';
+  const emailNotifEnabled = isModuleEnabled('email_notifications');
 
   const [tab, setTab] = useState<MessagingTab>('compose');
   const [templates, setTemplates] = useState<MessageTemplateRecord[]>([]);
@@ -48,6 +50,17 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
     void loadAll();
   }, [loadAll]);
 
+  useEffect(() => {
+    if (!emailNotifEnabled && channel === 'email') {
+      setChannel('whatsapp');
+    }
+  }, [emailNotifEnabled, channel]);
+
+  const visibleTemplates = useMemo(
+    () => (emailNotifEnabled ? templates : templates.filter((t) => t.channel !== 'email')),
+    [templates, emailNotifEnabled]
+  );
+
   const activeTemplate = useMemo(
     () => templates.find((t) => t.template_key === templateKey) || templates[0] || null,
     [templates, templateKey]
@@ -62,7 +75,7 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
       : '';
     return raw
       .replace(/\{\{party_name\}\}/g, partyName.trim() || 'Customer')
-      .replace(/\{\{business_name\}\}/g, business?.name || 'BizOne Store')
+      .replace(/\{\{business_name\}\}/g, business?.name || 'DecorBiz Store')
       .replace(/\{\{amount\}\}/g, amount.trim() ? `₹${amount.trim()}` : '₹0.00')
       .replace(/\{\{bill_number\}\}/g, billNumber.trim() || 'INV-0001')
       .replace(/\{\{upi_link\}\}/g, business?.upi_id ? `upi://pay?pa=${business.upi_id}` : 'Store Counter');
@@ -73,12 +86,9 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
     if (!session?.access_token || !recipient.trim() || !renderedPreview.trim()) return;
     setSending(true);
     try {
-      const res = await fetch('/api/messaging/send', {
+      const res = await erpFetch('/api/erp/messaging/send', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channel,
           recipient: recipient.trim(),
@@ -111,7 +121,11 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <IconMessage size={24} stroke={2} className="text-[var(--primary-dark)]" />
-            <span>Customer Messaging (WhatsApp, SMS & Email)</span>
+            <span>
+              {emailNotifEnabled
+                ? 'Customer Messaging (WhatsApp, SMS & Email)'
+                : 'Customer Messaging (WhatsApp & SMS)'}
+            </span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
             Send invoice links and Khata reminders with EN/HI templates using the Owner’s optional provider gateway.
@@ -186,7 +200,7 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
               >
                 <option value="whatsapp">WhatsApp</option>
                 <option value="sms">SMS</option>
-                <option value="email">Email</option>
+                {emailNotifEnabled && <option value="email">Email</option>}
               </select>
             </div>
             <div>
@@ -198,7 +212,7 @@ export function MessagingScreen({ onOpenSettings }: MessagingScreenProps) {
                 onChange={(e) => setTemplateKey(e.target.value)}
                 className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
               >
-                {templates.map((t) => (
+                {visibleTemplates.map((t) => (
                   <option key={t.id} value={t.template_key}>
                     {t.name} ({t.channel})
                   </option>

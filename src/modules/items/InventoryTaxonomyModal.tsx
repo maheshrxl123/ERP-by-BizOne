@@ -2,24 +2,33 @@ import {
   IconCheck,
   IconEdit,
   IconLoader2,
+  IconLock,
   IconPlus,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { hasCapability } from '../../core/permissions';
+import {
+  PRODUCT_LINES,
+  filterTaxonomyByProductLine,
+  getProductLineLabel,
+  type ProductLineKey,
+  type TaxonomyScopeKey,
+} from '../../core/productLines';
 import { supabase } from '../../core/supabase';
 import type {
   BrandRecord,
   ItemCategoryRecord,
   ItemUnitRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 type TaxonomyTab = 'categories' | 'brands' | 'units';
 
 interface InventoryTaxonomyModalProps {
   open: boolean;
   initialTab?: TaxonomyTab;
+  initialProductLine?: ProductLineKey | 'all';
   categories: ItemCategoryRecord[];
   brands: BrandRecord[];
   units: ItemUnitRecord[];
@@ -30,6 +39,7 @@ interface InventoryTaxonomyModalProps {
 export function InventoryTaxonomyModal({
   open,
   initialTab = 'categories',
+  initialProductLine = 'all',
   categories,
   brands,
   units,
@@ -38,16 +48,19 @@ export function InventoryTaxonomyModal({
 }: InventoryTaxonomyModalProps) {
   const { profile, language, showToast, t } = useApp();
   const [tab, setTab] = useState<TaxonomyTab>(initialTab);
+  const [lineFilter, setLineFilter] = useState<ProductLineKey | 'all'>(initialProductLine);
   const [saving, setSaving] = useState(false);
 
   // Category state
   const [catEditId, setCatEditId] = useState<string | null>(null);
   const [catName, setCatName] = useState('');
   const [catDesc, setCatDesc] = useState('');
+  const [catLine, setCatLine] = useState<TaxonomyScopeKey>(initialProductLine);
 
   // Brand state
   const [brandEditId, setBrandEditId] = useState<string | null>(null);
   const [brandName, setBrandName] = useState('');
+  const [brandLine, setBrandLine] = useState<TaxonomyScopeKey>(initialProductLine);
 
   // Unit state
   const [unitEditId, setUnitEditId] = useState<string | null>(null);
@@ -55,10 +68,38 @@ export function InventoryTaxonomyModal({
   const [unitNameEn, setUnitNameEn] = useState('');
   const [unitNameHi, setUnitNameHi] = useState('');
   const [unitDecimal, setUnitDecimal] = useState(false);
+  const [unitLine, setUnitLine] = useState<TaxonomyScopeKey>(initialProductLine);
 
   const canManage = hasCapability(profile?.role, 'items');
 
+  const visibleCategories = useMemo(
+    () => filterTaxonomyByProductLine(categories, lineFilter),
+    [categories, lineFilter]
+  );
+  const visibleBrands = useMemo(
+    () => filterTaxonomyByProductLine(brands, lineFilter),
+    [brands, lineFilter]
+  );
+  const visibleUnits = useMemo(
+    () => filterTaxonomyByProductLine(units, lineFilter),
+    [units, lineFilter]
+  );
+
   if (!open) return null;
+
+  const scopeLabel = (scope?: TaxonomyScopeKey | string | null) => {
+    if (!scope || scope === 'all') {
+      return language === 'hi' ? 'सभी लाइनें' : 'All Lines';
+    }
+    return getProductLineLabel(scope, language);
+  };
+
+  const handleFilterChange = (next: ProductLineKey | 'all') => {
+    setLineFilter(next);
+    if (!catEditId) setCatLine(next);
+    if (!brandEditId) setBrandLine(next);
+    if (!unitEditId) setUnitLine(next);
+  };
 
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +110,7 @@ export function InventoryTaxonomyModal({
         p_id: catEditId,
         p_name: catName.trim(),
         p_description: catDesc.trim() || null,
+        p_product_line: catLine,
       });
       if (error) throw error;
       setCatEditId(null);
@@ -97,6 +139,7 @@ export function InventoryTaxonomyModal({
       const { error } = await supabase.rpc('save_brand', {
         p_id: brandEditId,
         p_name: brandName.trim(),
+        p_product_line: brandLine,
       });
       if (error) throw error;
       setBrandEditId(null);
@@ -127,6 +170,7 @@ export function InventoryTaxonomyModal({
         p_name_en: unitNameEn.trim(),
         p_name_hi: unitNameHi.trim() || unitNameEn.trim(),
         p_allow_decimal: unitDecimal,
+        p_product_line: unitLine,
       });
       if (error) throw error;
       setUnitEditId(null);
@@ -149,6 +193,17 @@ export function InventoryTaxonomyModal({
     }
   };
 
+  const renderLineOptions = () => (
+    <>
+      <option value="all">{language === 'hi' ? 'सभी प्रोडक्ट लाइनें (साझा)' : 'All Lines (Shared)'}</option>
+      {PRODUCT_LINES.map((pl) => (
+        <option key={pl.key} value={pl.key}>
+          {language === 'hi' ? pl.labelHi : pl.labelEn}
+        </option>
+      ))}
+    </>
+  );
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center p-0 md:p-4"
@@ -158,11 +213,21 @@ export function InventoryTaxonomyModal({
         role="dialog"
         aria-modal="true"
         aria-label={t('items.manageTaxonomy')}
-        className="w-full md:max-w-2xl max-h-[90vh] rounded-t-2xl md:rounded-2xl bg-[var(--surface)] border border-[var(--border)] flex flex-col overflow-hidden"
+        className="w-full md:max-w-3xl max-h-[90vh] rounded-t-2xl md:rounded-2xl bg-[var(--surface)] border border-[var(--border)] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold">{t('items.manageTaxonomy')}</h2>
+          <div>
+            <h2 className="text-base font-semibold">{t('items.manageTaxonomy')}</h2>
+            <p className="text-[11px] text-[var(--text-muted)] inline-flex items-center gap-1 mt-0.5">
+              <IconLock size={12} stroke={2} />
+              <span>
+                {language === 'hi'
+                  ? '5 मुख्य प्रोडक्ट लाइनें लॉक हैं; आप किसी भी लाइन के अंदर श्रेणी, ब्रांड और इकाइयाँ जोड़ सकते हैं।'
+                  : 'The 5 product lines are fixed; create categories, brands & units inside any line.'}
+              </span>
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -173,13 +238,42 @@ export function InventoryTaxonomyModal({
           </button>
         </div>
 
+        {/* Product Line Scope Filter */}
+        <div className="px-5 py-2.5 border-b border-[var(--border)] bg-[var(--surface-muted)]/50 flex items-center gap-1.5 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => handleFilterChange('all')}
+            className={`h-8 px-3 rounded-lg border text-xs font-medium whitespace-nowrap ${
+              lineFilter === 'all'
+                ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+            }`}
+          >
+            {t('items.allLines')}
+          </button>
+          {PRODUCT_LINES.map((pl) => (
+            <button
+              key={pl.key}
+              type="button"
+              onClick={() => handleFilterChange(pl.key)}
+              className={`h-8 px-3 rounded-lg border text-xs font-medium whitespace-nowrap ${
+                lineFilter === pl.key
+                  ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                  : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+              }`}
+            >
+              {language === 'hi' ? pl.shortLabelHi : pl.shortLabelEn}
+            </button>
+          ))}
+        </div>
+
         {/* Tabs */}
-        <div className="px-5 pt-3 border-b border-[var(--border)] flex gap-2">
+        <div className="px-5 pt-2 border-b border-[var(--border)] flex gap-2">
           {(
             [
-              ['categories', t('items.categories'), categories.length],
-              ['brands', t('items.brands'), brands.length],
-              ['units', t('items.units'), units.length],
+              ['categories', t('items.categories'), visibleCategories.length],
+              ['brands', t('items.brands'), visibleBrands.length],
+              ['units', t('items.units'), visibleUnits.length],
             ] as const
           ).map(([key, label, count]) => (
             <button
@@ -203,9 +297,9 @@ export function InventoryTaxonomyModal({
               {canManage && (
                 <form
                   onSubmit={handleSaveCategory}
-                  className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end"
+                  className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end"
                 >
-                  <div>
+                  <div className="sm:col-span-4">
                     <label className="block text-xs font-medium mb-1">
                       Category Name
                     </label>
@@ -213,12 +307,24 @@ export function InventoryTaxonomyModal({
                       type="text"
                       value={catName}
                       onChange={(e) => setCatName(e.target.value)}
-                      placeholder="e.g., Dairy & Oils"
+                      placeholder="e.g., GVT Vitrified, Wall Hung WC"
                       className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                       required
                     />
                   </div>
-                  <div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-xs font-medium mb-1">
+                      {t('items.productLine')}
+                    </label>
+                    <select
+                      value={catLine}
+                      onChange={(e) => setCatLine(e.target.value as TaxonomyScopeKey)}
+                      className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                    >
+                      {renderLineOptions()}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-3">
                     <label className="block text-xs font-medium mb-1">
                       Description (optional)
                     </label>
@@ -230,7 +336,7 @@ export function InventoryTaxonomyModal({
                       className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                     />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="sm:col-span-2 flex items-center gap-1.5">
                     <button
                       type="submit"
                       disabled={saving}
@@ -243,7 +349,7 @@ export function InventoryTaxonomyModal({
                       ) : (
                         <IconPlus size={15} stroke={2.5} />
                       )}
-                      <span>{catEditId ? 'Update' : 'Add Category'}</span>
+                      <span>{catEditId ? 'Save' : 'Add'}</span>
                     </button>
                     {catEditId && (
                       <button
@@ -252,10 +358,11 @@ export function InventoryTaxonomyModal({
                           setCatEditId(null);
                           setCatName('');
                           setCatDesc('');
+                          setCatLine(lineFilter);
                         }}
-                        className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs"
+                        className="h-10 px-2 rounded-lg border border-[var(--border)] text-xs"
                       >
-                        {t('common.cancel')}
+                        <IconX size={14} />
                       </button>
                     )}
                   </div>
@@ -263,20 +370,25 @@ export function InventoryTaxonomyModal({
               )}
 
               <div className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-xl overflow-hidden">
-                {categories.length === 0 ? (
+                {visibleCategories.length === 0 ? (
                   <p className="p-4 text-sm text-[var(--text-muted)]">
-                    No categories yet.
+                    No categories in this product line yet.
                   </p>
                 ) : (
-                  categories.map((c) => (
+                  visibleCategories.map((c) => (
                     <div
                       key={c.id}
                       className="px-4 py-3 flex items-center justify-between gap-3 bg-[var(--surface)]"
                     >
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{c.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium truncate">{c.name}</p>
+                          <span className="text-[11px] text-[var(--text-muted)] border border-[var(--border)] rounded px-1.5 py-0.5 shrink-0">
+                            {scopeLabel(c.product_line)}
+                          </span>
+                        </div>
                         {c.description && (
-                          <p className="text-xs text-[var(--text-muted)] truncate">
+                          <p className="text-xs text-[var(--text-muted)] truncate mt-0.5">
                             {c.description}
                           </p>
                         )}
@@ -288,6 +400,7 @@ export function InventoryTaxonomyModal({
                             setCatEditId(c.id);
                             setCatName(c.name);
                             setCatDesc(c.description || '');
+                            setCatLine(c.product_line || 'all');
                           }}
                           className="p-2 rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
                           aria-label={`Edit ${c.name}`}
@@ -307,9 +420,9 @@ export function InventoryTaxonomyModal({
               {canManage && (
                 <form
                   onSubmit={handleSaveBrand}
-                  className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-end"
+                  className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end"
                 >
-                  <div className="flex-1">
+                  <div className="sm:col-span-5">
                     <label className="block text-xs font-medium mb-1">
                       Brand Name
                     </label>
@@ -317,16 +430,28 @@ export function InventoryTaxonomyModal({
                       type="text"
                       value={brandName}
                       onChange={(e) => setBrandName(e.target.value)}
-                      placeholder="e.g., Tata, Amul, Cipla"
+                      placeholder="e.g., Kajaria, Jaquar, Hindware, Roff"
                       className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                       required
                     />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="sm:col-span-4">
+                    <label className="block text-xs font-medium mb-1">
+                      {t('items.productLine')}
+                    </label>
+                    <select
+                      value={brandLine}
+                      onChange={(e) => setBrandLine(e.target.value as TaxonomyScopeKey)}
+                      className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                    >
+                      {renderLineOptions()}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-3 flex items-center gap-1.5">
                     <button
                       type="submit"
                       disabled={saving}
-                      className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center justify-center gap-1"
+                      className="flex-1 h-10 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center justify-center gap-1"
                     >
                       {saving ? (
                         <IconLoader2 size={15} className="animate-spin" />
@@ -343,10 +468,11 @@ export function InventoryTaxonomyModal({
                         onClick={() => {
                           setBrandEditId(null);
                           setBrandName('');
+                          setBrandLine(lineFilter);
                         }}
-                        className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs"
+                        className="h-10 px-2 rounded-lg border border-[var(--border)] text-xs"
                       >
-                        {t('common.cancel')}
+                        <IconX size={14} />
                       </button>
                     )}
                   </div>
@@ -354,23 +480,29 @@ export function InventoryTaxonomyModal({
               )}
 
               <div className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-xl overflow-hidden">
-                {brands.length === 0 ? (
+                {visibleBrands.length === 0 ? (
                   <p className="p-4 text-sm text-[var(--text-muted)]">
-                    No brands yet.
+                    No brands in this product line yet.
                   </p>
                 ) : (
-                  brands.map((b) => (
+                  visibleBrands.map((b) => (
                     <div
                       key={b.id}
                       className="px-4 py-3 flex items-center justify-between gap-3 bg-[var(--surface)]"
                     >
-                      <span className="text-sm font-medium">{b.name}</span>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-medium truncate">{b.name}</span>
+                        <span className="text-[11px] text-[var(--text-muted)] border border-[var(--border)] rounded px-1.5 py-0.5 shrink-0">
+                          {scopeLabel(b.product_line)}
+                        </span>
+                      </div>
                       {canManage && (
                         <button
                           type="button"
                           onClick={() => {
                             setBrandEditId(b.id);
                             setBrandName(b.name);
+                            setBrandLine(b.product_line || 'all');
                           }}
                           className="p-2 rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
                           aria-label={`Edit ${b.name}`}
@@ -392,7 +524,7 @@ export function InventoryTaxonomyModal({
                   onSubmit={handleSaveUnit}
                   className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] space-y-3"
                 >
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                     <div>
                       <label className="block text-xs font-medium mb-1">
                         Short Code
@@ -401,7 +533,7 @@ export function InventoryTaxonomyModal({
                         type="text"
                         value={unitCode}
                         onChange={(e) => setUnitCode(e.target.value.toUpperCase())}
-                        placeholder="e.g., CASE"
+                        placeholder="e.g., PALLET, SLAB"
                         maxLength={12}
                         className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
                         required
@@ -415,7 +547,7 @@ export function InventoryTaxonomyModal({
                         type="text"
                         value={unitNameEn}
                         onChange={(e) => setUnitNameEn(e.target.value)}
-                        placeholder="e.g., Case"
+                        placeholder="e.g., Pallet"
                         className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                         required
                       />
@@ -428,9 +560,21 @@ export function InventoryTaxonomyModal({
                         type="text"
                         value={unitNameHi}
                         onChange={(e) => setUnitNameHi(e.target.value)}
-                        placeholder="जैसे: केस"
+                        placeholder="जैसे: पैलेट"
                         className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        {t('items.productLine')}
+                      </label>
+                      <select
+                        value={unitLine}
+                        onChange={(e) => setUnitLine(e.target.value as TaxonomyScopeKey)}
+                        className="w-full h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                      >
+                        {renderLineOptions()}
+                      </select>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -441,7 +585,7 @@ export function InventoryTaxonomyModal({
                         onChange={(e) => setUnitDecimal(e.target.checked)}
                         className="rounded border-[var(--border)]"
                       />
-                      <span>Allow decimal quantities (e.g., 1.250 kg)</span>
+                      <span>Allow decimal quantities (e.g., 1.250 sq.m)</span>
                     </label>
                     <div className="flex items-center gap-2">
                       {unitEditId && (
@@ -453,6 +597,7 @@ export function InventoryTaxonomyModal({
                             setUnitNameEn('');
                             setUnitNameHi('');
                             setUnitDecimal(false);
+                            setUnitLine(lineFilter);
                           }}
                           className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs"
                         >
@@ -477,17 +622,20 @@ export function InventoryTaxonomyModal({
               )}
 
               <div className="divide-y divide-[var(--border)] border border-[var(--border)] rounded-xl overflow-hidden">
-                {units.map((u) => (
+                {visibleUnits.map((u) => (
                   <div
                     key={u.id}
                     className="px-4 py-2.5 flex items-center justify-between gap-3 bg-[var(--surface)] text-sm"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
                       <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-[var(--surface-muted)] border border-[var(--border)]">
                         {u.code}
                       </span>
                       <span className="truncate">
                         {u.name_en} · {u.name_hi}
+                      </span>
+                      <span className="text-[11px] text-[var(--text-muted)] border border-[var(--border)] rounded px-1.5 py-0.5 shrink-0">
+                        {scopeLabel(u.product_line)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 text-xs text-[var(--text-muted)]">
@@ -501,6 +649,7 @@ export function InventoryTaxonomyModal({
                             setUnitNameEn(u.name_en);
                             setUnitNameHi(u.name_hi);
                             setUnitDecimal(u.allow_decimal);
+                            setUnitLine(u.product_line || 'all');
                           }}
                           className="p-1.5 rounded hover:bg-[var(--surface-muted)]"
                           aria-label={`Edit ${u.code}`}

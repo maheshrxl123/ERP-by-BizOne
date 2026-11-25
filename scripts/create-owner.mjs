@@ -23,10 +23,11 @@ if (!url || !serviceKey) {
   process.exit(1);
 }
 
-const [, , email, password, fullName = 'Business Owner', businessName = 'My Business', pack = 'general_retail'] = process.argv;
+const [, , email, password, fullName = 'Business Owner', businessName = 'My Business'] = process.argv;
+const pack = 'decorbiz';
 
 if (!email || !password) {
-  console.log('Usage: node scripts/create-owner.mjs <email> <password> [ownerName] [businessName] [pack]');
+  console.log('Usage: node scripts/create-owner.mjs <email> <password> [ownerName] [businessName]');
   process.exit(1);
 }
 
@@ -71,12 +72,6 @@ const admin = createClient(url, serviceKey, {
       pack,
     });
     if (bizErr) throw bizErr;
-
-    if (pack === 'medical') {
-      await admin.from('modules_state').upsert({ module_key: 'batch_expiry', enabled: true, updated_by: ownerId });
-    } else if (pack === 'clothing') {
-      await admin.from('modules_state').upsert({ module_key: 'variants', enabled: true, updated_by: ownerId });
-    }
   } catch (err) {
     await admin.auth.admin.deleteUser(ownerId).catch(() => undefined);
     throw err;

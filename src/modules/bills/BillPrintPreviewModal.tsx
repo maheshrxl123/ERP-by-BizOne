@@ -24,7 +24,7 @@ import type {
   BillRecord,
   BillShareLinkRecord,
   PrintLayoutType,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { UpiQrSvg } from './UpiQrSvg';
 
 interface BillPrintPreviewModalProps {
@@ -42,7 +42,7 @@ export function BillPrintPreviewModal({
   onClose,
   onShareLinksChanged,
 }: BillPrintPreviewModalProps) {
-  const { business, profile, staff, signedUrlCache, getSignedUrl, language, showToast, t } = useApp();
+  const { business, profile, staff, signedUrlCache, getSignedUrl, isModuleEnabled, language, showToast, t } = useApp();
 
   const [layout, setLayout] = useState<PrintLayoutType>(
     business?.default_print_layout || bill.business_snapshot?.default_print_layout || 'a4'
@@ -202,7 +202,7 @@ export function BillPrintPreviewModal({
       showUpiQr && upiId
         ? buildUpiDeepLink({
             upiId,
-            businessName: bill.business_snapshot?.name || business?.name || 'BizOne Store',
+            businessName: bill.business_snapshot?.name || business?.name || 'DecorBiz Store',
             amount: qrPayAmount > 0 ? qrPayAmount : undefined,
             note: bill.bill_number || 'Invoice Payment',
           })
@@ -338,7 +338,7 @@ export function BillPrintPreviewModal({
     const sharePart = activeShareLink
       ? `\nView Invoice: ${buildShareUrl(activeShareLink.token)}`
       : '';
-    return `${bill.business_snapshot?.name || business?.name || 'BizOne'}\n${docHeading}: ${bill.bill_number || 'DRAFT'}\nParty: ${bill.party_name}\nDate: ${formatDate(bill.bill_date)}\nTotal: ${formatINR(Number(bill.grand_total))}${
+    return `${bill.business_snapshot?.name || business?.name || 'DecorBiz'}\n${docHeading}: ${bill.bill_number || 'DRAFT'}\nParty: ${bill.party_name}\nDate: ${formatDate(bill.bill_date)}\nTotal: ${formatINR(Number(bill.grand_total))}${
       Number(bill.balance_due) > 0
         ? `\nBalance Due: ${formatINR(Number(bill.balance_due))}`
         : ''
@@ -418,17 +418,19 @@ export function BillPrintPreviewModal({
               </>
             )}
 
-            <a
-              href={`https://wa.me/${(bill.party_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(
-                whatsappText
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
-            >
-              <IconBrandWhatsapp size={15} stroke={2} className="text-[var(--receive-text)]" />
-              <span>WhatsApp</span>
-            </a>
+            {isModuleEnabled('messaging') && (
+              <a
+                href={`https://wa.me/${(bill.party_phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(
+                  whatsappText
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
+              >
+                <IconBrandWhatsapp size={15} stroke={2} className="text-[var(--receive-text)]" />
+                <span>WhatsApp</span>
+              </a>
+            )}
 
             <button
               type="button"
@@ -485,7 +487,7 @@ export function BillPrintPreviewModal({
                 )}
                 <div>
                   <h3 className={isThermal ? 'text-sm font-bold' : 'text-lg font-bold'}>
-                    {bill.business_snapshot?.name || business?.name || 'BizOne'}
+                    {bill.business_snapshot?.name || business?.name || 'DecorBiz'}
                   </h3>
                   {(bill.business_snapshot?.address || business?.address) && (
                     <p className="text-[11px] text-neutral-600 whitespace-pre-line">
@@ -497,8 +499,6 @@ export function BillPrintPreviewModal({
                       `Ph: ${bill.business_snapshot?.phone || business?.phone}`}
                     {(bill.business_snapshot?.gstin || business?.gstin) &&
                       ` · GSTIN: ${bill.business_snapshot?.gstin || business?.gstin}`}
-                    {(bill.business_snapshot?.drug_licence_no || business?.drug_licence_no) &&
-                      ` · DL: ${bill.business_snapshot?.drug_licence_no || business?.drug_licence_no}`}
                   </p>
                 </div>
               </div>
@@ -568,21 +568,12 @@ export function BillPrintPreviewModal({
                     <td className="py-1.5 pr-2">
                       <div className="font-medium">{line.item_name}</div>
                       {(Number(line.discount_pct) > 0 ||
-                        Boolean(line.batch_no) ||
-                        Boolean(line.variant_label) ||
-                        (showMrpSavingsOnInvoice && Boolean(line.mrp)) ||
-                        Boolean((line.line_meta as Record<string, unknown> | undefined)?.serial_no)) && (
+                        (showMrpSavingsOnInvoice && Boolean(line.mrp))) && (
                         <div className="text-[10px] text-neutral-500">
                           {[
                             Number(line.discount_pct) > 0 ? `Disc ${line.discount_pct}%` : '',
-                            line.variant_label || '',
-                            line.batch_no ? `Batch ${line.batch_no}` : '',
-                            line.expiry_date ? `Exp ${formatDate(line.expiry_date)}` : '',
                             showMrpSavingsOnInvoice && line.mrp
                               ? `MRP ${Number(line.mrp).toFixed(2)}`
-                              : '',
-                            (line.line_meta as Record<string, unknown> | undefined)?.serial_no
-                              ? `SN ${String((line.line_meta as Record<string, unknown>).serial_no)}`
                               : '',
                           ]
                             .filter(Boolean)
@@ -796,7 +787,7 @@ export function BillPrintPreviewModal({
                 {showSignatoryOnInvoice && !isThermal && (
                   <div className="mt-6 pt-6 border-t border-neutral-200 text-right text-[11px]">
                     <p className="font-semibold text-neutral-800">
-                      For {bill.business_snapshot?.name || business?.name || 'BizOne'}
+                      For {bill.business_snapshot?.name || business?.name || 'DecorBiz'}
                     </p>
                     <p className="mt-6 text-neutral-500">{signatoryLabel}</p>
                   </div>

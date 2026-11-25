@@ -1,6 +1,7 @@
 import { IconFileText, IconLoader2, IconTrash, IconUpload } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
+import { erpFetch } from '../../core/erpFetch';
 
 export interface UploadedFileItem {
   fileId: string;
@@ -58,12 +59,9 @@ export function FileUpload({
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch('/api/files/upload', {
+      const res = await erpFetch('/api/erp/files/upload', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName: file.name,
           mimeType: file.type,
@@ -94,9 +92,8 @@ export function FileUpload({
 
   const handleDelete = async () => {
     if (value?.fileId && session?.access_token) {
-      await fetch(`/api/files/${encodeURIComponent(value.fileId)}`, {
+      await erpFetch(`/api/erp/files/${encodeURIComponent(value.fileId)}`, session.access_token, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       }).catch(() => undefined);
     }
     onChange(null);

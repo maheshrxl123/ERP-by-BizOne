@@ -1,6 +1,6 @@
-# BizOne ERP (v1.0.0)
+# DecorBiz (v1.0.0)
 
-**BizOne ERP** is a free, open-source, self-hosted, phone-first small-business ERP built with **React 19, Vite 8, TypeScript, Tailwind CSS v4, Express, and Supabase (PostgreSQL + RLS + Storage)**. Purpose-built for Indian shops, traders, workshops, and MSMEs with full bilingual **English & Hindi (`EN` / `HI`)** support.
+**DecorBiz** is a free, open-source, self-hosted, phone-first small-business ERP built with **React 19, Vite 8, TypeScript, Tailwind CSS v4, Express, and Supabase (PostgreSQL + RLS + Storage)**. Purpose-built for Indian shops, traders, workshops, and MSMEs with full bilingual **English & Hindi (`EN` / `HI`)** support.
 
 ---
 
@@ -30,7 +30,7 @@
   - GSTR-1 (B2B, B2C state summary, Credit Notes CSV export), GSTR-3B, GSTR-2B ITC auto-reconciliation, NIC/GSP E-Invoice IRN/QR & E-Way Bill panel, and TDS/TCS registers.
 - **Multi-Location Godowns & Operational Tools**:
   - Multiple godowns/branches, inter-location stock transfers, Physical Stock Count reconciliation, Sales/Purchase Orders, Delivery Challans, CRM Leads, Cheque Register, Recurring Rules, and WhatsApp/SMS/Email templates.
-- **Optional BizOne AI Assistant**:
+- **Optional DecorBiz AI Assistant**:
   - Remains completely off until the Owner configures their own API key in **Settings → Integrations** (Google Gemini, OpenAI, Anthropic Claude, OpenRouter, xAI Grok, or Custom HTTPS).
   - Enforces strict tool allowlisting, role-based profit/cost masking, prompt-injection sanitization, and Owner-only SHA-256 proposal approval tokens.
 
@@ -56,7 +56,7 @@ Fill in `.env`:
 ```dotenv
 VITE_SUPABASE_URL="https://YOUR_PROJECT_REF.supabase.co"
 VITE_SUPABASE_ANON_KEY="YOUR_SUPABASE_ANON_KEY"
-VITE_APP_NAME="BizOne ERP"
+VITE_APP_NAME="DecorBiz"
 
 SUPABASE_SERVICE_ROLE_KEY="YOUR_SUPABASE_SERVICE_ROLE_KEY"
 APP_ENCRYPTION_KEY="YOUR_64_HEX_CHAR_ENCRYPTION_KEY"
@@ -65,15 +65,16 @@ APP_ENCRYPTION_KEY="YOUR_64_HEX_CHAR_ENCRYPTION_KEY"
 ### 3. Apply Database Migrations & Start Server
 ```bash
 npm run check-env
-npm run setup   # Or run supabase/migrations/0001..0013.sql in Supabase SQL Editor
-npm run dev     # Starts Express + Vite on http://localhost:3000
+npm run rehearse  # Verify 0001..0023 SQL dependencies & view compatibility
+npm run setup     # Or run supabase/migrations/0001..0023.sql in Supabase SQL Editor
+npm run dev       # Starts Storefront (/) + ERP (/ERP) + API on http://localhost:3000
 ```
 
 ---
 
 ## Deploying to Vercel via GitHub (Testing, Demo & Production)
 
-BizOne ERP includes built-in Vercel support (`vercel.json` + `api/index.ts`) so deploying from GitHub works out of the box:
+DecorBiz includes built-in Vercel support (`vercel.json` + `api/index.ts`) so deploying from GitHub works out of the box:
 
 1. Push this repository to **GitHub**.
 2. Import the repository at [vercel.com/new](https://vercel.com/new).
@@ -85,17 +86,25 @@ BizOne ERP includes built-in Vercel support (`vercel.json` + `api/index.ts`) so 
 4. Click **Deploy**.
 5. Open your Vercel URL to complete the **First-Time Business Setup** screen, and optionally click **Load Sample Demo Data** in **Settings → Business Profile** to populate sample data for testing and live demos.
 
-For complete step-by-step instructions on environment variables, Supabase setup, Vercel deployment, advanced modules, Google Drive OAuth, andAI setup, read the **[Deployment & Upgrade Guide](docs/deployment-and-upgrade.md)**.
+For complete step-by-step documentation, read:
+- **[Supabase & Vercel Deployment Guide](docs/deployment-supabase-vercel.md)**
+- **[Backup & Restore Guide](docs/backup-and-restore.md)**
+- **[Business Owner Manual](docs/owner-manual.md)**
+- **[Staff Operations Guide](docs/staff-guide.md)**
+- **[Owner Break-Glass Recovery Guide](docs/owner-break-glass-recovery.md)**
+- **[Full Upgrade & Architecture Reference](docs/deployment-and-upgrade.md)**
 
 ---
 
 ## Verification & Testing Commands
 
 ```bash
-npm run check-env   # Verify environment variables & block client secret leaks
-npm run lint        # TypeScript strict check (tsc --noEmit)
-npm run build       # Production Vite + PWA build into dist/
-npm test            # Run automated unit, security, pack & contract test suites
+npm run check-env       # Verify environment variables & block client secret leaks
+npm run lint            # TypeScript strict check (tsc --noEmit)
+npm run build           # Production dual-bundle Vite + PWA build & ERP leak check
+npm run security-audit  # Secrets scan + dependency vulnerability audit
+npm run rehearse        # Fresh-install SQL rehearsal (0001..0023)
+npm test                # Run automated test suites
 ```
 
 ---

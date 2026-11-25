@@ -15,6 +15,7 @@ import {
   IconReceipt,
   IconRefresh,
   IconRestore,
+  IconShare,
   IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -27,12 +28,11 @@ import type {
   OpenObligationRecord,
   PartyAddressRecord,
   PartyBalanceRecord,
-  PartyItemRateRecord,
   PartyLedgerEntryRecord,
   PartySiteRecord,
   PaymentDirection,
   PaymentRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { PartyFormModal } from './PartyFormModal';
 import { PaymentModal } from './PaymentModal';
 import { ReminderModal } from './ReminderModal';
@@ -63,7 +63,6 @@ export function PartyDetailView({
   const [ledgerRows, setLedgerRows] = useState<PartyLedgerEntryRecord[]>([]);
   const [paymentsById, setPaymentsById] = useState<Record<string, PaymentRecord>>({});
   const [sites, setSites] = useState<PartySiteRecord[]>([]);
-  const [rateCards, setRateCards] = useState<PartyItemRateRecord[]>([]);
   const [newSiteOpen, setNewSiteOpen] = useState(false);
   const [siteName, setSiteName] = useState('');
   const [sitePhone, setSitePhone] = useState('');
@@ -117,7 +116,7 @@ export function PartyDetailView({
     setLoading(true);
     setLoadError(null);
     try {
-      const [balRes, addrRes, obRes, ledRes, payRes, sitesRes, ratesRes] = await Promise.all([
+      const [balRes, addrRes, obRes, ledRes, payRes, sitesRes] = await Promise.all([
         supabase
           .from('party_balances')
           .select('*')
@@ -148,19 +147,11 @@ export function PartyDetailView({
               .select('*')
               .eq('party_id', partyId)
           : Promise.resolve({ data: [], error: null }),
-        business?.pack === 'hardware'
-          ? supabase
-              .from('party_sites')
-              .select('*')
-              .eq('party_id', partyId)
-              .order('site_name', { ascending: true })
-          : Promise.resolve({ data: [], error: null }),
-        business?.pack === 'wholesale'
-          ? supabase
-              .from('party_item_rates')
-              .select('*')
-              .eq('party_id', partyId)
-          : Promise.resolve({ data: [], error: null }),
+        supabase
+          .from('party_sites')
+          .select('*')
+          .eq('party_id', partyId)
+          .order('site_name', { ascending: true }),
       ]);
 
       if (balRes.error) throw balRes.error;
@@ -174,7 +165,6 @@ export function PartyDetailView({
       setAddresses((addrRes.data as PartyAddressRecord[] | null) ?? []);
       setObligations((obRes.data as OpenObligationRecord[] | null) ?? []);
       setSites((sitesRes.data as PartySiteRecord[] | null) ?? []);
-      setRateCards((ratesRes.data as PartyItemRateRecord[] | null) ?? []);
 
       // Compute exact chronological running balance
       const rawEntries = (ledRes.data as PartyLedgerEntryRecord[] | null) ?? [];
@@ -197,7 +187,7 @@ export function PartyDetailView({
     } finally {
       setLoading(false);
     }
-  }, [partyId, paymentsEnabled, business?.pack]);
+  }, [partyId, paymentsEnabled]);
 
   useEffect(() => {
     void loadPartyDetail();
@@ -642,7 +632,11 @@ export function PartyDetailView({
             onClick={() => setReminderOpen(true)}
             className="h-11 px-4 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
           >
-            <IconBrandWhatsapp size={18} stroke={2} className="text-[var(--receive-text)]" />
+            {isModuleEnabled('messaging') ? (
+              <IconBrandWhatsapp size={18} stroke={2} className="text-[var(--receive-text)]" />
+            ) : (
+              <IconShare size={18} stroke={2} className="text-[var(--primary-dark)]" />
+            )}
             <span>{t('parties.sendReminder')}</span>
           </button>
         )}
@@ -982,9 +976,8 @@ export function PartyDetailView({
         )}
       </section>
 
-      {/* Hardware Contractor Sites */}
-      {business?.pack === 'hardware' && (
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+      {/* Contractor Project Sites */}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold">
               Contractor Project Sites ({sites.length})
@@ -1050,37 +1043,6 @@ export function PartyDetailView({
             </div>
           )}
         </section>
-      )}
-
-      {/* Wholesale Price Tier & Negotiated Rate Cards */}
-      {business?.pack === 'wholesale' && (
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
-              Wholesale Tier ({party.price_tier || 'standard'}) &amp; Rate Cards
-            </h2>
-            <span className="text-xs text-[var(--text-muted)] tabular-nums">
-              {rateCards.length} custom rate(s)
-            </span>
-          </div>
-          {rateCards.length === 0 ? (
-            <p className="p-4 text-xs text-[var(--text-muted)]">
-              No item-specific negotiated rate cards yet. Configure in Wholesale Workspace.
-            </p>
-          ) : (
-            <div className="divide-y divide-[var(--border)]">
-              {rateCards.map((rc) => (
-                <div key={rc.id} className="px-4 py-2.5 flex items-center justify-between text-xs">
-                  <span className="font-mono">{rc.item_id.slice(0, 8)}</span>
-                  <span className="tabular-nums font-semibold">
-                    {formatINR(Number(rc.custom_rate))} (min {rc.min_qty})
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
 
       {/* Modals */}
       <PartyFormModal

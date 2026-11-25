@@ -15,8 +15,32 @@
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/|assets/|pwa-|apple-touch-icon|icon\\.svg|manifest\\.webmanifest|sw\\.js|workbox-).*)",
+      "source": "/ERP(/(?!assets/).*)?",
+      "destination": "/ERP/erp.html"
+    },
+    {
+      "source": "/((?!api/|ERP/|assets/|pwa-|apple-touch-icon|icon\\.svg|manifest\\.webmanifest|sw\\.js|workbox-).*)",
       "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/ERP",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/ERP/(.*)",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    },
+    {
+      "source": "/erp.html",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
     }
   ]
 }

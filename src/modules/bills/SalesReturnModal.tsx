@@ -4,7 +4,7 @@ import { useApp } from '../../app/AppProvider';
 import { formatINR, todayLocalIso } from '../../core/format';
 import { calculateBillPreview, roundHalfUp } from '../../core/money';
 import { supabase } from '../../core/supabase';
-import type { BillLineRecord, BillRecord, PaymentMode } from '../../types/bizone';
+import type { BillLineRecord, BillRecord, PaymentMode } from '../../types/decorbiz';
 
 interface SalesReturnModalProps {
   open: boolean;

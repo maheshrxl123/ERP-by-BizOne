@@ -1,15 +1,25 @@
-import { IconCheck, IconKey, IconMail, IconUser } from '@tabler/icons-react';
-import { useEffect, useRef, useState } from 'react';
+import {
+  IconCheck,
+  IconCopy,
+  IconKey,
+  IconMail,
+  IconShieldCheck,
+  IconUser,
+} from '@tabler/icons-react';
+import QRCode from 'qrcode';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import {
   ImageUpload,
   type UploadedImageItem,
 } from '../../components/upload/ImageUpload';
+import { erpFetch } from '../../core/erpFetch';
 import { ROLE_LABELS } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 
 export function UserProfileScreen() {
   const {
+    session,
     profile,
     language,
     setLanguage,
@@ -17,6 +27,7 @@ export function UserProfileScreen() {
     setTheme,
     signedUrlCache,
     refreshWorkspace,
+    markTotpEnrolled,
     showToast,
     t,
   } = useApp();
@@ -34,7 +45,87 @@ export function UserProfileScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
 
+  // Two-Factor Authentication (TOTP) state
+  const [totpEnabled, setTotpEnabled] = useState(false);
+  const [loadingTotpStatus, setLoadingTotpStatus] = useState(false);
+  const [settingUpTotp, setSettingUpTotp] = useState(false);
+  const [verifyingTotp, setVerifyingTotp] = useState(false);
+  const [setupSecret, setSetupSecret] = useState<string | null>(null);
+  const [setupQrDataUrl, setSetupQrDataUrl] = useState<string | null>(null);
+  const [setupRecoveryCodes, setSetupRecoveryCodes] = useState<string[]>([]);
+  const [verifyTotpCode, setVerifyTotpCode] = useState('');
+
   const syncedProfileStampRef = useRef<string | null>(null);
+
+  const loadTotpStatus = useCallback(async () => {
+    if (!session?.access_token) return;
+    setLoadingTotpStatus(true);
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-status', session.access_token);
+      if (res.ok) {
+        const data = await res.json();
+        setTotpEnabled(Boolean(data?.enabled));
+      }
+    } catch {
+      // Non-blocking
+    } finally {
+      setLoadingTotpStatus(false);
+    }
+  }, [session?.access_token]);
+
+  useEffect(() => {
+    void loadTotpStatus();
+  }, [loadTotpStatus]);
+
+  const handleStartTotpSetup = async () => {
+    if (!session?.access_token) return;
+    setSettingUpTotp(true);
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-setup', session.access_token, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Unable to start 2FA setup.');
+      setSetupSecret(String(data.secret || ''));
+      setSetupRecoveryCodes(Array.isArray(data.recoveryCodes) ? data.recoveryCodes : []);
+      if (typeof data.otpauthUrl === 'string') {
+        const qrUrl = await QRCode.toDataURL(data.otpauthUrl, { width: 220, margin: 1 });
+        setSetupQrDataUrl(qrUrl);
+      } else {
+        setSetupQrDataUrl(null);
+      }
+      setVerifyTotpCode('');
+      setTotpEnabled(false);
+      showToast('Scan QR code and verify with a 6-digit code to activate 2FA.', 'info');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to initialize 2FA.', 'error');
+    } finally {
+      setSettingUpTotp(false);
+    }
+  };
+
+  const handleVerifyTotpSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session?.access_token || !verifyTotpCode.trim()) return;
+    setVerifyingTotp(true);
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-verify', session.access_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: verifyTotpCode.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Verification failed.');
+      markTotpEnrolled(typeof data?.totpProof === 'string' ? data.totpProof : null);
+      setTotpEnabled(true);
+      setVerifyTotpCode('');
+      showToast(data?.message || 'Two-factor authentication enabled.', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Invalid authenticator code.', 'error');
+    } finally {
+      setVerifyingTotp(false);
+    }
+  };
 
   // Sync text inputs only when profile record actually changes on the server
   useEffect(() => {
@@ -430,6 +521,183 @@ export function UserProfileScreen() {
           </button>
         </div>
       </form>
+
+      {/* Two-Factor Authentication (TOTP 2FA) */}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-base font-semibold">
+            <IconShieldCheck size={18} stroke={2} className="text-[var(--primary-dark)]" />
+            <span>Two-Factor Authentication (2FA)</span>
+          </div>
+          <span
+            className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${
+              totpEnabled
+                ? 'border-[var(--receive)] text-[var(--receive-text)] bg-[var(--receive-soft)]'
+                : 'border-[var(--border)] text-[var(--text-muted)] bg-[var(--surface-muted)]'
+            }`}
+          >
+            {loadingTotpStatus ? 'Checking...' : totpEnabled ? 'Enabled' : 'Not Enabled'}
+          </span>
+        </div>
+
+        <p className="text-xs text-[var(--text-muted)]">
+          Protect ERP access with an authenticator app (Google Authenticator, Authy, 1Password). One-time recovery codes are shown once during enrollment. If locked out, the Business Owner can reset 2FA from Settings → Users.
+        </p>
+
+        {!setupSecret && (
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={settingUpTotp}
+              onClick={() => void handleStartTotpSetup()}
+              className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold hover:opacity-95 disabled:opacity-50"
+            >
+              {settingUpTotp
+                ? 'Generating Secret...'
+                : totpEnabled
+                  ? 'Re-enroll / Rotate 2FA Secret'
+                  : 'Enable 2FA Authenticator'}
+            </button>
+          </div>
+        )}
+
+        {setupSecret && (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)]/50 p-4 sm:p-5 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
+              <div className="space-y-3">
+                <p className="text-xs font-semibold">
+                  1. Scan QR Code in your Authenticator App
+                </p>
+                {setupQrDataUrl && (
+                  <img
+                    src={setupQrDataUrl}
+                    alt="DecorBiz 2FA QR Code"
+                    className="w-44 h-44 rounded-lg border border-[var(--border)] bg-white p-2"
+                  />
+                )}
+                <div className="space-y-1">
+                  <div className="text-[11px] text-[var(--text-muted)]">
+                    Manual Base32 Secret Key:
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <code className="px-2.5 py-1.5 rounded bg-[var(--surface)] border border-[var(--border)] text-xs font-mono break-all">
+                      {setupSecret}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(setupSecret);
+                        showToast('2FA secret copied.', 'success');
+                      }}
+                      className="h-8 px-2.5 rounded border border-[var(--border)] bg-[var(--surface)] text-xs inline-flex items-center gap-1"
+                    >
+                      <IconCopy size={13} stroke={2} />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold">
+                    2. Save One-Time Recovery Codes
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(setupRecoveryCodes.join('\n'));
+                      showToast('Recovery codes copied.', 'success');
+                    }}
+                    className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                  >
+                    <IconCopy size={13} stroke={2} />
+                    <span>Copy All</span>
+                  </button>
+                </div>
+                <p className="text-[11px] text-[var(--text-muted)]">
+                  Store these codes offline safely. They are hashed server-side and cannot be retrieved again after closing this panel.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {setupRecoveryCodes.map((code) => (
+                    <code
+                      key={code}
+                      className="px-2.5 py-1.5 rounded bg-[var(--surface)] border border-[var(--border)] text-xs font-mono text-center tracking-wider"
+                    >
+                      {code}
+                    </code>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {!totpEnabled ? (
+              <form
+                onSubmit={handleVerifyTotpSetup}
+                className="pt-4 border-t border-[var(--border)] flex flex-col sm:flex-row gap-3 sm:items-end"
+              >
+                <div className="flex-1">
+                  <label
+                    htmlFor="profile-totp-code"
+                    className="block text-xs font-medium mb-1"
+                  >
+                    3. Enter 6-digit code from Authenticator App to activate
+                  </label>
+                  <input
+                    id="profile-totp-code"
+                    type="text"
+                    required
+                    maxLength={6}
+                    value={verifyTotpCode}
+                    onChange={(e) => setVerifyTotpCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="000000"
+                    className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={verifyingTotp || verifyTotpCode.length !== 6}
+                    className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold disabled:opacity-50"
+                  >
+                    {verifyingTotp ? 'Verifying...' : 'Verify & Enable 2FA'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSetupSecret(null);
+                      setSetupQrDataUrl(null);
+                      setSetupRecoveryCodes([]);
+                      setVerifyTotpCode('');
+                    }}
+                    className="h-11 px-4 rounded-lg border border-[var(--border)] text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="pt-3 border-t border-[var(--border)] flex items-center justify-between gap-3 text-xs text-[var(--receive-text)]">
+                <span className="inline-flex items-center gap-1.5 font-medium">
+                  <IconCheck size={15} stroke={2.5} />
+                  2FA is now active on your account. Make sure you have saved the recovery codes above before closing.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSetupSecret(null);
+                    setSetupQrDataUrl(null);
+                    setSetupRecoveryCodes([]);
+                  }}
+                  className="h-9 px-3 rounded-lg border border-[var(--border)] text-[var(--text)] font-medium shrink-0"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

@@ -22,6 +22,12 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF;
+const hasLiveSupabase =
+  Boolean(SUPABASE_URL?.startsWith('https://')) &&
+  !SUPABASE_URL?.includes('YOUR_PROJECT_REF') &&
+  (SUPABASE_ANON_KEY?.length ?? 0) > 20 &&
+  (SERVICE_ROLE_KEY?.length ?? 0) > 20 &&
+  Boolean(ACCESS_TOKEN && PROJECT_REF);
 
 async function runAdminSql(query) {
   const res = await fetch(
@@ -91,7 +97,10 @@ test('Phase P2 unit checks: Hindi & English i18n parity and PRD glossary terms',
   assert.ok(hi.parties.khataLedger.includes('खाता'));
 });
 
-test('Phase P2 E2E: Parties, Khata, Allocations, Reversals, Statements, Concurrency, and RBAC', async () => {
+test(
+  'Phase P2 E2E: Parties, Khata, Allocations, Reversals, Statements, Concurrency, and RBAC',
+  { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
+  async () => {
   assert.ok(
     SUPABASE_URL && SUPABASE_ANON_KEY && SERVICE_ROLE_KEY,
     'Supabase environment variables must be configured'
@@ -106,7 +115,7 @@ test('Phase P2 E2E: Parties, Khata, Allocations, Reversals, Statements, Concurre
   });
 
   const stamp = Date.now();
-  const password = 'BizOneTest!2026';
+  const password = 'DecorBizTest!2026';
   const createdUserIds = [];
   const createdPartyIds = [];
   let createdWorkspaceTemp = false;
@@ -155,8 +164,8 @@ test('Phase P2 E2E: Parties, Khata, Allocations, Reversals, Statements, Concurre
       createdWorkspaceTemp = true;
       await supabaseAdmin.from('business').insert({
         id: 1,
-        name: 'P2 Test Kirana',
-        pack: 'kirana',
+        name: 'P2 Test DecorBiz',
+        pack: 'decorbiz',
         gst_registered: false,
         fy_start_month: 4,
       });

@@ -4,6 +4,7 @@ import {
   IconBell,
   IconCheck,
   IconChecks,
+  IconMail,
   IconPackage,
   IconRefresh,
   IconShieldCheck,
@@ -12,8 +13,9 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDateTime } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
-import type { NotificationRecord } from '../../types/bizone';
+import type { NotificationRecord } from '../../types/decorbiz';
 import type { AppDestination, NavigationAction } from '../dashboard/HomeScreen';
 import type { SettingsTabKey } from '../settings/SettingsScreen';
 
@@ -32,12 +34,14 @@ interface NotificationsScreenProps {
 type NotificationFilter = 'all' | 'unread' | 'warnings';
 
 export function NotificationsScreen({ onNavigate }: NotificationsScreenProps) {
-  const { language, showToast } = useApp();
+  const { session, isModuleEnabled, language, showToast } = useApp();
+  const emailNotificationsEnabled = isModuleEnabled('email_notifications');
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<NotificationFilter>('all');
   const [markingAll, setMarkingAll] = useState(false);
+  const [sendingDigest, setSendingDigest] = useState(false);
 
   const loadNotifications = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -99,6 +103,42 @@ export function NotificationsScreen({ onNavigate }: NotificationsScreenProps) {
       // Non-blocking fallback
     } finally {
       if (notificationId === null) setMarkingAll(false);
+    }
+  };
+
+  const handleSendEmailDigest = async () => {
+    if (!session?.access_token) return;
+    setSendingDigest(true);
+    try {
+      const res = await erpFetch('/api/erp/email-notifications/send-digest', session.access_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          unreadCount,
+          warningCount,
+        }),
+      });
+      const json = (await res.json()) as {
+        message?: string;
+        warning?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error || 'Unable to trigger email digest.');
+      showToast(
+        json.warning ||
+          json.message ||
+          (language === 'hi'
+            ? 'ईमेल अलर्ट सारांश कतार में जोड़ा गया।'
+            : 'Email alert digest processed.'),
+        json.warning ? 'info' : 'success'
+      );
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to send email digest.',
+        'error'
+      );
+    } finally {
+      setSendingDigest(false);
     }
   };
 
@@ -172,6 +212,26 @@ export function NotificationsScreen({ onNavigate }: NotificationsScreenProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {emailNotificationsEnabled && (
+            <button
+              type="button"
+              disabled={sendingDigest}
+              onClick={() => void handleSendEmailDigest()}
+              className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <IconMail size={16} stroke={2} />
+              <span>
+                {sendingDigest
+                  ? language === 'hi'
+                    ? 'भेज रहे हैं...'
+                    : 'Sending...'
+                  : language === 'hi'
+                    ? 'ईमेल डाइजेस्ट'
+                    : 'Email Digest'}
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             disabled={loading}

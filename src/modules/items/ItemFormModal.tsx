@@ -20,6 +20,21 @@ import {
 import { formatINR } from '../../core/format';
 import { convertRateTaxMode, roundHalfUp } from '../../core/money';
 import { hasCapability } from '../../core/permissions';
+import {
+  PRODUCT_LINES,
+  filterTaxonomyByProductLine,
+  getProductLineMeta,
+  isValidProductLine,
+  type ProductLineKey,
+} from '../../core/productLines';
+import {
+  createEmptySpecs,
+  normalizeSpecsFromRecord,
+  SQFT_PER_SQM,
+  validateProductSpecs,
+  type AnySpecsMap,
+} from '../../core/productSpecs';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
 import { convertToBaseQty } from '../../core/units';
 import type {
@@ -29,16 +44,16 @@ import type {
   ItemImageRecord,
   ItemType,
   ItemUnitRecord,
-  PriceTier,
   UnitConversionRecord,
-  WholesaleSlab,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
+import { ProductSpecFields } from './ProductSpecFields';
 
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
 
 interface ItemFormModalProps {
   open: boolean;
   item?: ItemCatalogRecord | null;
+  initialProductLine?: ProductLineKey;
   categories: ItemCategoryRecord[];
   brands: BrandRecord[];
   units: ItemUnitRecord[];
@@ -58,6 +73,7 @@ interface ConversionDraft {
 export function ItemFormModal({
   open,
   item,
+  initialProductLine = 'tiles_slabs',
   categories,
   brands,
   units,
@@ -67,19 +83,28 @@ export function ItemFormModal({
   onSaved,
   onTaxonomyUpdated,
 }: ItemFormModalProps) {
-  const { business, profile, session, signedUrlCache, language, showToast, t } =
+  const { business, profile, session, signedUrlCache, isModuleEnabled, language, showToast, t } =
     useApp();
 
   const canViewCost = hasCapability(profile?.role, 'view_profit');
+  const partiesEnabled = isModuleEnabled('parties');
   const uploadedDuringSessionRef = useRef<Set<string>>(new Set());
 
   const [name, setName] = useState('');
   const [itemType, setItemType] = useState<ItemType>('goods');
+  const [productLine, setProductLine] = useState<ProductLineKey>(initialProductLine);
   const [sku, setSku] = useState('');
   const [barcode, setBarcode] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [brandId, setBrandId] = useState('');
   const [baseUnitId, setBaseUnitId] = useState('');
+
+  const [supplierId, setSupplierId] = useState('');
+  const [suppliersList, setSuppliersList] = useState<Array<{ id: string; name: string }>>([]);
+  const [countryOfOrigin, setCountryOfOrigin] = useState('');
+  const [warrantyMonths, setWarrantyMonths] = useState('');
+  const [videoUrl, setVideoUrl] = useState('');
+  const [description, setDescription] = useState('');
 
   const [sellingPrice, setSellingPrice] = useState('');
   const [mrp, setMrp] = useState('');
@@ -94,12 +119,11 @@ export function ItemFormModal({
   const [allowNegativeStock, setAllowNegativeStock] = useState(false);
   const [notes, setNotes] = useState('');
   const [packMeta, setPackMeta] = useState<Record<string, string>>({});
-  const [wholesaleSlabs, setWholesaleSlabs] = useState<
-    Array<{ localId: string; min_qty: string; tier: PriceTier; rate: string }>
-  >([]);
 
   const [conversions, setConversions] = useState<ConversionDraft[]>([]);
   const [images, setImages] = useState<UploadedImageItem[]>([]);
+  const [specs, setSpecs] = useState<AnySpecsMap>(() => createEmptySpecs(initialProductLine));
+  const [specErrors, setSpecErrors] = useState<Record<string, string>>({});
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [inlineAddType, setInlineAddType] = useState<'category' | 'brand' | null>(
@@ -115,6 +139,33 @@ export function ItemFormModal({
     () => units.find((u) => u.code === 'PCS')?.id || units[0]?.id || '',
     [units]
   );
+
+  const scopedCategories = useMemo(() => {
+    const filtered = filterTaxonomyByProductLine(categories, productLine);
+    if (categoryId && !filtered.some((c) => c.id === categoryId)) {
+      const curr = categories.find((c) => c.id === categoryId);
+      if (curr) return [curr, ...filtered];
+    }
+    return filtered;
+  }, [categories, productLine, categoryId]);
+
+  const scopedBrands = useMemo(() => {
+    const filtered = filterTaxonomyByProductLine(brands, productLine);
+    if (brandId && !filtered.some((b) => b.id === brandId)) {
+      const curr = brands.find((b) => b.id === brandId);
+      if (curr) return [curr, ...filtered];
+    }
+    return filtered;
+  }, [brands, productLine, brandId]);
+
+  const scopedUnits = useMemo(() => {
+    const filtered = filterTaxonomyByProductLine(units, productLine);
+    if (baseUnitId && !filtered.some((u) => u.id === baseUnitId)) {
+      const curr = units.find((u) => u.id === baseUnitId);
+      if (curr) return [curr, ...filtered];
+    }
+    return filtered;
+  }, [units, productLine, baseUnitId]);
 
   const initStampRef = useRef<string | null>(null);
 
@@ -134,13 +185,26 @@ export function ItemFormModal({
     setInlineAddName('');
 
     if (item) {
+      const resolvedLine = isValidProductLine(item.product_line)
+        ? item.product_line
+        : 'other_general';
       setName(item.name);
       setItemType(item.item_type === 'service' ? 'service' : 'goods');
+      setProductLine(resolvedLine);
       setSku(item.sku || '');
       setBarcode(item.barcode || '');
       setCategoryId(item.category_id || '');
       setBrandId(item.brand_id || '');
       setBaseUnitId(item.base_unit_id || defaultPcsId);
+      setSupplierId(item.supplier_id || '');
+      setCountryOfOrigin(item.country_of_origin || '');
+      setWarrantyMonths(
+        item.warranty_months !== null && item.warranty_months !== undefined
+          ? String(item.warranty_months)
+          : ''
+      );
+      setVideoUrl(item.video_url || '');
+      setDescription(item.description || '');
       setSellingPrice(String(item.selling_price ?? 0));
       setMrp(item.mrp !== null && item.mrp !== undefined ? String(item.mrp) : '');
       setPurchasePrice(
@@ -164,16 +228,13 @@ export function ItemFormModal({
         }
       }
       setPackMeta(pm);
-
-      const slabsRaw = Array.isArray(item.wholesale_slabs) ? item.wholesale_slabs : [];
-      setWholesaleSlabs(
-        slabsRaw.map((s) => ({
-          localId: crypto.randomUUID(),
-          min_qty: String(s.min_qty ?? 1),
-          tier: (s.tier || 'standard') as PriceTier,
-          rate: String(s.rate ?? 0),
-        }))
+      setSpecs(
+        normalizeSpecsFromRecord(resolvedLine, item.specs, {
+          itemName: item.name,
+          unitCode: item.base_unit_code,
+        })
       );
+      setSpecErrors({});
 
       setConversions(
         initialConversions.map((c) => ({
@@ -192,49 +253,88 @@ export function ItemFormModal({
             isPrimary: img.is_primary,
           }))
       );
-      setShowAdvanced(Boolean(item.allow_negative_stock || item.notes || Object.keys(pm).length > 0));
+      setShowAdvanced(
+        Boolean(
+          item.allow_negative_stock ||
+            item.notes ||
+            item.supplier_id ||
+            item.country_of_origin ||
+            item.warranty_months !== null ||
+            item.video_url ||
+            item.description ||
+            Object.keys(pm).length > 0
+        )
+      );
     } else {
+      const lineMeta = getProductLineMeta(initialProductLine);
+      const suggestedUnitObj =
+        units.find((u) => u.code === lineMeta.defaultUnitCode) || units.find((u) => u.id === defaultPcsId);
+      const suggestedUnitId = suggestedUnitObj?.id || defaultPcsId;
       setName('');
-      setItemType(business?.pack === 'service' ? 'service' : 'goods');
+      setItemType('goods');
+      setProductLine(lineMeta.key);
       setSku('');
       setBarcode('');
       setCategoryId('');
       setBrandId('');
-      setBaseUnitId(defaultPcsId);
+      setBaseUnitId(suggestedUnitId);
+      setSupplierId('');
+      setCountryOfOrigin('India');
+      setWarrantyMonths('');
+      setVideoUrl('');
+      setDescription('');
       setSellingPrice('');
       setMrp('');
       setPurchasePrice('');
-      setGstRate('0');
-      setHsnCode('');
+      setGstRate(String(lineMeta.defaultGst));
+      setHsnCode(lineMeta.defaultHsn);
       setTaxInclusive(business?.tax_mode === 'inclusive');
       setOpeningStock('0');
-      setOpeningUnitId(defaultPcsId);
+      setOpeningUnitId(suggestedUnitId);
       setLowStockAlert('0');
       setAllowNegativeStock(false);
       setNotes('');
       setPackMeta({});
-      setWholesaleSlabs([]);
+      setSpecs(
+        createEmptySpecs(lineMeta.key, {
+          itemName: '',
+          unitCode: suggestedUnitObj?.code || lineMeta.defaultUnitCode,
+        })
+      );
+      setSpecErrors({});
       setConversions([]);
       setImages([]);
-      setShowAdvanced(
-        Boolean(
-          business?.pack &&
-            ['medical', 'hardware', 'kirana', 'clothing', 'service'].includes(
-              business.pack
-            )
-        )
-      );
+      setShowAdvanced(true);
     }
   }, [
     open,
     item,
+    initialProductLine,
+    units,
     defaultPcsId,
     business?.tax_mode,
-    business?.pack,
     initialConversions,
     initialImages,
     signedUrlCache,
   ]);
+
+  useEffect(() => {
+    if (!open || !partiesEnabled) return;
+    let active = true;
+    supabase
+      .from('parties')
+      .select('id, name, party_type')
+      .eq('is_active', true)
+      .in('party_type', ['supplier', 'both'])
+      .order('name')
+      .then(({ data }) => {
+        if (!active || !data) return;
+        setSuppliersList(data.map((r) => ({ id: r.id, name: r.name })));
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, partiesEnabled]);
 
   useEffect(() => {
     if (!open) return;
@@ -256,11 +356,10 @@ export function ItemFormModal({
   const handleCancel = async () => {
     const drafts = Array.from(uploadedDuringSessionRef.current);
     if (drafts.length > 0 && session?.access_token) {
-      await fetch('/api/files/cleanup-orphans', {
+      await erpFetch('/api/erp/files/cleanup-orphans', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ fileIds: drafts }),
       }).catch(() => undefined);
@@ -306,11 +405,10 @@ export function ItemFormModal({
 
     setAiFilling(true);
     try {
-      const res = await fetch('/api/ai/suggest-item', {
+      const res = await erpFetch('/api/erp/ai/suggest-item', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           name: name.trim(),
@@ -369,13 +467,16 @@ export function ItemFormModal({
       let taxonomyChanged = false;
       if (s.category_name?.trim()) {
         const existingCat = categories.find(
-          (c) => c.name.trim().toLowerCase() === s.category_name!.trim().toLowerCase()
+          (c) =>
+            c.name.trim().toLowerCase() === s.category_name!.trim().toLowerCase() &&
+            (!c.product_line || c.product_line === 'all' || c.product_line === productLine)
         );
         if (existingCat) {
           setCategoryId(existingCat.id);
         } else {
           const { data: catData } = await supabase.rpc('save_item_category', {
             p_name: s.category_name.trim(),
+            p_product_line: productLine,
           });
           if (catData?.id) {
             setCategoryId(catData.id);
@@ -385,13 +486,16 @@ export function ItemFormModal({
       }
       if (s.brand_name?.trim()) {
         const existingBrand = brands.find(
-          (b) => b.name.trim().toLowerCase() === s.brand_name!.trim().toLowerCase()
+          (b) =>
+            b.name.trim().toLowerCase() === s.brand_name!.trim().toLowerCase() &&
+            (!b.product_line || b.product_line === 'all' || b.product_line === productLine)
         );
         if (existingBrand) {
           setBrandId(existingBrand.id);
         } else {
           const { data: brandData } = await supabase.rpc('save_brand', {
             p_name: s.brand_name.trim(),
+            p_product_line: productLine,
           });
           if (brandData?.id) {
             setBrandId(brandData.id);
@@ -410,6 +514,26 @@ export function ItemFormModal({
     }
   };
 
+  const handleProductLineChange = (nextLine: ProductLineKey) => {
+    setProductLine(nextLine);
+    let nextUnitCode = units.find((u) => u.id === baseUnitId)?.code || 'PCS';
+    if (!item) {
+      const meta = getProductLineMeta(nextLine);
+      const nextUnitObj = units.find((u) => u.code === meta.defaultUnitCode);
+      if (nextUnitObj) {
+        setBaseUnitId(nextUnitObj.id);
+        setOpeningUnitId(nextUnitObj.id);
+        nextUnitCode = nextUnitObj.code;
+      }
+      setHsnCode(meta.defaultHsn);
+      setGstRate(String(meta.defaultGst));
+    }
+    setCategoryId('');
+    setBrandId('');
+    setSpecs(createEmptySpecs(nextLine, { itemName: name, unitCode: nextUnitCode }));
+    setSpecErrors({});
+  };
+
   const handleInlineCreateTaxonomy = async () => {
     const clean = inlineAddName.trim();
     if (!clean || !inlineAddType) return;
@@ -417,12 +541,14 @@ export function ItemFormModal({
       if (inlineAddType === 'category') {
         const { data, error: rpcErr } = await supabase.rpc('save_item_category', {
           p_name: clean,
+          p_product_line: productLine,
         });
         if (rpcErr) throw rpcErr;
         if (data?.id) setCategoryId(data.id);
       } else {
         const { data, error: rpcErr } = await supabase.rpc('save_brand', {
           p_name: clean,
+          p_product_line: productLine,
         });
         if (rpcErr) throw rpcErr;
         if (data?.id) setBrandId(data.id);
@@ -436,6 +562,63 @@ export function ItemFormModal({
         'error'
       );
     }
+  };
+
+  const buildTileAutoConversions = (
+    targetBaseUnitId: string,
+    specSource: AnySpecsMap
+  ): ConversionDraft[] => {
+    if (productLine !== 'tiles_slabs') return [];
+    const baseU = units.find((u) => u.id === targetBaseUnitId);
+    const baseCode = baseU?.code.toUpperCase();
+    if (!baseCode || !['BOX', 'PCS', 'SQFT', 'SQM'].includes(baseCode)) return [];
+
+    const pcsPerBox = Number(specSource.pieces_per_box || 0);
+    const sqftPerBox = Number(specSource.sqft_per_box || 0);
+    const sqmRaw = Number(specSource.sqm_per_box || 0);
+    const sqmPerBox =
+      sqmRaw > 0
+        ? sqmRaw
+        : sqftPerBox > 0
+          ? Number((sqftPerBox / SQFT_PER_SQM).toFixed(4))
+          : 0;
+
+    const perBox: Record<string, number> = { BOX: 1 };
+    if (Number.isFinite(pcsPerBox) && pcsPerBox > 0) perBox.PCS = pcsPerBox;
+    if (Number.isFinite(sqftPerBox) && sqftPerBox > 0) perBox.SQFT = sqftPerBox;
+    if (Number.isFinite(sqmPerBox) && sqmPerBox > 0) perBox.SQM = sqmPerBox;
+
+    const basePerBox = perBox[baseCode];
+    if (!basePerBox || basePerBox <= 0) return [];
+
+    const result: ConversionDraft[] = [];
+    for (const code of ['BOX', 'PCS', 'SQFT', 'SQM']) {
+      if (code === baseCode) continue;
+      const altUnit = units.find((u) => u.code.toUpperCase() === code);
+      const altPerBox = perBox[code];
+      if (!altUnit || !altPerBox || altPerBox <= 0) continue;
+      const factor = Math.round((basePerBox / altPerBox) * 1000000) / 1000000;
+      if (factor <= 0) continue;
+      result.push({
+        localId: crypto.randomUUID(),
+        alternate_unit_id: altUnit.id,
+        conversion_factor: String(factor),
+      });
+    }
+    return result;
+  };
+
+  const handleAutoFillTileConversions = () => {
+    const computed = buildTileAutoConversions(baseUnitId, specs);
+    if (computed.length === 0) {
+      showToast(
+        'Enter Pieces/Box and Sq.Ft/Box in Tile specs first to auto-compute conversions.',
+        'info'
+      );
+      return;
+    }
+    setConversions(computed);
+    showToast('Auto-filled tile BOX / PCS / SQFT / SQM conversions.', 'success');
   };
 
   const handleAddConversion = () => {
@@ -495,11 +678,25 @@ export function ItemFormModal({
       return;
     }
 
+    const specCheck = validateProductSpecs(productLine, specs);
+    if (!specCheck.valid) {
+      setSpecErrors(specCheck.errors);
+      const firstErr = Object.values(specCheck.errors)[0] || t('items.requiredSpecsMissing');
+      setError(firstErr);
+      return;
+    }
+    setSpecErrors({});
+
+    const sourceConversions =
+      conversions.length === 0 && productLine === 'tiles_slabs'
+        ? buildTileAutoConversions(baseUnitId, specCheck.cleaned)
+        : conversions;
+
     const cleanConvs: Array<{
       alternate_unit_id: string;
       conversion_factor: number;
     }> = [];
-    for (const c of conversions) {
+    for (const c of sourceConversions) {
       if (!c.alternate_unit_id) continue;
       if (c.alternate_unit_id === baseUnitId) {
         setError('Alternate unit cannot be identical to base unit.');
@@ -547,15 +744,14 @@ export function ItemFormModal({
       if (v.trim()) cleanPackMeta[k] = v.trim();
     }
 
-    const cleanSlabs: WholesaleSlab[] = [];
-    for (const s of wholesaleSlabs) {
-      const mq = Number(s.min_qty);
-      const rt = Number(s.rate);
-      if (!Number.isFinite(mq) || mq <= 0 || !Number.isFinite(rt) || rt < 0) {
-        setError('Wholesale slab min qty must be > 0 and rate >= 0.');
-        return;
-      }
-      cleanSlabs.push({ min_qty: mq, tier: s.tier, rate: rt });
+    const warrantyVal = warrantyMonths.trim() ? Number(warrantyMonths) : null;
+    if (warrantyVal !== null && (!Number.isInteger(warrantyVal) || warrantyVal < 0)) {
+      setError('Warranty months must be a whole number 0 or greater.');
+      return;
+    }
+
+    if (productLine === 'tiles_slabs' && specCheck.cleaned.sqft_per_box) {
+      cleanPackMeta.sqft_per_box = String(specCheck.cleaned.sqft_per_box);
     }
 
     const isService = itemType === 'service';
@@ -586,7 +782,13 @@ export function ItemFormModal({
         p_images: cleanImages,
         p_expected_version: item?.version ?? null,
         p_item_type: itemType,
-        p_wholesale_slabs: cleanSlabs,
+        p_product_line: productLine,
+        p_supplier_id: supplierId || null,
+        p_country_of_origin: countryOfOrigin.trim() || null,
+        p_warranty_months: warrantyVal,
+        p_video_url: videoUrl.trim() || null,
+        p_description: description.trim() || null,
+        p_specs: specCheck.cleaned,
       });
 
       if (rpcErr) throw rpcErr;
@@ -603,9 +805,8 @@ export function ItemFormModal({
       if (toDelete.length > 0 && session?.access_token) {
         await Promise.all(
           toDelete.map((fid) =>
-            fetch(`/api/files/${encodeURIComponent(fid)}`, {
+            erpFetch(`/api/erp/files/${encodeURIComponent(fid)}`, session.access_token, {
               method: 'DELETE',
-              headers: { Authorization: `Bearer ${session.access_token}` },
             }).catch(() => undefined)
           )
         );
@@ -705,31 +906,65 @@ export function ItemFormModal({
               )}
             </div>
 
+            {/* Product Line (Fixed 5 Lines) */}
+            <div className="sm:col-span-2">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="text-xs font-semibold">
+                  {t('items.productLine')} *
+                </label>
+                <span className="text-[11px] text-[var(--text-muted)]">
+                  Fixed product line (cannot add or rename lines)
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                {PRODUCT_LINES.map((pl) => (
+                  <button
+                    key={pl.key}
+                    type="button"
+                    onClick={() => handleProductLineChange(pl.key)}
+                    className={`px-2.5 py-2 rounded-lg border text-xs font-medium text-left transition-colors ${
+                      productLine === pl.key
+                        ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                        : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                    }`}
+                  >
+                    {language === 'hi' ? pl.shortLabelHi : pl.shortLabelEn}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="sm:col-span-2">
               <div className="flex items-center justify-between gap-2 mb-1">
                 <label className="block text-xs font-medium">
                   {t('items.name')} *
                 </label>
-                <button
-                  type="button"
-                  disabled={aiFilling}
-                  onClick={() => void handleAiAutoFill()}
-                  className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline disabled:opacity-50"
-                  title="Auto-fill HSN code, GST slab, category, brand & tax mode with AI"
-                >
-                  {aiFilling ? (
-                    <IconLoader2 size={12} className="animate-spin" />
-                  ) : (
-                    <IconSparkles size={12} stroke={2} />
-                  )}
-                  <span>{aiFilling ? 'Filling...' : 'AI Auto-Fill HSN & GST'}</span>
-                </button>
+                {isModuleEnabled('ai') && (
+                  <button
+                    type="button"
+                    disabled={aiFilling}
+                    onClick={() => void handleAiAutoFill()}
+                    className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline disabled:opacity-50"
+                    title="Auto-fill HSN code, GST slab, category, brand & tax mode with AI"
+                  >
+                    {aiFilling ? (
+                      <IconLoader2 size={12} className="animate-spin" />
+                    ) : (
+                      <IconSparkles size={12} stroke={2} />
+                    )}
+                    <span>{aiFilling ? 'Filling...' : 'AI Auto-Fill HSN & GST'}</span>
+                  </button>
+                )}
               </div>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={itemType === 'service' ? 'e.g., AC Servicing & Gas Refill' : 'e.g., Fortune Mustard Oil 1L'}
+                placeholder={
+                  itemType === 'service'
+                    ? 'e.g., Tile Installation Service'
+                    : 'e.g., Kajaria Glossy GVT 600x1200mm Ivory'
+                }
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                 required
               />
@@ -755,7 +990,7 @@ export function ItemFormModal({
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
               >
                 <option value="">Uncategorized</option>
-                {categories.map((c) => (
+                {scopedCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -783,7 +1018,7 @@ export function ItemFormModal({
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
               >
                 <option value="">No Brand</option>
-                {brands.map((b) => (
+                {scopedBrands.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
@@ -865,6 +1100,29 @@ export function ItemFormModal({
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
               />
             </div>
+          </div>
+
+          {/* Line-Specific Typed Specifications */}
+          <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold">
+                {t('items.technicalSpecs')}
+              </h3>
+              <span className="text-[11px] text-[var(--text-muted)]">
+                Required * fields depend on product line
+              </span>
+            </div>
+            <ProductSpecFields
+              productLine={productLine}
+              specs={specs}
+              errors={specErrors}
+              onChange={(nextSpecs) => {
+                setSpecs(nextSpecs);
+                if (Object.keys(specErrors).length > 0) {
+                  setSpecErrors({});
+                }
+              }}
+            />
           </div>
 
           {/* Pricing & GST */}
@@ -996,113 +1254,6 @@ export function ItemFormModal({
               );
             })()}
 
-            {(business?.pack === 'wholesale' || wholesaleSlabs.length > 0) && (
-              <div className="pt-3 border-t border-[var(--border)] space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold">
-                    Wholesale Tier &amp; Bulk Qty Slabs
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setWholesaleSlabs((prev) => [
-                        ...prev,
-                        {
-                          localId: crypto.randomUUID(),
-                          min_qty: '10',
-                          tier: 'standard',
-                          rate: sellingPrice || '0',
-                        },
-                      ])
-                    }
-                    className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
-                  >
-                    <IconPlus size={14} stroke={2.5} />
-                    <span>Add Price Slab</span>
-                  </button>
-                </div>
-                {wholesaleSlabs.length === 0 ? (
-                  <p className="text-[11px] text-[var(--text-muted)]">
-                    Define min-qty or party-tier rates (Standard / Wholesale A / Wholesale B / VIP).
-                  </p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {wholesaleSlabs.map((slab) => (
-                      <div key={slab.localId} className="grid grid-cols-12 gap-2 items-center">
-                        <div className="col-span-3">
-                          <input
-                            type="number"
-                            min="1"
-                            step="any"
-                            value={slab.min_qty}
-                            onChange={(e) =>
-                              setWholesaleSlabs((prev) =>
-                                prev.map((r) =>
-                                  r.localId === slab.localId ? { ...r, min_qty: e.target.value } : r
-                                )
-                              )
-                            }
-                            placeholder="Min Qty"
-                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
-                          />
-                        </div>
-                        <div className="col-span-4">
-                          <select
-                            value={slab.tier}
-                            onChange={(e) =>
-                              setWholesaleSlabs((prev) =>
-                                prev.map((r) =>
-                                  r.localId === slab.localId
-                                    ? { ...r, tier: e.target.value as PriceTier }
-                                    : r
-                                )
-                              )
-                            }
-                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-                          >
-                            <option value="standard">All / Standard</option>
-                            <option value="wholesale_a">Wholesale A</option>
-                            <option value="wholesale_b">Wholesale B</option>
-                            <option value="vip">VIP</option>
-                          </select>
-                        </div>
-                        <div className="col-span-4">
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={slab.rate}
-                            onChange={(e) =>
-                              setWholesaleSlabs((prev) =>
-                                prev.map((r) =>
-                                  r.localId === slab.localId ? { ...r, rate: e.target.value } : r
-                                )
-                              )
-                            }
-                            placeholder="Rate ₹"
-                            className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
-                          />
-                        </div>
-                        <div className="col-span-1 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setWholesaleSlabs((prev) =>
-                                prev.filter((r) => r.localId !== slab.localId)
-                              )
-                            }
-                            aria-label="Remove slab"
-                            className="p-1.5 rounded text-[var(--give)] hover:bg-[var(--give-soft)]"
-                          >
-                            <IconTrash size={14} stroke={2} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Units, Conversions & Stock */}
@@ -1131,7 +1282,7 @@ export function ItemFormModal({
                   className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                   required
                 >
-                  {units.map((u) => (
+                  {scopedUnits.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.code} · {language === 'hi' ? u.name_hi : u.name_en}
                     </option>
@@ -1189,18 +1340,30 @@ export function ItemFormModal({
 
             {/* Alternate unit conversions */}
             <div className="p-3.5 rounded-xl border border-[var(--border)] space-y-2.5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-semibold">
                   {t('items.alternateUnits')}
                 </span>
-                <button
-                  type="button"
-                  onClick={handleAddConversion}
-                  className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
-                >
-                  <IconPlus size={14} stroke={2.5} />
-                  <span>{t('items.addConversion')}</span>
-                </button>
+                <div className="flex items-center gap-3">
+                  {productLine === 'tiles_slabs' && (
+                    <button
+                      type="button"
+                      onClick={handleAutoFillTileConversions}
+                      className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                    >
+                      <IconWand size={13} stroke={2} />
+                      <span>Auto-fill BOX / PCS / SQFT / SQM</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAddConversion}
+                    className="text-xs font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                  >
+                    <IconPlus size={14} stroke={2.5} />
+                    <span>{t('items.addConversion')}</span>
+                  </button>
+                </div>
               </div>
 
               {conversions.length === 0 ? (
@@ -1330,176 +1493,40 @@ export function ItemFormModal({
                   </label>
                 )}
 
-                {business?.pack === 'kirana' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Shelf / Rack Location
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.shelf || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, shelf: e.target.value }))
-                        }
-                        placeholder="e.g., Rack A-2"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
-                    <label className="inline-flex items-center gap-2 text-xs font-medium pt-4">
-                      <input
-                        type="checkbox"
-                        checked={packMeta.loose_weight === 'true'}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({
-                            ...p,
-                            loose_weight: e.target.checked ? 'true' : '',
-                          }))
-                        }
-                      />
-                      <span>Enable Loose Weight (₹ ↔ Qty) Billing</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium mb-1">
+                      Sq.Ft per Box / Coverage
                     </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={packMeta.sqft_per_box || ''}
+                      onChange={(e) =>
+                        setPackMeta((p) => ({ ...p, sqft_per_box: e.target.value }))
+                      }
+                      placeholder="e.g., 16"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                    />
                   </div>
-                )}
-
-                {business?.pack === 'medical' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Salt / Generic Composition
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.salt || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, salt: e.target.value }))
-                        }
-                        placeholder="e.g., Paracetamol 500mg"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Schedule Classification
-                      </label>
-                      <select
-                        value={packMeta.schedule || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, schedule: e.target.value }))
-                        }
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      >
-                        <option value="">OTC / Normal</option>
-                        <option value="H">Schedule H</option>
-                        <option value="H1">Schedule H1</option>
-                        <option value="X">Schedule X</option>
-                        <option value="NRX">NRx</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Manufacturer / Lab
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.manufacturer || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, manufacturer: e.target.value }))
-                        }
-                        placeholder="e.g., Cipla / Sun Pharma"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">
+                      Coverage Note
+                    </label>
+                    <input
+                      type="text"
+                      value={packMeta.coverage || ''}
+                      onChange={(e) =>
+                        setPackMeta((p) => ({ ...p, coverage: e.target.value }))
+                      }
+                      placeholder="e.g., 110 sq.ft / L"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                    />
                   </div>
-                )}
+                </div>
 
-                {business?.pack === 'clothing' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Fabric / Material
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.fabric || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, fabric: e.target.value }))
-                        }
-                        placeholder="e.g., 100% Cotton"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Collection / Season
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.season || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, season: e.target.value }))
-                        }
-                        placeholder="e.g., Summer / Festive"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {business?.pack === 'hardware' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Sq.Ft per Box / Coverage
-                      </label>
-                      <input
-                        type="number"
-                        step="any"
-                        min="0"
-                        value={packMeta.sqft_per_box || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, sqft_per_box: e.target.value }))
-                        }
-                        placeholder="e.g., 16"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Coverage Note
-                      </label>
-                      <input
-                        type="text"
-                        value={packMeta.coverage || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, coverage: e.target.value }))
-                        }
-                        placeholder="e.g., 110 sq.ft / L"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Warranty Months
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={packMeta.warranty_months || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({
-                            ...p,
-                            warranty_months: e.target.value,
-                          }))
-                        }
-                        placeholder="e.g., 12"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {(business?.pack === 'service' || itemType === 'service') && (
+                {itemType === 'service' && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium mb-1">
@@ -1536,6 +1563,80 @@ export function ItemFormModal({
                   </div>
                 )}
 
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {partiesEnabled && (
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        {t('items.supplier')}
+                      </label>
+                      <select
+                        value={supplierId}
+                        onChange={(e) => setSupplierId(e.target.value)}
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      >
+                        <option value="">— Any / Optional —</option>
+                        {suppliersList.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block text-xs font-medium mb-1">
+                      {t('items.countryOfOrigin')}
+                    </label>
+                    <input
+                      type="text"
+                      value={countryOfOrigin}
+                      onChange={(e) => setCountryOfOrigin(e.target.value)}
+                      placeholder="e.g., India, Italy, Spain"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium mb-1">
+                      {t('items.warrantyMonths')}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={warrantyMonths}
+                      onChange={(e) => setWarrantyMonths(e.target.value)}
+                      placeholder="e.g., 12, 60, 120"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    {t('items.videoUrl')}
+                  </label>
+                  <input
+                    type="url"
+                    value={videoUrl}
+                    onChange={(e) => setVideoUrl(e.target.value)}
+                    placeholder="https://..."
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    {t('items.description')}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Customer-facing product summary and showroom notes"
+                    className="w-full p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-xs font-medium mb-1">
                     {t('items.notes')}
@@ -1544,7 +1645,7 @@ export function ItemFormModal({
                     rows={2}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Optional shelf location, supplier note, or description"
+                    placeholder="Internal rack location or handling note"
                     className="w-full p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                   />
                 </div>

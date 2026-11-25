@@ -39,9 +39,9 @@ const HELP_TOPICS = [
     titleEn: 'Single-Business & Role Access',
     titleHi: 'सिंगल-बिज़नेस और भूमिका एक्सेस',
     bodyEn:
-      'One BizOne workspace serves one business. Owners manage staff, modules, and price/discount override policies; Managers, Cashiers, Storekeepers, Accountants, and Viewers see only their permitted tools.',
+      'One DecorBiz workspace serves one business. Owners manage staff, modules, and price/discount override policies; Managers, Cashiers, Storekeepers, Accountants, and Viewers see only their permitted tools.',
     bodyHi:
-      'एक बिज़वन वर्कस्पेस एक व्यवसाय के लिए है। ओनर स्टाफ, मॉड्यूल और छूट सीमा तय करते हैं; अन्य भूमिकाएं केवल अनुमत स्क्रीन ही देख सकती हैं।',
+      'एक डेकोरबिज़ वर्कस्पेस एक व्यवसाय के लिए है। ओनर स्टाफ, मॉड्यूल और छूट सीमा तय करते हैं; अन्य भूमिकाएं केवल अनुमत स्क्रीन ही देख सकती हैं।',
   },
   {
     titleEn: 'Print, Thermal Layouts & Share Links',
@@ -124,8 +124,8 @@ export function HelpScreen() {
         </h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">
           {language === 'hi'
-            ? 'बिज़वन ईआरपी उपयोग मार्गदर्शिका और कीबोर्ड शॉर्टकट।'
-            : 'Quick start documentation and keyboard shortcuts for BizOne ERP.'}
+            ? 'डेकोरबिज़ उपयोग मार्गदर्शिका और कीबोर्ड शॉर्टकट।'
+            : 'Quick start documentation and keyboard shortcuts for DecorBiz.'}
         </p>
       </div>
 

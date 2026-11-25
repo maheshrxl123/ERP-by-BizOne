@@ -23,6 +23,11 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const PROJECT_REF = process.env.SUPABASE_PROJECT_REF;
+const hasLiveSupabase =
+  Boolean(SUPABASE_URL?.startsWith('https://')) &&
+  !SUPABASE_URL?.includes('YOUR_PROJECT_REF') &&
+  (SUPABASE_ANON_KEY?.length ?? 0) > 20 &&
+  (SERVICE_ROLE_KEY?.length ?? 0) > 20;
 
 const VALID_PNG_BASE64 = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -53,7 +58,10 @@ async function runAdminSql(query) {
   }
 }
 
-test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', async () => {
+test(
+  'Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle',
+  { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
+  async () => {
   assert.ok(SUPABASE_URL && SUPABASE_ANON_KEY && SERVICE_ROLE_KEY, 'Supabase env vars required');
 
   const supabaseAdmin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -78,8 +86,8 @@ test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', a
   const stamp = Date.now();
   const ownerEmail = `owner.e2e.${stamp}@example.com`;
   const staffEmail = `cashier.e2e.${stamp}@example.com`;
-  const ownerPassword = 'BizOneOwner!2026';
-  const staffPassword = 'BizOneStaff!2026';
+  const ownerPassword = 'DecorBizOwner!2026';
+  const staffPassword = 'DecorBizStaff!2026';
 
   // Snapshot existing integration & module rows when running against an initialized workspace
   const { data: prevAiInt } = await supabaseAdmin
@@ -120,11 +128,11 @@ test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', a
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          businessName: 'Shree Ganesh Medical & General',
+          businessName: 'Shree Ganesh Tiles & Sanitary',
           ownerName: 'Ramesh Agarwal',
           email: ownerEmail,
           password: ownerPassword,
-          pack: 'medical',
+          pack: 'decorbiz',
           gstRegistered: true,
           gstin: '27AAPFU0939F1ZV',
           fyStartMonth: 4,
@@ -167,7 +175,7 @@ test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', a
         ownerName: 'Attacker',
         email: `rogue.${stamp}@example.com`,
         password: 'Password123!',
-        pack: 'kirana',
+        pack: 'decorbiz',
         gstRegistered: false,
         fyStartMonth: 4,
       }),
@@ -188,17 +196,6 @@ test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', a
     const ownerToken = ownerSignIn.session.access_token;
 
     if (startedFresh) {
-      // Medical pack must have enabled batch_expiry & prevent disabling it
-      const { data: modRows } = await ownerClient.from('modules_state').select('*');
-      const batchMod = modRows?.find((m) => m.module_key === 'batch_expiry');
-      assert.equal(batchMod?.enabled, true);
-
-      const { error: disablePackModErr } = await ownerClient.rpc('toggle_module', {
-        p_key: 'batch_expiry',
-        p_enabled: false,
-      });
-      assert.ok(disablePackModErr, 'Medical pack must block disabling batch_expiry');
-
       // Last-Owner protection when only 1 active Owner exists
       const deactivateOwnerRes = await fetch(
         `${BASE_URL}/api/admin/users/${encodeURIComponent(testOwnerId)}`,
@@ -512,7 +509,7 @@ test('Phase P1 end-to-end authentication, RBAC, storage, and setup lifecycle', a
   } finally {
     // Clean up ONLY test artifacts created during this test
     if (uploadedPaths.length > 0) {
-      await supabaseAdmin.storage.from('bizone-private').remove(uploadedPaths);
+      await supabaseAdmin.storage.from('decorbiz-private').remove(uploadedPaths);
     }
     for (const fid of createdFileIds) {
       await supabaseAdmin.from('files').delete().eq('id', fid);

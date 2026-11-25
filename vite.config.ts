@@ -14,9 +14,9 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
           id: '/',
-          name: 'BizOne ERP',
-          short_name: 'BizOne',
-          description: 'Simple, open-source small-business billing, khata, stock, and GST app.',
+          name: 'DecorBiz',
+          short_name: 'DecorBiz',
+          description: 'Tiles, sanitaryware, faucets, and decor showroom billing, khata, stock, and GST app.',
           theme_color: '#0EA5E9',
           background_color: '#F8FAFC',
           display: 'standalone',
@@ -46,7 +46,7 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
-          navigateFallbackDenylist: [/^\/api\//],
+          navigateFallbackDenylist: [/^\/api\//, /^\/ERP/],
           runtimeCaching: [
             {
               urlPattern: /^\/api\/.*/i,
@@ -62,6 +62,13 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          main: path.resolve(__dirname, 'index.html'),
+        },
       },
     },
     server: {

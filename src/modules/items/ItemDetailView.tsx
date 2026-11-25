@@ -8,28 +8,30 @@ import {
   IconPlus,
   IconRestore,
   IconStarFilled,
+  IconTags,
+  IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
+import { getProductLineLabel } from '../../core/productLines';
 import { supabase } from '../../core/supabase';
 import { formatStockQty } from '../../core/units';
-import { classifyBatchExpiry, daysUntilExpiry } from '../../packs/registry';
 import type {
   BrandRecord,
-  ItemBatchRecord,
   ItemCatalogRecord,
   ItemCategoryRecord,
   ItemImageRecord,
+  ItemLotBalanceRecord,
   ItemUnitRecord,
   ItemVariantRecord,
-  SaltSubstituteRow,
   StockLedgerEntryRecord,
   UnitConversionRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { BarcodeLabelModal } from './BarcodeLabelModal';
 import { ItemFormModal } from './ItemFormModal';
+import { ProductSpecDetailGrid } from './ProductSpecFields';
 import { StockAdjustmentModal } from './StockAdjustmentModal';
 
 interface ItemDetailViewProps {
@@ -51,7 +53,7 @@ export function ItemDetailView({
   onUpdated,
   onTaxonomyUpdated,
 }: ItemDetailViewProps) {
-  const { business, profile, isModuleEnabled, signedUrlCache, getSignedUrl, language, showToast, t } =
+  const { profile, signedUrlCache, getSignedUrl, language, showToast, t } =
     useApp();
 
   const canEdit = hasCapability(profile?.role, 'items');
@@ -61,32 +63,36 @@ export function ItemDetailView({
   const [item, setItem] = useState<ItemCatalogRecord | null>(null);
   const [conversions, setConversions] = useState<UnitConversionRecord[]>([]);
   const [images, setImages] = useState<ItemImageRecord[]>([]);
-  const [ledger, setLedger] = useState<StockLedgerEntryRecord[]>([]);
-  const [batches, setBatches] = useState<ItemBatchRecord[]>([]);
-  const [substitutes, setSubstitutes] = useState<SaltSubstituteRow[]>([]);
   const [variants, setVariants] = useState<ItemVariantRecord[]>([]);
+  const [lotBalances, setLotBalances] = useState<ItemLotBalanceRecord[]>([]);
+  const [ledger, setLedger] = useState<StockLedgerEntryRecord[]>([]);
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const [batchAddOpen, setBatchAddOpen] = useState(false);
-  const [newBatchNo, setNewBatchNo] = useState('');
-  const [newBatchExp, setNewBatchExp] = useState('');
-  const [newBatchMrp, setNewBatchMrp] = useState('');
-  const [newBatchQty, setNewBatchQty] = useState('10');
-  const [savingBatch, setSavingBatch] = useState(false);
 
   const [editOpen, setEditOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [labelOpen, setLabelOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  const showBatches = business?.pack === 'medical' || isModuleEnabled('batch_expiry');
-  const showVariants = business?.pack === 'clothing' || isModuleEnabled('variants');
+  const [variantModalOpen, setVariantModalOpen] = useState(false);
+  const [editingVariant, setEditingVariant] = useState<ItemVariantRecord | null>(null);
+  const [varName, setVarName] = useState('');
+  const [varSize, setVarSize] = useState('');
+  const [varFinish, setVarFinish] = useState('');
+  const [varShade, setVarShade] = useState('');
+  const [varBatchLot, setVarBatchLot] = useState('');
+  const [varSku, setVarSku] = useState('');
+  const [varBarcode, setVarBarcode] = useState('');
+  const [varSellingPrice, setVarSellingPrice] = useState('');
+  const [varMrp, setVarMrp] = useState('');
+  const [varPurchasePrice, setVarPurchasePrice] = useState('');
+  const [varOpeningStock, setVarOpeningStock] = useState('0');
+  const [savingVariant, setSavingVariant] = useState(false);
 
   const loadDetail = useCallback(async () => {
     setLoading(true);
     try {
-      const [itemRes, convRes, imgRes, ledgerRes, batchesRes, subRes, varRes] = await Promise.all([
+      const [itemRes, convRes, imgRes, varRes, lotRes, ledgerRes] = await Promise.all([
         supabase
           .from('item_catalog_view')
           .select('*')
@@ -103,34 +109,29 @@ export function ItemDetailView({
           .eq('item_id', itemId)
           .order('sort_order', { ascending: true }),
         supabase
+          .from('item_variants_view')
+          .select('*')
+          .eq('item_id', itemId)
+          .order('variant_name', { ascending: true }),
+        supabase
+          .from('item_lot_balances')
+          .select('*')
+          .eq('item_id', itemId)
+          .order('qty_on_hand', { ascending: false }),
+        supabase
           .from('stock_ledger_view')
           .select('*')
           .eq('item_id', itemId)
           .order('movement_date', { ascending: false })
           .order('created_at', { ascending: false })
           .limit(100),
-        showBatches
-          ? supabase
-              .from('item_batches')
-              .select('*')
-              .eq('item_id', itemId)
-              .order('expiry_date', { ascending: true })
-          : Promise.resolve({ data: [], error: null }),
-        business?.pack === 'medical'
-          ? supabase.rpc('get_salt_substitutes', { p_item_id: itemId })
-          : Promise.resolve({ data: [], error: null }),
-        showVariants
-          ? supabase
-              .from('item_variants')
-              .select('*')
-              .eq('item_id', itemId)
-              .order('size', { ascending: true })
-          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (itemRes.error) throw itemRes.error;
       if (convRes.error) throw convRes.error;
       if (imgRes.error) throw imgRes.error;
+      if (varRes.error) throw varRes.error;
+      if (lotRes.error) throw lotRes.error;
       if (ledgerRes.error) throw ledgerRes.error;
       const loadedItem = (itemRes.data as ItemCatalogRecord | null) ?? null;
       const loadedImages = (imgRes.data as ItemImageRecord[] | null) ?? [];
@@ -138,10 +139,9 @@ export function ItemDetailView({
       setItem(loadedItem);
       setConversions((convRes.data as UnitConversionRecord[] | null) ?? []);
       setImages(loadedImages);
-      setLedger((ledgerRes.data as StockLedgerEntryRecord[] | null) ?? []);
-      setBatches((batchesRes.data as ItemBatchRecord[] | null) ?? []);
-      setSubstitutes((subRes.data as SaltSubstituteRow[] | null) ?? []);
       setVariants((varRes.data as ItemVariantRecord[] | null) ?? []);
+      setLotBalances((lotRes.data as ItemLotBalanceRecord[] | null) ?? []);
+      setLedger((ledgerRes.data as StockLedgerEntryRecord[] | null) ?? []);
 
       const primary =
         loadedImages.find((i) => i.is_primary)?.file_id ||
@@ -161,41 +161,11 @@ export function ItemDetailView({
     } finally {
       setLoading(false);
     }
-  }, [itemId, getSignedUrl, showToast, showBatches, showVariants, business?.pack]);
+  }, [itemId, getSignedUrl, showToast]);
 
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
-
-  const handleAddBatch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!item || !newBatchNo.trim() || !newBatchExp) return;
-    setSavingBatch(true);
-    try {
-      const { error } = await supabase.rpc('save_item_batch', {
-        p_item_id: item.id,
-        p_batch_no: newBatchNo.trim(),
-        p_expiry_date: newBatchExp,
-        p_mfg_date: null,
-        p_mrp: newBatchMrp ? Number(newBatchMrp) : item.mrp ?? null,
-        p_purchase_rate: null,
-        p_selling_rate: newBatchMrp ? Number(newBatchMrp) : item.selling_price,
-        p_qty_delta: Number(newBatchQty || 0),
-        p_batch_id: null,
-        p_is_active: true,
-      });
-      if (error) throw error;
-      showToast('Batch added.', 'success');
-      setBatchAddOpen(false);
-      setNewBatchNo('');
-      await loadDetail();
-      await onUpdated();
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Unable to save batch.', 'error');
-    } finally {
-      setSavingBatch(false);
-    }
-  };
 
   const handleToggleArchive = async () => {
     if (!item || !canEdit || archiving) return;
@@ -219,6 +189,64 @@ export function ItemDetailView({
       );
     } finally {
       setArchiving(false);
+    }
+  };
+
+  const openVariantForm = (existing?: ItemVariantRecord | null) => {
+    setEditingVariant(existing ?? null);
+    setVarName(existing?.variant_name || '');
+    setVarSize(existing?.size_label || '');
+    setVarFinish(existing?.finish || '');
+    setVarShade(existing?.shade || '');
+    setVarBatchLot(existing?.batch_lot || '');
+    setVarSku(existing?.sku || '');
+    setVarBarcode(existing?.barcode || '');
+    setVarSellingPrice(
+      existing ? String(existing.selling_price ?? 0) : String(item?.selling_price ?? 0)
+    );
+    setVarMrp(
+      existing?.mrp != null ? String(existing.mrp) : item?.mrp != null ? String(item.mrp) : ''
+    );
+    setVarPurchasePrice(
+      existing?.purchase_price != null
+        ? String(existing.purchase_price)
+        : item?.purchase_price != null
+          ? String(item.purchase_price)
+          : ''
+    );
+    setVarOpeningStock('0');
+    setVariantModalOpen(true);
+  };
+
+  const handleSaveVariant = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!item || !varName.trim()) return;
+    setSavingVariant(true);
+    try {
+      const { error } = await supabase.rpc('save_item_variant', {
+        p_id: editingVariant?.id ?? null,
+        p_item_id: editingVariant ? null : item.id,
+        p_variant_name: varName.trim(),
+        p_size_label: varSize.trim() || null,
+        p_finish: varFinish.trim() || null,
+        p_shade: varShade.trim() || null,
+        p_batch_lot: varBatchLot.trim() || null,
+        p_sku: varSku.trim() || null,
+        p_barcode: varBarcode.trim() || null,
+        p_selling_price: Math.max(0, Number(varSellingPrice || 0)),
+        p_mrp: varMrp.trim() ? Math.max(0, Number(varMrp)) : null,
+        p_purchase_price: canViewCost && varPurchasePrice.trim() ? Math.max(0, Number(varPurchasePrice)) : 0,
+        p_opening_stock: editingVariant ? 0 : Math.max(0, Number(varOpeningStock || 0)),
+      });
+      if (error) throw error;
+      showToast(editingVariant ? 'Variant updated.' : 'Variant created.', 'success');
+      setVariantModalOpen(false);
+      await loadDetail();
+      await onUpdated();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to save variant.', 'error');
+    } finally {
+      setSavingVariant(false);
     }
   };
 
@@ -269,6 +297,8 @@ export function ItemDetailView({
               {item.name}
             </h1>
             <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5 truncate">
+              {getProductLineLabel(item.product_line, language)}
+              {' · '}
               {item.category_name || 'Uncategorized'}
               {item.brand_name ? ` · ${item.brand_name}` : ''}
               {item.sku ? ` · SKU ${item.sku}` : ''}
@@ -448,6 +478,12 @@ export function ItemDetailView({
             <h2 className="text-sm font-semibold">Item Details & Units</h2>
             <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
+                <dt className="text-[var(--text-muted)]">{t('items.productLine')}</dt>
+                <dd className="font-medium mt-0.5">
+                  {getProductLineLabel(item.product_line, language)}
+                </dd>
+              </div>
+              <div>
                 <dt className="text-[var(--text-muted)]">{t('items.baseUnit')}</dt>
                 <dd className="font-medium mt-0.5">
                   {item.base_unit_code} (
@@ -475,7 +511,48 @@ export function ItemDetailView({
                   {item.allow_negative_stock ? 'Allowed' : 'Blocked'}
                 </dd>
               </div>
+              {item.supplier_name && (
+                <div>
+                  <dt className="text-[var(--text-muted)]">{t('items.supplier')}</dt>
+                  <dd className="font-medium mt-0.5">{item.supplier_name}</dd>
+                </div>
+              )}
+              {item.country_of_origin && (
+                <div>
+                  <dt className="text-[var(--text-muted)]">{t('items.countryOfOrigin')}</dt>
+                  <dd className="font-medium mt-0.5">{item.country_of_origin}</dd>
+                </div>
+              )}
+              {item.warranty_months !== null && item.warranty_months !== undefined && (
+                <div>
+                  <dt className="text-[var(--text-muted)]">{t('items.warrantyMonths')}</dt>
+                  <dd className="font-medium mt-0.5 tabular-nums">
+                    {item.warranty_months} months
+                  </dd>
+                </div>
+              )}
+              {item.video_url && /^https?:\/\//i.test(item.video_url) && (
+                <div>
+                  <dt className="text-[var(--text-muted)]">{t('items.videoUrl')}</dt>
+                  <dd className="font-medium mt-0.5">
+                    <a
+                      href={item.video_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[var(--primary-dark)] hover:underline"
+                    >
+                      Watch Video
+                    </a>
+                  </dd>
+                </div>
+              )}
             </dl>
+
+            {item.description && (
+              <p className="pt-2 border-t border-[var(--border)] text-xs text-[var(--text)]">
+                {item.description}
+              </p>
+            )}
 
             {conversions.length > 0 && (
               <div className="pt-2 border-t border-[var(--border)]">
@@ -496,224 +573,137 @@ export function ItemDetailView({
               </div>
             )}
 
-            {Array.isArray(item.wholesale_slabs) && item.wholesale_slabs.length > 0 && (
-              <div className="pt-2 border-t border-[var(--border)]">
-                <p className="text-xs font-medium text-[var(--text-muted)] mb-1.5">
-                  Wholesale Rate Slabs
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {item.wholesale_slabs.map((slab, idx) => (
-                    <span
-                      key={idx}
-                      className="px-2.5 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] text-xs tabular-nums"
-                    >
-                      {slab.min_qty}+ · {slab.tier} → {formatINR(Number(slab.rate))}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {item.notes && (
               <p className="pt-2 border-t border-[var(--border)] text-xs text-[var(--text-muted)]">
                 {item.notes}
               </p>
             )}
           </div>
+
+          {/* Typed Line Specifications */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">{t('items.technicalSpecs')}</h2>
+              <span className="text-xs text-[var(--text-muted)]">
+                {getProductLineLabel(item.product_line, language)}
+              </span>
+            </div>
+            <ProductSpecDetailGrid productLine={item.product_line} specs={item.specs} />
+          </div>
         </section>
       </div>
 
-      {/* Pack-Specific Details: Batches & Expiry */}
-      {showBatches && (
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold">Batches &amp; Expiry (FEFO)</h2>
-              {item.pack_metadata?.salt && (
-                <p className="text-xs text-[var(--text-muted)]">
-                  Salt: {String(item.pack_metadata.salt)}
-                  {item.pack_metadata?.schedule ? ` · Schedule ${String(item.pack_metadata.schedule)}` : ''}
-                </p>
-              )}
-            </div>
-            {canEdit && (
-              <button
-                type="button"
-                onClick={() => setBatchAddOpen((v) => !v)}
-                className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
-              >
-                <IconPlus size={15} stroke={2} />
-                <span>Add Batch</span>
-              </button>
-            )}
+      {/* Item Variants */}
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+        <div className="px-5 py-4 border-b border-[var(--border)] flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <IconTags size={18} stroke={2} className="text-[var(--primary-dark)]" />
+            <h2 className="text-base font-semibold">Variants (Size / Finish / Shade)</h2>
+            <span className="text-xs text-[var(--text-muted)] tabular-nums">
+              ({variants.length})
+            </span>
           </div>
-
-          {batchAddOpen && canEdit && (
-            <form
-              onSubmit={handleAddBatch}
-              className="p-4 border-b border-[var(--border)] bg-[var(--surface-muted)] grid grid-cols-2 sm:grid-cols-5 gap-3 items-end"
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => openVariantForm(null)}
+              className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1"
             >
-              <div>
-                <label className="block text-xs font-medium mb-1">Batch No *</label>
-                <input
-                  required
-                  value={newBatchNo}
-                  onChange={(e) => setNewBatchNo(e.target.value)}
-                  placeholder="B-2601"
-                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs uppercase"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Expiry Date *</label>
-                <input
-                  required
-                  type="date"
-                  value={newBatchExp}
-                  onChange={(e) => setNewBatchExp(e.target.value)}
-                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Batch MRP</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newBatchMrp}
-                  onChange={(e) => setNewBatchMrp(e.target.value)}
-                  placeholder={String(item.mrp ?? item.selling_price)}
-                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium mb-1">Qty</label>
-                <input
-                  type="number"
-                  step="any"
-                  value={newBatchQty}
-                  onChange={(e) => setNewBatchQty(e.target.value)}
-                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={savingBatch}
-                className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold"
-              >
-                {savingBatch ? 'Saving...' : 'Save Batch'}
-              </button>
-            </form>
+              <IconPlus size={14} stroke={2.5} />
+              <span>Add Variant</span>
+            </button>
           )}
+        </div>
 
-          {batches.length === 0 ? (
-            <div className="p-5 text-xs text-[var(--text-muted)]">No batches recorded yet.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)]">
-                  <tr>
-                    <th className="py-2.5 px-4 text-left">Batch No</th>
-                    <th className="py-2.5 px-4 text-left">Expiry</th>
-                    <th className="py-2.5 px-4 text-left">Status</th>
-                    <th className="py-2.5 px-4 text-right">MRP</th>
-                    <th className="py-2.5 px-4 text-right">Selling</th>
-                    <th className="py-2.5 px-4 text-right">Stock</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {batches.map((b) => {
-                    const cls = classifyBatchExpiry(b.expiry_date);
-                    const days = daysUntilExpiry(b.expiry_date);
-                    return (
-                      <tr key={b.id}>
-                        <td className="py-2.5 px-4 font-mono font-medium">{b.batch_no}</td>
-                        <td className="py-2.5 px-4 tabular-nums">{formatDate(b.expiry_date)}</td>
-                        <td
-                          className={`py-2.5 px-4 font-medium ${
-                            cls === 'expired'
-                              ? 'text-[var(--give)]'
-                              : days <= 60
-                                ? 'text-amber-600'
-                                : 'text-[var(--receive-text)]'
-                          }`}
-                        >
-                          {cls === 'expired'
-                            ? 'Expired (Blocked)'
-                            : days <= 30
-                              ? 'Expiring ≤ 30d'
-                              : days <= 60
-                                ? 'Expiring ≤ 60d'
-                                : days <= 90
-                                  ? 'Expiring ≤ 90d'
-                                  : 'Healthy'}
-                        </td>
-                        <td className="py-2.5 px-4 text-right tabular-nums">
-                          {b.mrp != null ? formatINR(Number(b.mrp)) : '—'}
-                        </td>
-                        <td className="py-2.5 px-4 text-right tabular-nums">
-                          {b.selling_rate != null ? formatINR(Number(b.selling_rate)) : '—'}
-                        </td>
-                        <td className="py-2.5 px-4 text-right tabular-nums font-semibold">
-                          {formatStockQty(b.qty_on_hand, item.base_unit_code)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {substitutes.length > 0 && (
-            <div className="p-4 border-t border-[var(--border)] bg-[var(--surface-muted)]/50 space-y-2">
-              <p className="text-xs font-semibold">Same-Salt Substitutes</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {substitutes.map((s) => (
-                  <div
-                    key={s.id}
-                    className="p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] flex items-center justify-between text-xs"
-                  >
-                    <div>
-                      <p className="font-medium">{s.name}</p>
-                      <p className="text-[var(--text-muted)]">Stock: {s.qty_on_hand}</p>
-                    </div>
-                    <span className="font-semibold tabular-nums">{formatINR(Number(s.selling_price))}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
-      {/* Clothing Variants Matrix Table */}
-      {showVariants && variants.length > 0 && (
-        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-[var(--border)] flex items-center justify-between">
-            <h2 className="text-base font-semibold">Size &amp; Colour Variants</h2>
-            <span className="text-xs text-[var(--text-muted)] tabular-nums">{variants.length} SKUs</span>
+        {variants.length === 0 ? (
+          <div className="p-5 text-xs sm:text-sm text-[var(--text-muted)]">
+            No variants defined. Add variants to track separate sizes, finishes, shades, SKUs, and per-variant stock balances.
           </div>
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)]">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)] text-xs">
                 <tr>
-                  <th className="py-2.5 px-4 text-left">Size</th>
-                  <th className="py-2.5 px-4 text-left">Colour</th>
-                  <th className="py-2.5 px-4 text-left">SKU</th>
-                  <th className="py-2.5 px-4 text-right">Selling</th>
-                  <th className="py-2.5 px-4 text-right">Stock</th>
+                  <th className="px-4 py-2.5 font-medium">Variant</th>
+                  <th className="px-4 py-2.5 font-medium">Size / Finish</th>
+                  <th className="px-4 py-2.5 font-medium">Shade / Batch Lot</th>
+                  <th className="px-4 py-2.5 font-medium">SKU / Barcode</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Price</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Stock</th>
+                  {canEdit && <th className="px-4 py-2.5 text-right font-medium">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
                 {variants.map((v) => (
-                  <tr key={v.id}>
-                    <td className="py-2.5 px-4 font-semibold">{v.size || '—'}</td>
-                    <td className="py-2.5 px-4">{v.color || '—'}</td>
-                    <td className="py-2.5 px-4 font-mono">{v.sku || '—'}</td>
-                    <td className="py-2.5 px-4 text-right tabular-nums">
-                      {formatINR(Number(v.selling_price ?? item.selling_price))}
+                  <tr key={v.id} className="hover:bg-[var(--surface-muted)]/40">
+                    <td className="px-4 py-3 font-medium">{v.variant_name}</td>
+                    <td className="px-4 py-3 text-xs text-[var(--text-muted)]">
+                      {[v.size_label, v.finish].filter(Boolean).join(' · ') || '—'}
                     </td>
-                    <td className="py-2.5 px-4 text-right tabular-nums font-semibold">
-                      {v.qty_on_hand} {item.base_unit_code}
+                    <td className="px-4 py-3 text-xs">
+                      {[v.shade ? `Shade: ${v.shade}` : null, v.batch_lot ? `Lot: ${v.batch_lot}` : null]
+                        .filter(Boolean)
+                        .join(' · ') || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-xs font-mono text-[var(--text-muted)]">
+                      {[v.sku, v.barcode].filter(Boolean).join(' / ') || '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums font-medium">
+                      {formatINR(Number(v.selling_price))}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums font-semibold">
+                      {formatStockQty(v.qty_on_hand, item.base_unit_code)}
+                    </td>
+                    {canEdit && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => openVariantForm(v)}
+                          className="h-8 px-2.5 rounded-lg border border-[var(--border)] text-xs font-medium hover:bg-[var(--surface-muted)]"
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Shade & Batch Lot Stock Balances */}
+      {lotBalances.length > 0 && (
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-[var(--border)] flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Shade & Batch Lot Balances</h2>
+            <span className="text-xs text-[var(--text-muted)] tabular-nums">
+              {lotBalances.length} lot(s)
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)] text-xs">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Variant</th>
+                  <th className="px-4 py-2.5 font-medium">Shade</th>
+                  <th className="px-4 py-2.5 font-medium">Batch / Lot</th>
+                  <th className="px-4 py-2.5 font-medium text-right">On Hand</th>
+                  <th className="px-4 py-2.5 font-medium text-right">Last Movement</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {lotBalances.map((lb, idx) => (
+                  <tr key={`${lb.variant_id || 'std'}_${lb.shade}_${lb.batch_lot}_${idx}`}>
+                    <td className="px-4 py-2.5 font-medium">{lb.variant_name}</td>
+                    <td className="px-4 py-2.5">{lb.shade}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs">{lb.batch_lot}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold tabular-nums">
+                      {formatStockQty(lb.qty_on_hand, item.base_unit_code)}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-xs text-[var(--text-muted)] tabular-nums">
+                      {lb.last_movement_at ? formatDate(lb.last_movement_at) : '—'}
                     </td>
                   </tr>
                 ))}
@@ -762,6 +752,13 @@ export function ItemDetailView({
                         <p className="font-medium capitalize">
                           {row.movement_type.replace('_', ' ')}
                         </p>
+                        {(row.variant_name || row.shade || row.batch_lot) && (
+                          <p className="text-[11px] text-[var(--primary-dark)]">
+                            {[row.variant_name, row.shade ? `Shade ${row.shade}` : null, row.batch_lot ? `Lot ${row.batch_lot}` : null]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        )}
                         {row.reference_no && (
                           <p className="text-xs font-mono text-[var(--text-muted)]">
                             {row.reference_no}
@@ -834,6 +831,171 @@ export function ItemDetailView({
         initialItemId={item.id}
         onClose={() => setLabelOpen(false)}
       />
+
+      {variantModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => setVariantModalOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+              <h2 className="text-base font-semibold">
+                {editingVariant ? 'Edit Variant' : 'Add Variant'} · {item.name}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setVariantModalOpen(false)}
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+              >
+                <IconX size={18} stroke={2} />
+              </button>
+            </div>
+            <form onSubmit={handleSaveVariant} className="p-5 space-y-3.5 text-sm">
+              <div>
+                <label className="block text-xs font-medium mb-1">Variant Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={varName}
+                  onChange={(e) => setVarName(e.target.value)}
+                  placeholder="e.g., Glossy Ivory 600x1200 Shade A2"
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1">Size Label</label>
+                  <input
+                    type="text"
+                    value={varSize}
+                    onChange={(e) => setVarSize(e.target.value)}
+                    placeholder="e.g., 600x1200 mm"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Finish</label>
+                  <input
+                    type="text"
+                    value={varFinish}
+                    onChange={(e) => setVarFinish(e.target.value)}
+                    placeholder="e.g., Glossy, Matt, Satin"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Shade</label>
+                  <input
+                    type="text"
+                    value={varShade}
+                    onChange={(e) => setVarShade(e.target.value)}
+                    placeholder="e.g., Ivory / S1"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Default Batch / Lot</label>
+                  <input
+                    type="text"
+                    value={varBatchLot}
+                    onChange={(e) => setVarBatchLot(e.target.value)}
+                    placeholder="e.g., LOT-2026-01"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Variant SKU</label>
+                  <input
+                    type="text"
+                    value={varSku}
+                    onChange={(e) => setVarSku(e.target.value.toUpperCase())}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Variant Barcode</label>
+                  <input
+                    type="text"
+                    value={varBarcode}
+                    onChange={(e) => setVarBarcode(e.target.value.toUpperCase())}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Selling Price *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    value={varSellingPrice}
+                    onChange={(e) => setVarSellingPrice(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">MRP</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={varMrp}
+                    onChange={(e) => setVarMrp(e.target.value)}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                  />
+                </div>
+                {canViewCost && (
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Purchase Cost</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={varPurchasePrice}
+                      onChange={(e) => setVarPurchasePrice(e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                    />
+                  </div>
+                )}
+                {!editingVariant && item.item_type !== 'service' && (
+                  <div>
+                    <label className="block text-xs font-medium mb-1">Opening Stock ({item.base_unit_code})</label>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={varOpeningStock}
+                      onChange={(e) => setVarOpeningStock(e.target.value)}
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => setVariantModalOpen(false)}
+                  className="h-10 px-4 rounded-lg border border-[var(--border)] text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingVariant}
+                  className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold disabled:opacity-50"
+                >
+                  {savingVariant ? 'Saving...' : 'Save Variant'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

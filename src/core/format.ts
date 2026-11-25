@@ -56,7 +56,7 @@ export function buildUpiDeepLink(params: {
   if (!pa) return '';
   const search = new URLSearchParams({
     pa,
-    pn: params.businessName.trim() || 'BizOne Store',
+    pn: params.businessName.trim() || 'DecorBiz Store',
     cu: 'INR',
   });
   if (params.amount && params.amount > 0) {

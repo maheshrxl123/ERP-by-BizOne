@@ -18,7 +18,7 @@ import type {
   FinancialStatementsResult,
   LedgerAccountRecord,
   VoucherRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 type AccountingTab = 'vouchers' | 'ledgers' | 'statements' | 'reconciliation' | 'migration';
 
@@ -891,7 +891,7 @@ export function AccountingScreen() {
           <div>
             <h2 className="text-base font-semibold">Guided Opening Balance Migration</h2>
             <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              Computes live receivables, payables, stock valuation, cash, and bank balances from your operational BizOne books and prepares a balanced opening Journal Voucher.
+              Computes live receivables, payables, stock valuation, cash, and bank balances from your operational DecorBiz books and prepares a balanced opening Journal Voucher.
             </p>
           </div>
 

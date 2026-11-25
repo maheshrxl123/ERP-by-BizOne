@@ -16,7 +16,7 @@ import {
   toLocalIsoDate,
 } from '../../core/format';
 import { supabase } from '../../core/supabase';
-import type { PartyAddressRecord, PartyStatementData } from '../../types/bizone';
+import type { PartyAddressRecord, PartyStatementData } from '../../types/decorbiz';
 
 interface StatementPreviewModalProps {
   open: boolean;
@@ -143,7 +143,7 @@ export function StatementPreviewModal({
   const buildSummaryText = () => {
     if (!statement) return '';
     return [
-      `${business?.name || 'BizOne'} - ${t('parties.statementTitle')}`,
+      `${business?.name || 'DecorBiz'} - ${t('parties.statementTitle')}`,
       `${t('parties.party')}: ${statement.party_name}`,
       `${t('parties.openingForPeriod')}: ${formatSignedLabel(Number(statement.opening_balance))}`,
       `${t('parties.periodDebit')}: ${formatINR(Number(statement.period_debit))}`,
@@ -318,7 +318,7 @@ export function StatementPreviewModal({
                     />
                   )}
                   <div>
-                    <h3 className="text-lg font-bold">{business?.name || 'BizOne Store'}</h3>
+                    <h3 className="text-lg font-bold">{business?.name || 'DecorBiz Store'}</h3>
                     {business?.address && (
                       <p className="text-xs text-[var(--text-muted)] max-w-sm">
                         {business.address}

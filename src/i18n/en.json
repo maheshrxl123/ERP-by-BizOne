@@ -1,6 +1,6 @@
 {
   "app": {
-    "name": "BizOne ERP",
+    "name": "DecorBiz",
     "tagline": "Simple small-business billing, khata & stock",
     "offlineBanner": "You are offline. Changes that need server verification require internet.",
     "installApp": "Install App",
@@ -22,8 +22,9 @@
     "gst": "GST & E-Invoice",
     "operations": "Godowns & Ops",
     "messaging": "Messaging",
-    "ai": "BizOne AI",
-    "pack": "Pack Workspace",
+    "ai": "DecorBiz AI",
+    "onlineStore": "Online Store",
+    "pack": "Material Estimator & Sites",
     "data": "Import / Export",
     "notifications": "Alerts & Notifications",
     "settings": "Settings",
@@ -42,7 +43,7 @@
     "newPurchase": "New Purchase"
   },
   "auth": {
-    "loginTitle": "Sign in to BizOne",
+    "loginTitle": "Sign in to DecorBiz",
     "loginSubtitle": "Enter your registered email and password to open your business workspace.",
     "email": "Email address",
     "password": "Password",
@@ -118,6 +119,7 @@
       "invoice": "Invoice Basics",
       "modules": "Modules & Features",
       "users": "Users & Roles",
+      "security": "Security & IP",
       "appearance": "Appearance & Language",
       "data": "Import & Export",
       "backup": "Backup & Storage",
@@ -285,7 +287,26 @@
     "categories": "Categories",
     "brands": "Brands",
     "units": "Units",
-    "barcodeLabels": "Print Labels"
+    "barcodeLabels": "Print Labels",
+    "productLine": "Product Line",
+    "allLines": "All Lines",
+    "supplier": "Supplier",
+    "countryOfOrigin": "Country of Origin",
+    "warrantyMonths": "Warranty (Months)",
+    "videoUrl": "Product Video URL",
+    "description": "Description",
+    "technicalSpecs": "Technical Specifications",
+    "requiredSpecsMissing": "Please fill all required specification fields for this product line.",
+    "clearFilters": "Clear Filters",
+    "variantsTitle": "Item Variants (Size / Finish / Shade)",
+    "addVariant": "Add Variant",
+    "variantName": "Variant Name",
+    "sizeLabel": "Size Label",
+    "finish": "Finish",
+    "shade": "Shade / Lot",
+    "batchLot": "Batch / Lot #",
+    "lotBalances": "Lot & Shade Stock Balances",
+    "mixedLotWarning": "Mixed Shade / Lot Warning"
   },
   "bills": {
     "title": "Billing & Sales",
@@ -460,7 +481,6 @@
       "purchases": "Purchase Reports",
       "stock": "Stock & Valuation",
       "ageing": "Party Dues Ageing",
-      "pack": "Pack Insights",
       "audit": "Activity Log"
     }
   }

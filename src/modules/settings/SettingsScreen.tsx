@@ -16,6 +16,7 @@ import {
   IconPlus,
   IconRefresh,
   IconSearch,
+  IconSettings,
   IconShieldCheck,
   IconTrash,
   IconUpload,
@@ -23,7 +24,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BUSINESS_PACKS, type BusinessPackKey } from '../../../config/app.config';
+import { DECORBIZ_PACK } from '../../../config/app.config';
 import { MODULE_REGISTRY } from '../../../config/modules.config';
 import { useApp } from '../../app/AppProvider';
 import { RequireRole } from '../../app/guards';
@@ -45,6 +46,7 @@ import {
   isValidGstin,
   todayLocalIso,
 } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { hasCapability, ROLE_LABELS, type UserRole } from '../../core/permissions';
 import { supabase } from '../../core/supabase';
 import type {
@@ -54,7 +56,7 @@ import type {
   IntegrationSettingRecord,
   ProfileRecord,
   StorageUsageSummary,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { ImportExportPanel } from '../data/ImportExportPanel';
 
 export type SettingsTabKey =
@@ -62,6 +64,7 @@ export type SettingsTabKey =
   | 'invoice'
   | 'modules'
   | 'users'
+  | 'security'
   | 'appearance'
   | 'data'
   | 'backup'
@@ -160,14 +163,9 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const [invoiceGreeting, setInvoiceGreeting] = useState('Thank you! Visit Again');
   const [cashierMaxDiscountPct, setCashierMaxDiscountPct] = useState('10');
   const [allowCashierPriceOverride, setAllowCashierPriceOverride] = useState(false);
-  const [drugLicenceNo, setDrugLicenceNo] = useState('');
   const [savingBiz, setSavingBiz] = useState(false);
 
-  // S10 Pack Switcher, Demo Data & Workspace Reset state
-  const [targetPack, setTargetPack] = useState<BusinessPackKey>('general_retail');
-  const [enablePackModules, setEnablePackModules] = useState(true);
-  const [loadDemoOnSwitch, setLoadDemoOnSwitch] = useState(false);
-  const [switchingPack, setSwitchingPack] = useState(false);
+  // Demo Data & Workspace Reset state
   const [demoLoading, setDemoLoading] = useState(false);
   const [resetPhrase, setResetPhrase] = useState('');
   const [resettingWorkspace, setResettingWorkspace] = useState(false);
@@ -221,7 +219,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const [driveScheduleEnabled, setDriveScheduleEnabled] = useState(false);
   const [driveScheduleFreq, setDriveScheduleFreq] = useState<'daily' | 'weekly'>('daily');
   const [driveRetention, setDriveRetention] = useState(10);
-  const [driveFolderName, setDriveFolderName] = useState('BizOne ERP Backups');
+  const [driveFolderName, setDriveFolderName] = useState('DecorBiz Backups');
   const [savingDriveSchedule, setSavingDriveSchedule] = useState(false);
 
   // Integrations state
@@ -232,6 +230,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const [intConfigJson, setIntConfigJson] = useState<Record<string, string>>({});
   const [savingInt, setSavingInt] = useState(false);
   const [testingIntKey, setTestingIntKey] = useState<string | null>(null);
+
+  // Security & 2FA state
+  const [allowedIps, setAllowedIps] = useState<string[]>([]);
+  const [newAllowedIp, setNewAllowedIp] = useState('');
+  const [savingAllowedIps, setSavingAllowedIps] = useState(false);
+  const [detectedClientIp, setDetectedClientIp] = useState<string | null>(null);
+  const [totpEnabledUserIds, setTotpEnabledUserIds] = useState<string[]>([]);
+  const [resettingTotpUserId, setResettingTotpUserId] = useState<string | null>(null);
 
   // Business Snapshot & Recent Activity state (moved from HomeScreen)
   const [lastBackupAt, setLastBackupAt] = useState<string | null>(null);
@@ -315,8 +321,11 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
       setShowUpiQrOnInvoice(business.show_upi_qr_on_invoice ?? true);
       setCashierMaxDiscountPct(String(business.cashier_max_discount_pct ?? 10));
       setAllowCashierPriceOverride(Boolean(business.allow_cashier_price_override));
-      setDrugLicenceNo(business.drug_licence_no || '');
-      setTargetPack(business.pack);
+      setAllowedIps(
+        Array.isArray(business.allowed_ips)
+          ? business.allowed_ips.map((ip) => String(ip).trim()).filter(Boolean)
+          : []
+      );
 
       setLogoImages(
         business.logo_file_id
@@ -383,9 +392,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const loadIntegrations = async () => {
     if (!isOwner || !session?.access_token) return;
     try {
-      const intRes = await fetch('/api/integrations', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const intRes = await erpFetch('/api/erp/integrations', session.access_token);
       const data = await intRes.json();
       if (intRes.ok && Array.isArray(data.integrations)) {
         setIntegrations(data.integrations);
@@ -420,13 +427,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     }
   }, [canAccessBackup]);
 
+  const driveBackupModuleEnabled = isModuleEnabled('google_drive_backup');
+  const hindiModuleEnabled = isModuleEnabled('hindi');
+
   const loadDriveStatus = useCallback(async () => {
-    if (!canAccessBackup || !session?.access_token) return;
+    if (!canAccessBackup || !driveBackupModuleEnabled || !session?.access_token) return;
     setLoadingDrive(true);
     try {
-      const res = await fetch('/api/integrations/google-drive/status', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const res = await erpFetch('/api/erp/integrations/google-drive/status', session.access_token);
       const data = await res.json();
       if (res.ok) {
         const st = data as DriveConnectionStatus;
@@ -434,14 +442,42 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         setDriveScheduleEnabled(st.scheduleEnabled);
         setDriveScheduleFreq(st.scheduleFrequency === 'weekly' ? 'weekly' : 'daily');
         setDriveRetention(st.retentionCount || 10);
-        setDriveFolderName(st.folderName || 'BizOne ERP Backups');
+        setDriveFolderName(st.folderName || 'DecorBiz Backups');
       }
     } catch {
       // Optional Drive integration remains non-blocking
     } finally {
       setLoadingDrive(false);
     }
-  }, [canAccessBackup, session?.access_token]);
+  }, [canAccessBackup, driveBackupModuleEnabled, session?.access_token]);
+
+  const loadSecurityInfo = useCallback(async () => {
+    if (!isOwner || !session?.access_token) return;
+    try {
+      const res = await erpFetch('/api/erp/security/ip-info', session.access_token);
+      if (res.ok) {
+        const data = await res.json();
+        setDetectedClientIp(typeof data?.clientIp === 'string' ? data.clientIp : null);
+      }
+    } catch {
+      // Non-blocking
+    }
+  }, [isOwner, session?.access_token]);
+
+  const loadStaffTotpStatuses = useCallback(async () => {
+    if (!isOwner || !session?.access_token) return;
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-status', session.access_token);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data?.enabledUserIds)) {
+          setTotpEnabledUserIds(data.enabledUserIds.map(String));
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+  }, [isOwner, session?.access_token]);
 
   const loadSnapshotAndActivity = useCallback(async () => {
     if (!isOwner) return;
@@ -480,18 +516,29 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (activeTab === 'business' || activeTab === 'users') {
       void loadSnapshotAndActivity();
     }
+    if (activeTab === 'users') {
+      void loadStaffTotpStatuses();
+    }
+    if (activeTab === 'security') {
+      void loadSecurityInfo();
+    }
     if (activeTab === 'integrations') {
       void loadIntegrations();
     }
     if (activeTab === 'backup') {
       void loadBackupInfo();
-      void loadDriveStatus();
+      if (driveBackupModuleEnabled) {
+        void loadDriveStatus();
+      }
     }
   }, [
     activeTab,
     isOwner,
+    driveBackupModuleEnabled,
     session?.access_token,
     loadSnapshotAndActivity,
+    loadStaffTotpStatuses,
+    loadSecurityInfo,
     loadBackupInfo,
     loadDriveStatus,
   ]);
@@ -500,7 +547,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     const onMessage = (ev: MessageEvent) => {
       if (ev.origin !== window.location.origin) return;
       const msg = ev.data as { type?: string; ok?: boolean; message?: string } | null;
-      if (msg?.type === 'bizone-drive-oauth') {
+      if (msg?.type === 'decorbiz-drive-oauth') {
         setDriveAuthUrl(null);
         showToast(
           msg.message || (msg.ok ? 'Google Drive connected.' : 'Google Drive connection failed.'),
@@ -543,9 +590,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
       let omittedCount = 0;
 
       if (includeFiles && session?.access_token) {
-        const res = await fetch('/api/backup/export-bundle', {
+        const res = await erpFetch('/api/erp/backup/export-bundle', session.access_token, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${session.access_token}` },
         });
         const bundle = await res.json();
         if (!res.ok) throw new Error(bundle?.error || 'Failed to bundle attachments.');
@@ -558,7 +604,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         : await buildSignedBackupBlob(envelope);
 
       downloadJsonFile(
-        `bizone-backup-${todayLocalIso()}${cleanPass ? '-enc' : ''}.json`,
+        `decorbiz-backup-${todayLocalIso()}${cleanPass ? '-enc' : ''}.json`,
         blob.jsonText
       );
       await refreshWorkspace();
@@ -673,7 +719,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
       const { jsonText } = await buildSignedBackupBlob(
         preSnap as WorkspaceBackupEnvelope
       );
-      downloadJsonFile(`bizone-pre-restore-${todayLocalIso()}.json`, jsonText);
+      downloadJsonFile(`decorbiz-pre-restore-${todayLocalIso()}.json`, jsonText);
 
       // 3. Atomic restore RPC
       const { data: resData, error: resErr } = await supabase.rpc(
@@ -694,11 +740,10 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         restoreTarget.envelope.attachments.length > 0 &&
         session?.access_token
       ) {
-        const bundleRes = await fetch('/api/backup/restore-bundle', {
+        const bundleRes = await erpFetch('/api/erp/backup/restore-bundle', session.access_token, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
             attachments: restoreTarget.envelope.attachments,
@@ -736,9 +781,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const handleGenerateDriveAuthUrl = async () => {
     if (!session?.access_token) return;
     try {
-      const res = await fetch('/api/integrations/google-drive/auth-url', {
+      const res = await erpFetch('/api/erp/integrations/google-drive/auth-url', session.access_token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok || !data?.url) {
@@ -757,11 +801,10 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token) return;
     setSyncingDrive(true);
     try {
-      const res = await fetch('/api/integrations/google-drive/backup-now', {
+      const res = await erpFetch('/api/erp/integrations/google-drive/backup-now', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ includeFiles }),
       });
@@ -788,9 +831,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token) return;
     setLoadingDrive(true);
     try {
-      const res = await fetch('/api/integrations/google-drive/backups', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
+      const res = await erpFetch('/api/erp/integrations/google-drive/backups', session.access_token);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Unable to list Drive backups.');
       setDriveBackups(Array.isArray(data.files) ? data.files : []);
@@ -809,17 +850,16 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token || !isOwner) return;
     setSavingDriveSchedule(true);
     try {
-      const res = await fetch('/api/integrations/google-drive/schedule', {
+      const res = await erpFetch('/api/erp/integrations/google-drive/schedule', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           scheduleEnabled: driveScheduleEnabled,
           scheduleFrequency: driveScheduleFreq,
           retentionCount: driveRetention,
-          folderName: driveFolderName.trim() || 'BizOne ERP Backups',
+          folderName: driveFolderName.trim() || 'DecorBiz Backups',
         }),
       });
       const data = await res.json();
@@ -854,14 +894,13 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         const { jsonText } = await buildSignedBackupBlob(
           preSnap as WorkspaceBackupEnvelope
         );
-        downloadJsonFile(`bizone-pre-restore-${todayLocalIso()}.json`, jsonText);
+        downloadJsonFile(`decorbiz-pre-restore-${todayLocalIso()}.json`, jsonText);
       }
 
-      const res = await fetch('/api/integrations/google-drive/restore', {
+      const res = await erpFetch('/api/erp/integrations/google-drive/restore', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ fileId }),
       });
@@ -888,9 +927,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const handleDisconnectDrive = async () => {
     if (!session?.access_token || !isOwner) return;
     try {
-      const res = await fetch('/api/integrations/google-drive/disconnect', {
+      const res = await erpFetch('/api/erp/integrations/google-drive/disconnect', session.access_token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Disconnect failed.');
@@ -906,39 +944,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     }
   };
 
-  const handleSwitchBusinessPack = async () => {
-    if (!isOwner) return;
-    setSwitchingPack(true);
-    try {
-      const { error } = await supabase.rpc('switch_business_pack', {
-        p_pack: targetPack,
-        p_enable_recommended_modules: enablePackModules,
-        p_load_demo: loadDemoOnSwitch,
-      });
-      if (error) throw error;
-      syncedBizStampRef.current = null;
-      await refreshWorkspace();
-      showToast(`Business pack switched to ${targetPack.replace('_', ' ')}.`, 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to switch business pack.',
-        'error'
-      );
-    } finally {
-      setSwitchingPack(false);
-    }
-  };
-
   const handleLoadDemoData = async () => {
     if (!isOwner) return;
     setDemoLoading(true);
     try {
-      const { error } = await supabase.rpc('seed_pack_demo_data', {
-        p_pack: targetPack,
-      });
+      const { error } = await supabase.rpc('seed_demo_data');
       if (error) throw error;
       await refreshWorkspace();
-      showToast('Sample demo records loaded for the active pack.', 'success');
+      showToast('Sample demo records loaded for DecorBiz.', 'success');
     } catch (err) {
       showToast(
         err instanceof Error ? err.message : 'Unable to load demo data.',
@@ -1031,7 +1044,6 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         p_purchase_return_next_number: Math.max(1, Number(purchaseReturnNext) || 1),
         p_expense_prefix: expensePrefix.trim() || 'EXP-',
         p_expense_next_number: Math.max(1, Number(expenseNext) || 1),
-        p_drug_licence_no: drugLicenceNo.trim() || null,
         p_pack_settings: {
           ...(business?.pack_settings || {}),
           bank_name: bankName.trim() || null,
@@ -1090,11 +1102,10 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token) return;
     setAddingUser(true);
     try {
-      const res = await fetch('/api/admin/users', {
+      const res = await erpFetch('/api/erp/admin/users', session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           fullName: newUserName.trim(),
@@ -1131,11 +1142,10 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token) return;
     setUpdatingStaffId(userId);
     try {
-      const res = await fetch(`/api/admin/users/${encodeURIComponent(userId)}`, {
+      const res = await erpFetch(`/api/erp/admin/users/${encodeURIComponent(userId)}`, session.access_token, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify(patch),
       });
@@ -1154,15 +1164,67 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     }
   };
 
+  const handleResetStaffTotp = async (targetUserId: string, staffName: string) => {
+    if (!session?.access_token || !isOwner) return;
+    setResettingTotpUserId(targetUserId);
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-reset', session.access_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: targetUserId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Unable to reset 2FA.');
+      await loadStaffTotpStatuses();
+      showToast(`2FA reset for ${staffName}.`, 'success');
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to reset 2FA.',
+        'error'
+      );
+    } finally {
+      setResettingTotpUserId(null);
+    }
+  };
+
+  const handleSaveAllowedIps = async (nextList: string[]) => {
+    if (!isOwner) return;
+    const cleaned = Array.from(
+      new Set(nextList.map((ip) => ip.trim()).filter(Boolean))
+    );
+    setSavingAllowedIps(true);
+    try {
+      const { error } = await supabase.rpc('update_ip_allowlist', {
+        p_allowed_ips: cleaned,
+      });
+      if (error) throw error;
+      setAllowedIps(cleaned);
+      setNewAllowedIp('');
+      await refreshWorkspace();
+      showToast(
+        cleaned.length === 0
+          ? 'IP allowlist cleared (all IPs permitted).'
+          : `IP allowlist updated (${cleaned.length} entry/entries).`,
+        'success'
+      );
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : 'Unable to update IP allowlist.',
+        'error'
+      );
+    } finally {
+      setSavingAllowedIps(false);
+    }
+  };
+
   const handleSaveIntegration = async (key: string) => {
     if (!session?.access_token) return;
     setSavingInt(true);
     try {
-      const res = await fetch(`/api/integrations/${encodeURIComponent(key)}`, {
+      const res = await erpFetch(`/api/erp/integrations/${encodeURIComponent(key)}`, session.access_token, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           enabled: intEnabled,
@@ -1189,9 +1251,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const handleRemoveIntegrationSecret = async (key: string) => {
     if (!session?.access_token) return;
     try {
-      const res = await fetch(`/api/integrations/${encodeURIComponent(key)}`, {
+      const res = await erpFetch(`/api/erp/integrations/${encodeURIComponent(key)}`, session.access_token, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Removal failed.');
@@ -1209,9 +1270,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     if (!session?.access_token) return;
     setTestingIntKey(key);
     try {
-      const res = await fetch(`/api/integrations/${encodeURIComponent(key)}/test`, {
+      const res = await erpFetch(`/api/erp/integrations/${encodeURIComponent(key)}/test`, session.access_token, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data?.error || 'Connection check failed.');
@@ -1236,11 +1296,22 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
     });
   }, [moduleSearch]);
 
+  const securityTabLabel = t('settings.tabs.security');
   const tabs: Array<{ key: SettingsTabKey; label: string; visible: boolean }> = [
     { key: 'business', label: t('settings.tabs.business'), visible: isOwner },
     { key: 'invoice', label: t('settings.tabs.invoice'), visible: isOwner },
     { key: 'modules', label: t('settings.tabs.modules'), visible: isOwner },
     { key: 'users', label: t('settings.tabs.users'), visible: isOwner },
+    {
+      key: 'security',
+      label:
+        securityTabLabel === 'settings.tabs.security'
+          ? language === 'hi'
+            ? 'सुरक्षा और IP'
+            : 'Security & IP'
+          : securityTabLabel,
+      visible: isOwner,
+    },
     { key: 'appearance', label: t('settings.tabs.appearance'), visible: true },
     { key: 'data', label: t('settings.tabs.data'), visible: canAccessData },
     { key: 'backup', label: t('settings.tabs.backup'), visible: canAccessBackup },
@@ -1248,13 +1319,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   ];
 
   const visibleTabs = tabs.filter((tab) => tab.visible);
-  const currentPack = BUSINESS_PACKS.find((p) => p.key === business?.pack);
+  const currentPack = DECORBIZ_PACK;
 
   return (
     <div className="max-w-5xl mx-auto p-4 sm:p-6 space-y-6">
       <div>
-        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-          {t('settings.title')}
+        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <IconSettings size={24} stroke={2} className="text-[var(--primary-dark)]" />
+          <span>{t('settings.title')}</span>
         </h1>
       </div>
 
@@ -1396,7 +1468,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                 {t('settings.tabs.business')}
               </h2>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                Pack: {language === 'hi' ? currentPack?.labelHi : currentPack?.labelEn}
+                {language === 'hi' ? currentPack.labelHi : currentPack.labelEn}
               </p>
             </div>
           </div>
@@ -1676,22 +1748,6 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="biz-dl-no" className="block text-sm font-medium mb-1.5">
-                Drug Licence No. (Medical / Pharmacy)
-              </label>
-              <input
-                id="biz-dl-no"
-                type="text"
-                value={drugLicenceNo}
-                onChange={(e) => setDrugLicenceNo(e.target.value)}
-                placeholder="e.g. DL-MH-20B/21B-10482"
-                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
-              />
-            </div>
-          </div>
-
           <div className="flex justify-end pt-2">
             <button
               type="submit"
@@ -1703,78 +1759,29 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
           </div>
         </form>
 
-        {/* S10 Business Pack Switcher, Demo Data & Workspace Reset */}
+        {/* Sample Demo Data & Workspace Reset */}
         <div className="mt-6 space-y-6">
           <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-4">
             <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] pb-3">
               <div>
                 <h2 className="text-base font-semibold inline-flex items-center gap-2">
                   <IconBriefcase size={18} stroke={2} className="text-[var(--primary-dark)]" />
-                  <span>Business Pack & Sample Demo Data</span>
+                  <span>Sample Demo Data</span>
                 </h2>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Switch business-type workflows (Kirana, Medical, Clothing, Hardware, Retail, Wholesale, Service) or load/remove sample demo data.
+                  Load or remove sample DecorBiz tiles, sanitaryware & contractor demo records for testing.
                 </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              <div className="md:col-span-2">
-                <label htmlFor="pack-switcher" className="block text-sm font-medium mb-1.5">
-                  Target Business Pack
-                </label>
-                <select
-                  id="pack-switcher"
-                  value={targetPack}
-                  onChange={(e) => setTargetPack(e.target.value as BusinessPackKey)}
-                  className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
-                >
-                  {BUSINESS_PACKS.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {language === 'hi' ? p.labelHi : p.labelEn} — {language === 'hi' ? p.descriptionHi : p.descriptionEn}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <button
-                type="button"
-                disabled={switchingPack}
-                onClick={() => void handleSwitchBusinessPack()}
-                className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold whitespace-nowrap shrink-0 hover:opacity-95 disabled:opacity-50"
-              >
-                {switchingPack ? 'Switching...' : 'Switch Business Pack'}
-              </button>
-            </div>
-
-            <div className="flex flex-wrap gap-5 text-xs sm:text-sm">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enablePackModules}
-                  onChange={(e) => setEnablePackModules(e.target.checked)}
-                  className="w-4 h-4 accent-[var(--primary-dark)]"
-                />
-                <span>Enable recommended modules for selected pack</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={loadDemoOnSwitch}
-                  onChange={(e) => setLoadDemoOnSwitch(e.target.checked)}
-                  className="w-4 h-4 accent-[var(--primary-dark)]"
-                />
-                <span>Also load sample demo data after switching</span>
-              </label>
-            </div>
-
-            <div className="pt-3 border-t border-[var(--border)] flex flex-wrap items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 disabled={demoLoading}
                 onClick={() => void handleLoadDemoData()}
                 className="h-10 px-4 rounded-lg border border-[var(--border)] text-xs font-semibold hover:bg-[var(--surface-muted)] disabled:opacity-50"
               >
-                {demoLoading ? 'Working...' : 'Load Demo Data for Pack'}
+                {demoLoading ? 'Working...' : 'Load Sample Demo Data'}
               </button>
               <button
                 type="button"
@@ -1796,7 +1803,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                   Reset Workspace Data (Owner Only)
                 </h2>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Deletes all bills, purchases, expenses, payments, parties, items, batches, variants, and job cards while preserving business settings and staff accounts. Recommended: download a backup first.
+                  Deletes all bills, purchases, expenses, payments, parties, items, contractor sites, and material estimates while preserving business settings and staff accounts. Recommended: download a backup first.
                 </p>
               </div>
             </div>
@@ -2112,7 +2119,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
               }}
               entityType="business"
               entityId="1"
-              helperText="If no static image is uploaded, BizOne renders a scannable dynamic UPI QR from your UPI ID above."
+              helperText="If no static image is uploaded, DecorBiz renders a scannable dynamic UPI QR from your UPI ID above."
             />
           </div>
 
@@ -2318,17 +2325,14 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                 <div className="px-5 py-3 border-b border-[var(--border)] bg-[var(--surface-muted)]">
                   <h2 className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                     {level === 'basic'
-                      ? 'Basic Modules (Default On)'
-                      : 'Advanced Modules (Optional)'}
+                      ? 'Core Business Modules'
+                      : 'Optional Feature Toggles (On / Off)'}
                   </h2>
                 </div>
                 <div className="divide-y divide-[var(--border)]">
                   {list.map((mod) => {
                     const state = modules.find((m) => m.module_key === mod.key);
                     const enabled = Boolean(state?.enabled);
-                    const requiredByPack = Boolean(
-                      currentPack?.requiredModules.includes(mod.key)
-                    );
                     const busy = togglingKey === mod.key;
 
                     return (
@@ -2341,17 +2345,18 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                             <span className="text-sm font-semibold">
                               {language === 'hi' ? mod.nameHi : mod.nameEn}
                             </span>
+                            <code className="text-[11px] font-mono text-[var(--text-muted)]">
+                              {mod.key}
+                            </code>
                           </div>
                           <p className="text-xs text-[var(--text-muted)] mt-0.5">
                             {language === 'hi'
                               ? mod.descriptionHi
                               : mod.descriptionEn}
                           </p>
-                          {(mod.dependsOn.length > 0 || requiredByPack) && (
+                          {mod.dependsOn.length > 0 && (
                             <p className="text-xs text-[var(--primary-dark)] mt-1">
-                              {requiredByPack
-                                ? `Required by ${currentPack?.labelEn} pack`
-                                : `Needs: ${mod.dependsOn.join(', ')}`}
+                              {`Requires: ${mod.dependsOn.join(', ')}`}
                             </p>
                           )}
                         </div>
@@ -2360,7 +2365,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                           type="button"
                           role="switch"
                           aria-checked={enabled}
-                          disabled={busy || (requiredByPack && enabled)}
+                          disabled={busy}
                           onClick={() => handleToggleModule(mod.key, !enabled)}
                           className={`min-w-[64px] h-9 px-3 rounded-lg text-xs font-semibold border transition-colors shrink-0 disabled:opacity-50 ${
                             enabled
@@ -2406,6 +2411,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                   <tr className="border-b border-[var(--border)] bg-[var(--surface-muted)] text-xs font-medium text-[var(--text-muted)]">
                     <th className="py-3 px-4">Staff Member</th>
                     <th className="py-3 px-4">Role</th>
+                    <th className="py-3 px-4">2FA</th>
                     <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Access</th>
                   </tr>
@@ -2420,6 +2426,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                       member.role === 'owner' &&
                       member.is_active &&
                       activeOwnersCount <= 1;
+                    const has2fa = totpEnabledUserIds.includes(member.id);
 
                     return (
                     <tr key={member.id} className="min-h-[56px]">
@@ -2466,6 +2473,17 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                       <td className="py-3 px-4">
                         <span
                           className={`text-xs font-medium ${
+                            has2fa
+                              ? 'text-[var(--receive-text)]'
+                              : 'text-[var(--text-muted)]'
+                          }`}
+                        >
+                          {has2fa ? '2FA Enabled' : 'Off'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`text-xs font-medium ${
                             member.is_active
                               ? 'text-[var(--receive-text)]'
                               : 'text-[var(--give)]'
@@ -2474,7 +2492,21 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                           {member.is_active ? 'Active' : 'Deactivated'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="py-3 px-4 text-right space-x-2">
+                        {has2fa && (
+                          <button
+                            type="button"
+                            disabled={resettingTotpUserId === member.id}
+                            onClick={() =>
+                              void handleResetStaffTotp(member.id, member.full_name)
+                            }
+                            className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs font-medium hover:bg-[var(--surface-muted)] disabled:opacity-50"
+                          >
+                            {resettingTotpUserId === member.id
+                              ? 'Resetting...'
+                              : 'Reset 2FA'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={updatingStaffId === member.id || isLastActiveOwner}
@@ -2755,28 +2787,30 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
             </div>
           </div>
 
-          <div className="pt-4 border-t border-[var(--border)]">
-            <h2 className="text-base font-semibold">Language</h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">
-              Switch interface labels between English and Hindi.
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-3 max-w-sm">
-              {(['en', 'hi'] as const).map((lang) => (
-                <button
-                  key={lang}
-                  type="button"
-                  onClick={() => setLanguage(lang)}
-                  className={`h-11 px-4 rounded-lg border text-sm font-medium ${
-                    language === lang
-                      ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)]'
-                      : 'border-[var(--border)] hover:bg-[var(--surface-muted)]'
-                  }`}
-                >
-                  {lang === 'en' ? t('common.english') : t('common.hindi')}
-                </button>
-              ))}
+          {hindiModuleEnabled && (
+            <div className="pt-4 border-t border-[var(--border)]">
+              <h2 className="text-base font-semibold">Language</h2>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                Switch interface labels between English and Hindi.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3 max-w-sm">
+                {(['en', 'hi'] as const).map((lang) => (
+                  <button
+                    key={lang}
+                    type="button"
+                    onClick={() => setLanguage(lang)}
+                    className={`h-11 px-4 rounded-lg border text-sm font-medium ${
+                      language === lang
+                        ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)]'
+                        : 'border-[var(--border)] hover:bg-[var(--surface-muted)]'
+                    }`}
+                  >
+                    {lang === 'en' ? t('common.english') : t('common.hindi')}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </section>
       )}
 
@@ -2784,6 +2818,149 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
       {activeTab === 'data' && (
         <RequireRole roles={['owner', 'manager', 'storekeeper', 'accountant']}>
           <ImportExportPanel onImported={() => void refreshWorkspace()} />
+        </RequireRole>
+      )}
+
+      {/* Security & IP Allowlist */}
+      {activeTab === 'security' && (
+        <RequireRole roles={['owner']}>
+          <div className="space-y-6">
+            <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] pb-3">
+                <div>
+                  <h2 className="text-base font-semibold inline-flex items-center gap-2">
+                    <IconShieldCheck size={18} stroke={2} className="text-[var(--primary-dark)]" />
+                    <span>ERP IP Allowlist</span>
+                  </h2>
+                  <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                    Restrict access to /ERP and /api/erp/* by IPv4 address or CIDR range (e.g. 203.0.113.10 or 192.168.1.0/24). Leave empty to allow all IPs. The public storefront (/) is never restricted by this list.
+                  </p>
+                </div>
+                {detectedClientIp && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2.5 py-1.5 rounded-lg bg-[var(--surface-muted)] border border-[var(--border)] font-mono">
+                      Your IP: {detectedClientIp}
+                    </span>
+                    {!allowedIps.includes(detectedClientIp) && (
+                      <button
+                        type="button"
+                        disabled={savingAllowedIps}
+                        onClick={() =>
+                          void handleSaveAllowedIps([...allowedIps, detectedClientIp])
+                        }
+                        className="h-9 px-3 rounded-lg border border-[var(--primary-dark)]/40 bg-[var(--primary-soft)] text-[var(--primary-dark)] font-semibold whitespace-nowrap shrink-0 hover:opacity-95 disabled:opacity-50"
+                      >
+                        + Add My Current IP
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const entry = newAllowedIp.trim();
+                  if (!entry) return;
+                  if (allowedIps.includes(entry)) {
+                    showToast('IP address or CIDR already in allowlist.', 'info');
+                    return;
+                  }
+                  void handleSaveAllowedIps([...allowedIps, entry]);
+                }}
+                className="flex flex-col sm:flex-row gap-3"
+              >
+                <input
+                  type="text"
+                  value={newAllowedIp}
+                  onChange={(e) => setNewAllowedIp(e.target.value)}
+                  placeholder="Enter IPv4 address or CIDR (e.g. 122.160.12.45 or 10.0.0.0/8)"
+                  className="flex-1 h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+                />
+                <button
+                  type="submit"
+                  disabled={savingAllowedIps || !newAllowedIp.trim()}
+                  className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 disabled:opacity-50"
+                >
+                  <IconPlus size={16} stroke={2} />
+                  <span>{savingAllowedIps ? 'Saving...' : 'Add IP'}</span>
+                </button>
+              </form>
+
+              {allowedIps.length === 0 ? (
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-muted)]/50 p-4 text-xs text-[var(--text-muted)]">
+                  Allowlist is currently empty — ERP access is allowed from any IP address. Add at least one showroom/office IP above to enforce strict IP filtering.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="divide-y divide-[var(--border)] rounded-lg border border-[var(--border)]">
+                    {allowedIps.map((ip) => (
+                      <div
+                        key={ip}
+                        className="px-4 py-2.5 flex items-center justify-between gap-3 text-sm"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <code className="font-mono text-xs sm:text-sm font-medium">
+                            {ip}
+                          </code>
+                          {detectedClientIp === ip && (
+                            <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-[var(--receive-soft)] text-[var(--receive-text)]">
+                              Current IP
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          disabled={savingAllowedIps}
+                          onClick={() =>
+                            void handleSaveAllowedIps(
+                              allowedIps.filter((item) => item !== ip)
+                            )
+                          }
+                          className="h-8 px-2.5 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--give)] hover:bg-[var(--give-soft)] inline-flex items-center gap-1"
+                        >
+                          <IconTrash size={14} stroke={2} />
+                          <span>Remove</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={savingAllowedIps}
+                      onClick={() => void handleSaveAllowedIps([])}
+                      className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--give)] hover:bg-[var(--give-soft)]"
+                    >
+                      Clear Allowlist (Allow All IPs)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-3">
+              <h3 className="text-sm font-semibold inline-flex items-center gap-2">
+                <IconKey size={16} stroke={2} className="text-[var(--primary-dark)]" />
+                <span>Owner Break-Glass Recovery & Two-Factor Security</span>
+              </h3>
+              <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+                If your ISP IP changes and locks you out of /ERP, use one of the documented break-glass recovery controls on the server host without exposing the ERP to the public:
+              </p>
+              <ul className="text-xs text-[var(--text-muted)] space-y-1.5 list-disc pl-5">
+                <li>
+                  <code className="font-mono text-[var(--text)]">DECORBIZ_BREAKGLASS_TOKEN</code> — send via{' '}
+                  <code className="font-mono">X-Break-Glass-Token</code> header or <code className="font-mono">?bg_token=</code> query parameter.
+                </li>
+                <li>
+                  <code className="font-mono text-[var(--text)]">DECORBIZ_BREAKGLASS_IP</code> — emergency trusted IP/CIDR that always bypasses the DB allowlist.
+                </li>
+                <li>
+                  <code className="font-mono text-[var(--text)]">BYPASS_IP_ALLOWLIST=true</code> — temporary global emergency bypass while updating IPs here, then unset.
+                </li>
+              </ul>
+            </section>
+          </div>
         </RequireRole>
       )}
 
@@ -2802,6 +2979,18 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {integrations.map((item) => {
               const isEditing = editingIntegration === item.integration_key;
+              const linkedModuleMap: Record<string, { key: string; label: string }> = {
+                ai_provider: { key: 'ai', label: 'AI Assistant & Scanners' },
+                whatsapp_sms: { key: 'messaging', label: 'Messaging (WhatsApp & SMS)' },
+                google_drive: { key: 'google_drive_backup', label: 'Google Drive Backup' },
+                smtp_email: { key: 'email_notifications', label: 'Email Notifications & SMTP' },
+                einvoice_gsp: { key: 'einvoice', label: 'E-Invoice & E-Way Bill' },
+                online_payments: { key: 'online_payments', label: 'Online Payments' },
+                online_store: { key: 'online_store', label: 'Online Store' },
+              };
+              const linkedMod = linkedModuleMap[item.integration_key];
+              const linkedModuleOn = linkedMod ? isModuleEnabled(linkedMod.key) : true;
+
               return (
                 <section
                   key={item.integration_key}
@@ -2816,6 +3005,22 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                         {item.enabled ? 'Enabled' : 'Disabled'} ·{' '}
                         {item.has_secret ? 'Secret stored (masked)' : 'No secret configured'}
                       </p>
+                      {linkedMod && (
+                        <div className="mt-1 flex items-center gap-2 text-[11px]">
+                          <span className={linkedModuleOn ? 'text-[var(--receive-text)] font-medium' : 'text-amber-600 dark:text-amber-400 font-medium'}>
+                            Module ({linkedMod.label}): {linkedModuleOn ? 'ON' : 'OFF'}
+                          </span>
+                          {!linkedModuleOn && (
+                            <button
+                              type="button"
+                              onClick={() => setActiveTab('modules')}
+                              className="text-[var(--primary-dark)] underline font-medium"
+                            >
+                              Enable in Modules
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <span
                       className={`text-xs font-medium inline-flex items-center gap-1 ${
@@ -2894,7 +3099,11 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                         <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
                           {item.integration_key === 'google_drive'
                             ? 'Google OAuth Client Secret (leave blank to keep existing)'
-                            : 'API Key / Client Secret (leave blank to keep existing)'}
+                            : item.integration_key === 'online_payments'
+                              ? 'Gateway Key Secret / Webhook Secret (leave blank to keep existing)'
+                              : item.integration_key === 'online_store'
+                                ? 'Storefront Webhook Signing Secret (leave blank to keep existing)'
+                                : 'API Key / Client Secret (leave blank to keep existing)'}
                         </label>
                         <input
                           type="password"
@@ -3018,6 +3227,85 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                         </div>
                       )}
 
+                      {item.integration_key === 'online_payments' && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                          <select
+                            value={intConfigJson.provider || 'razorpay'}
+                            onChange={(e) => setIntConfigJson((p) => ({ ...p, provider: e.target.value }))}
+                            className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                          >
+                            <option value="razorpay">Razorpay</option>
+                            <option value="cashfree">Cashfree</option>
+                            <option value="payu">PayU</option>
+                            <option value="upi_gateway">Custom UPI Gateway</option>
+                          </select>
+                          <select
+                            value={intConfigJson.mode || 'test'}
+                            onChange={(e) => setIntConfigJson((p) => ({ ...p, mode: e.target.value }))}
+                            className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                          >
+                            <option value="test">Test / Sandbox</option>
+                            <option value="live">Live Production</option>
+                          </select>
+                          <input
+                            type="text"
+                            value={intConfigJson.key_id || ''}
+                            onChange={(e) => setIntConfigJson((p) => ({ ...p, key_id: e.target.value }))}
+                            placeholder="Gateway Key ID / Merchant ID"
+                            className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                          />
+                          <input
+                            type="url"
+                            value={intConfigJson.base_url || ''}
+                            onChange={(e) => setIntConfigJson((p) => ({ ...p, base_url: e.target.value }))}
+                            placeholder="HTTPS Webhook / Callback URL (optional)"
+                            className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                          />
+                        </div>
+                      )}
+
+                      {item.integration_key === 'online_store' && (
+                        <div className="space-y-2.5">
+                          <input
+                            type="url"
+                            value={intConfigJson.base_url || ''}
+                            onChange={(e) => setIntConfigJson((p) => ({ ...p, base_url: e.target.value }))}
+                            placeholder="Storefront Public HTTPS URL (optional)"
+                            className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                          />
+                          <div className="flex flex-wrap gap-4 text-xs">
+                            <label className="inline-flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={intConfigJson.pickup_enabled !== 'false'}
+                                onChange={(e) =>
+                                  setIntConfigJson((p) => ({
+                                    ...p,
+                                    pickup_enabled: e.target.checked ? 'true' : 'false',
+                                  }))
+                                }
+                                className="w-4 h-4 accent-[var(--primary-dark)]"
+                              />
+                              <span>Allow Pay on Shop Pickup</span>
+                            </label>
+                            <label className="inline-flex items-center gap-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={intConfigJson.cod_enabled !== 'false'}
+                                onChange={(e) =>
+                                  setIntConfigJson((p) => ({
+                                    ...p,
+                                    cod_enabled: e.target.checked ? 'true' : 'false',
+                                  }))
+                                }
+                                className="w-4 h-4 accent-[var(--primary-dark)]"
+                              />
+                              <span>Allow Cash on Delivery (COD)</span>
+                            </label>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -3059,30 +3347,30 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                         <IconKey size={15} stroke={2} />
                         <span>Configure</span>
                       </button>
+                      {(item.has_secret || Boolean(item.config_public?.base_url)) && (
+                        <button
+                          type="button"
+                          disabled={testingIntKey === item.integration_key}
+                          onClick={() => void handleTestIntegration(item.integration_key)}
+                          className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
+                        >
+                          <IconPlayerPlay size={14} stroke={2} />
+                          <span>
+                            {testingIntKey === item.integration_key ? 'Testing...' : 'Test'}
+                          </span>
+                        </button>
+                      )}
                       {item.has_secret && (
-                        <>
-                          <button
-                            type="button"
-                            disabled={testingIntKey === item.integration_key}
-                            onClick={() => void handleTestIntegration(item.integration_key)}
-                            className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
-                          >
-                            <IconPlayerPlay size={14} stroke={2} />
-                            <span>
-                              {testingIntKey === item.integration_key ? 'Testing...' : 'Test'}
-                            </span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleRemoveIntegrationSecret(item.integration_key)
-                            }
-                            className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--give)] inline-flex items-center gap-1.5 hover:bg-[var(--give-soft)]"
-                          >
-                            <IconTrash size={15} stroke={2} />
-                            <span>Remove Key</span>
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleRemoveIntegrationSecret(item.integration_key)
+                          }
+                          className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--give)] inline-flex items-center gap-1.5 hover:bg-[var(--give-soft)]"
+                        >
+                          <IconTrash size={15} stroke={2} />
+                          <span>Remove Key</span>
+                        </button>
                       )}
                     </div>
                   )}
@@ -3128,7 +3416,9 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                     type="button"
                     onClick={() => {
                       void loadBackupInfo();
-                      void loadDriveStatus();
+                      if (driveBackupModuleEnabled) {
+                        void loadDriveStatus();
+                      }
                     }}
                     disabled={loadingBackup}
                     className="h-10 px-3 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
@@ -3162,7 +3452,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                     onChange={(e) => setIncludeFiles(e.target.checked)}
                     className="w-4 h-4 accent-[var(--primary-dark)]"
                   />
-                  <span>Include uploaded attachment files (receipts, scans, prescriptions)</span>
+                  <span>Include uploaded attachment files (receipts, scans)</span>
                 </label>
 
                 <div>
@@ -3181,11 +3471,12 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
               </div>
 
               <p className="text-xs text-[var(--text-muted)]">
-                Includes business configuration, pack extensions (batches, variants, rate cards, sites, job cards), accounting vouchers, GST reconciliation data, locations, numbering series, parties, items, stock ledger, sales bills, purchases, expenses, payments, and file metadata signed with SHA-256.
+                Includes business configuration, contractor sites, material estimates, accounting vouchers, GST reconciliation data, locations, numbering series, parties, items, stock ledger, sales bills, purchases, expenses, payments, and file metadata signed with SHA-256.
               </p>
             </section>
 
             {/* Google Drive Cloud Backup & Sync (Optional) */}
+            {driveBackupModuleEnabled && (
             <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[var(--border)] pb-3">
                 <div>
@@ -3376,6 +3667,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                 </div>
               )}
             </section>
+            )}
 
             {/* Storage Usage Summary */}
             <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-4">
@@ -3462,7 +3754,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                         : 'Restore Workspace from Backup (Owner Only)'}
                     </h2>
                     <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                      Restoring replaces current business ledgers, items, parties, bills, purchases, and expenses with the selected snapshot. Before replacing data, BizOne automatically downloads a fresh pre-restore safety backup.
+                      Restoring replaces current business ledgers, items, parties, bills, purchases, and expenses with the selected snapshot. Before replacing data, DecorBiz automatically downloads a fresh pre-restore safety backup.
                     </p>
                   </div>
                 </div>

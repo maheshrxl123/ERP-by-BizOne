@@ -1,5 +1,25 @@
 import type { BusinessPackKey } from '../../config/app.config';
 import type { UserRole } from '../core/permissions';
+import type { ProductLineKey, TaxonomyScopeKey } from '../core/productLines';
+import type {
+  AnySpecsMap,
+  FaucetsCpSpecs,
+  OtherGeneralSpecs,
+  SanitarywareSpecs,
+  TileAdhesiveSpecs,
+  TilesSlabsSpecs,
+} from '../core/productSpecs';
+
+export type {
+  AnySpecsMap,
+  FaucetsCpSpecs,
+  OtherGeneralSpecs,
+  ProductLineKey,
+  SanitarywareSpecs,
+  TaxonomyScopeKey,
+  TileAdhesiveSpecs,
+  TilesSlabsSpecs,
+};
 
 export interface OnboardingSteps {
   logo: boolean;
@@ -15,7 +35,6 @@ export interface BusinessRecord {
   pack: BusinessPackKey;
   gst_registered: boolean;
   gstin: string | null;
-  drug_licence_no?: string | null;
   pack_settings?: Record<string, unknown>;
   phone: string | null;
   email: string | null;
@@ -44,6 +63,7 @@ export interface BusinessRecord {
   expense_prefix?: string;
   expense_next_number?: number;
   last_backup_at?: string | null;
+  allowed_ips?: string[];
   onboarding_completed: boolean;
   onboarding_steps: OnboardingSteps;
   created_at: string;
@@ -78,7 +98,7 @@ export interface FileRecord {
   mime_type: string;
   size_bytes: number;
   checksum: string | null;
-  purpose: 'avatar' | 'business_logo' | 'upi_qr' | 'item_image' | 'attachment' | 'prescription';
+  purpose: 'avatar' | 'business_logo' | 'upi_qr' | 'item_image' | 'attachment' | 'store_banner';
   uploaded_by: string | null;
   created_at: string;
   signedUrl?: string;
@@ -130,8 +150,6 @@ export interface PartyAddressRecord {
   is_default: boolean;
 }
 
-export type PriceTier = 'standard' | 'wholesale_a' | 'wholesale_b' | 'vip';
-
 export interface PartyRecord {
   id: string;
   name: string;
@@ -139,7 +157,6 @@ export interface PartyRecord {
   phone: string | null;
   email: string | null;
   gstin: string | null;
-  price_tier?: PriceTier;
   opening_balance: number;
   opening_balance_type: BalanceDirection;
   opening_balance_date: string;
@@ -161,7 +178,6 @@ export interface PartyBalanceRecord {
   phone: string | null;
   email: string | null;
   gstin: string | null;
-  price_tier?: PriceTier;
   sites_count?: number;
   opening_balance: number;
   opening_balance_type: BalanceDirection;
@@ -299,6 +315,7 @@ export interface ItemCategoryRecord {
   id: string;
   name: string;
   description: string | null;
+  product_line?: TaxonomyScopeKey;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -307,6 +324,7 @@ export interface ItemCategoryRecord {
 export interface BrandRecord {
   id: string;
   name: string;
+  product_line?: TaxonomyScopeKey;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -318,6 +336,7 @@ export interface ItemUnitRecord {
   name_en: string;
   name_hi: string;
   allow_decimal: boolean;
+  product_line?: TaxonomyScopeKey;
   is_system: boolean;
   is_active: boolean;
 }
@@ -345,10 +364,37 @@ export interface ItemImageRecord {
   } | null;
 }
 
-export interface WholesaleSlab {
-  min_qty: number;
-  rate: number;
-  tier?: string | null;
+export interface ItemVariantRecord {
+  id: string;
+  item_id: string;
+  item_name?: string;
+  base_unit_code?: string;
+  variant_name: string;
+  size_label: string | null;
+  finish: string | null;
+  shade: string | null;
+  batch_lot: string | null;
+  sku: string | null;
+  barcode: string | null;
+  selling_price: number;
+  mrp: number | null;
+  purchase_price: number | null;
+  qty_on_hand: number;
+  reserved_qty?: number;
+  available_qty?: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ItemLotBalanceRecord {
+  item_id: string;
+  variant_id: string | null;
+  variant_name: string;
+  shade: string;
+  batch_lot: string;
+  qty_on_hand: number;
+  last_movement_at: string | null;
 }
 
 export interface ItemCatalogRecord {
@@ -357,6 +403,7 @@ export interface ItemCatalogRecord {
   sku: string | null;
   barcode: string | null;
   item_type?: 'goods' | 'service';
+  product_line?: ProductLineKey;
   category_id: string | null;
   category_name: string | null;
   brand_id: string | null;
@@ -375,8 +422,14 @@ export interface ItemCatalogRecord {
   low_stock_alert: number;
   allow_negative_stock: boolean;
   primary_image_file_id: string | null;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  country_of_origin?: string | null;
+  warranty_months?: number | null;
+  video_url?: string | null;
+  description?: string | null;
+  specs?: AnySpecsMap | null;
   pack_metadata: Record<string, string | number | boolean | null>;
-  wholesale_slabs?: WholesaleSlab[];
   notes: string | null;
   is_active: boolean;
   is_demo: boolean;
@@ -384,15 +437,18 @@ export interface ItemCatalogRecord {
   created_at: string;
   updated_at: string;
   qty_on_hand: number;
+  reserved_qty?: number;
+  available_qty?: number;
+  is_published_online?: boolean;
+  online_price?: number | null;
+  online_slug?: string | null;
+  online_description?: string | null;
   last_movement_at: string | null;
   is_out_of_stock: boolean;
   is_low_stock: boolean;
   stock_value: number | null;
   image_count: number;
   conversions_count: number;
-  active_batches_count?: number;
-  variants_count?: number;
-  nearest_expiry_date?: string | null;
 }
 
 export interface InventorySummary {
@@ -407,6 +463,10 @@ export interface InventorySummary {
 export interface StockLedgerEntryRecord {
   id: string;
   item_id: string;
+  variant_id?: string | null;
+  variant_name?: string | null;
+  shade?: string | null;
+  batch_lot?: string | null;
   movement_type:
     | 'opening_stock'
     | 'adjustment_in'
@@ -457,7 +517,6 @@ export interface BillBusinessSnapshot {
   pack?: string;
   gst_registered?: boolean;
   gstin?: string | null;
-  drug_licence_no?: string | null;
   phone?: string | null;
   email?: string | null;
   address?: string | null;
@@ -535,8 +594,6 @@ export interface BillRecord {
   payment_reference?: string | null;
   site_id?: string | null;
   site_name?: string | null;
-  job_id?: string | null;
-  prescription_id?: string | null;
   created_at: string;
   updated_at: string;
   line_count?: number;
@@ -548,6 +605,9 @@ export interface BillLineRecord {
   bill_id: string;
   line_no: number;
   item_id: string;
+  variant_id?: string | null;
+  shade?: string | null;
+  batch_lot?: string | null;
   source_bill_line_id: string | null;
   item_name: string;
   sku: string | null;
@@ -570,12 +630,7 @@ export interface BillLineRecord {
   igst_amount: number;
   tax_amount: number;
   line_total: number;
-  batch_id?: string | null;
-  batch_no?: string | null;
-  expiry_date?: string | null;
   mrp?: number | null;
-  variant_id?: string | null;
-  variant_label?: string | null;
   line_meta?: Record<string, unknown>;
 }
 
@@ -679,6 +734,9 @@ export interface PurchaseLineRecord {
   purchase_id: string;
   line_no: number;
   item_id: string;
+  variant_id?: string | null;
+  shade?: string | null;
+  batch_lot?: string | null;
   source_purchase_line_id: string | null;
   item_name: string;
   sku: string | null;
@@ -700,14 +758,7 @@ export interface PurchaseLineRecord {
   igst_amount: number;
   tax_amount: number;
   line_total: number;
-  batch_id?: string | null;
-  batch_no?: string | null;
-  mfg_date?: string | null;
-  expiry_date?: string | null;
   mrp?: number | null;
-  selling_rate?: number | null;
-  variant_id?: string | null;
-  variant_label?: string | null;
   line_meta?: Record<string, unknown>;
 }
 
@@ -743,8 +794,6 @@ export interface ExpenseRecord {
   paid_to: string | null;
   notes: string | null;
   attachment_file_id: string | null;
-  job_id?: string | null;
-  job_number?: string | null;
   status: 'posted' | 'voided';
   void_reason: string | null;
   voided_at: string | null;
@@ -952,107 +1001,8 @@ export interface BackupHistoryRecord {
 }
 
 // ============================================================================
-// Phase P6: Business Packs, Batch/Variant/Estimate/Warranty/Jobs, Import & Drive
+// Phase P6: DecorBiz Sites, Material Estimates, Import & Drive
 // ============================================================================
-export interface ItemBatchRecord {
-  id: string;
-  item_id: string;
-  batch_no: string;
-  mfg_date: string | null;
-  expiry_date: string;
-  mrp: number | null;
-  purchase_rate: number | null;
-  selling_rate: number | null;
-  qty_on_hand: number;
-  source_purchase_id?: string | null;
-  is_active: boolean;
-  is_demo?: boolean;
-  created_at: string;
-  updated_at?: string;
-}
-
-export interface NearExpiryBatchRow {
-  id: string;
-  item_id: string;
-  item_name: string;
-  sku: string | null;
-  salt_name: string | null;
-  schedule_class: string | null;
-  batch_no: string;
-  mfg_date: string | null;
-  expiry_date: string;
-  mrp: number | null;
-  selling_rate: number | null;
-  qty_on_hand: number;
-  days_to_expiry: number;
-  is_expired: boolean;
-  stock_cost_value: number;
-}
-
-export interface SaltSubstituteRow {
-  id: string;
-  name: string;
-  sku: string | null;
-  selling_price: number;
-  mrp: number | null;
-  qty_on_hand: number;
-  base_unit_code: string;
-  salt_name: string | null;
-  manufacturer: string | null;
-  nearest_expiry_date: string | null;
-}
-
-export interface PrescriptionRecord {
-  id: string;
-  bill_id: string;
-  patient_name: string;
-  patient_age: string | null;
-  patient_phone: string | null;
-  doctor_name: string;
-  doctor_reg_no: string | null;
-  notes: string | null;
-  attachment_file_id: string | null;
-  created_at: string;
-}
-
-export interface ScheduleRegisterRecord {
-  id: string;
-  bill_id: string;
-  bill_number?: string | null;
-  bill_line_id: string;
-  prescription_id: string | null;
-  item_id: string;
-  item_name: string;
-  salt_name: string | null;
-  schedule_class: string;
-  batch_no: string | null;
-  expiry_date: string | null;
-  qty: number;
-  unit_code: string;
-  patient_name: string | null;
-  doctor_name: string | null;
-  doctor_reg_no: string | null;
-  sale_date: string;
-  created_at: string;
-}
-
-export interface ItemVariantRecord {
-  id: string;
-  item_id: string;
-  size: string;
-  color: string;
-  sku: string | null;
-  barcode: string | null;
-  selling_price: number | null;
-  mrp: number | null;
-  purchase_price: number | null;
-  qty_on_hand: number;
-  is_active: boolean;
-  is_demo?: boolean;
-  created_at: string;
-  updated_at?: string;
-}
-
 export interface PartySiteRecord {
   id: string;
   party_id: string;
@@ -1061,16 +1011,6 @@ export interface PartySiteRecord {
   contact_phone: string | null;
   address: string | null;
   is_active: boolean;
-  is_demo?: boolean;
-  created_at: string;
-}
-
-export interface PartyItemRateRecord {
-  id: string;
-  party_id: string;
-  item_id: string;
-  custom_rate: number;
-  min_qty: number;
   is_demo?: boolean;
   created_at: string;
 }
@@ -1094,42 +1034,6 @@ export interface HardwareEstimateRecord {
   updated_at: string;
 }
 
-export interface WarrantyRecord {
-  id: string;
-  item_id: string;
-  bill_id: string;
-  bill_line_id: string | null;
-  party_id: string | null;
-  party_name: string | null;
-  item_name: string;
-  serial_no: string;
-  warranty_months: number;
-  purchase_date: string;
-  warranty_end_date: string;
-  status: 'active' | 'claimed' | 'replaced' | 'expired';
-  claim_notes: string | null;
-  created_at: string;
-}
-
-export interface ServiceJobRecord {
-  id: string;
-  job_number: string;
-  party_id: string | null;
-  party_name: string;
-  title: string;
-  description: string | null;
-  status: 'open' | 'in_progress' | 'completed' | 'billed' | 'cancelled';
-  start_date: string;
-  due_date: string | null;
-  completed_date: string | null;
-  estimated_amount: number;
-  linked_bill_id: string | null;
-  notes: string | null;
-  is_demo?: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface ImportErrorRow {
   row: number;
   name: string;
@@ -1144,43 +1048,6 @@ export interface ImportJobResult {
   skipped_count: number;
   error_count: number;
   errors: ImportErrorRow[];
-}
-
-export interface PackReportsData {
-  pack: string;
-  near_expiry_count: number;
-  expired_stock_value: number;
-  schedule_entries_count: number;
-  variant_stock_summary: Array<{
-    size: string;
-    color: string;
-    total_qty: number;
-    sku_count: number;
-  }>;
-  active_warranties_count: number;
-  claimed_warranties_count: number;
-  job_profitability: Array<{
-    id: string;
-    job_number: string;
-    title: string;
-    party_name: string;
-    status: string;
-    estimated_amount: number;
-    billed_revenue: number;
-    job_expenses: number;
-  }>;
-  tier_sales_summary: Array<{
-    price_tier: string;
-    bill_count: number;
-    total_sales: number;
-  }>;
-  site_sales_summary: Array<{
-    site_name: string;
-    party_name: string;
-    bill_count: number;
-    total_sales: number;
-    balance_due: number;
-  }>;
 }
 
 export interface DriveConnectionStatus {
@@ -1485,7 +1352,317 @@ export interface MessageLogRecord {
   created_at: string;
 }
 
+// ============================================================================
+// Step 4: Retail Storefront & E-Commerce Fulfillment Types
+// ============================================================================
+export interface CustomerRecord {
+  id: string;
+  auth_user_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  default_address: string | null;
+  default_pincode: string | null;
+  email_verified: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface PublishedStoreVariantRecord {
+  id: string;
+  variant_name: string;
+  size_label: string | null;
+  finish: string | null;
+  shade: string | null;
+  sku: string | null;
+  selling_price: number;
+  mrp: number | null;
+  available_qty: number;
+}
 
+export interface PublishedStoreItemRecord {
+  id: string;
+  name: string;
+  sku: string | null;
+  item_type: 'goods' | 'service';
+  product_line: ProductLineKey;
+  category_id: string | null;
+  category_name: string | null;
+  brand_id: string | null;
+  brand_name: string | null;
+  base_unit_code: string;
+  base_unit_name_en: string;
+  selling_price: number;
+  online_price: number | null;
+  effective_price: number;
+  mrp: number | null;
+  gst_rate: number;
+  tax_inclusive: boolean;
+  allow_negative_stock: boolean;
+  primary_image_file_id: string | null;
+  warranty_months: number | null;
+  video_url: string | null;
+  description: string | null;
+  online_description: string | null;
+  online_slug: string;
+  specs: AnySpecsMap | null;
+  qty_on_hand: number;
+  reserved_qty: number;
+  available_qty: number;
+  in_stock: boolean;
+  image_file_ids: string[];
+  variants: PublishedStoreVariantRecord[];
+  avg_rating?: number;
+  review_count?: number;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface StoreDeliveryZoneRecord {
+  id: string;
+  zone_name: string;
+  pincodes: string[];
+  area_keywords: string[];
+  delivery_charge: number;
+  min_order_amount: number;
+  estimated_days: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
+export interface StoreCouponRecord {
+  id: string;
+  code: string;
+  description: string | null;
+  discount_type: 'pct' | 'flat';
+  discount_value: number;
+  min_order_amount: number;
+  max_discount: number | null;
+  valid_until: string | null;
+  usage_limit: number | null;
+  used_count: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoreBannerRecord {
+  id: string;
+  title: string;
+  subtitle: string | null;
+  cta_label: string | null;
+  cta_link: string | null;
+  image_file_id: string | null;
+  sort_order: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StorePageRecord {
+  id: string;
+  slug: string;
+  title: string;
+  content: string;
+  is_published: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StoreDeliveryTripRecord {
+  id: string;
+  trip_number: string;
+  trip_date: string;
+  driver_name: string;
+  driver_phone: string | null;
+  vehicle_no: string | null;
+  status: 'planned' | 'dispatched' | 'completed' | 'cancelled';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type StoreOrderStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'packing'
+  | 'out_for_delivery'
+  | 'ready_for_pickup'
+  | 'delivered'
+  | 'picked_up'
+  | 'cancelled';
+
+export type StorePaymentMethod = 'cod' | 'pay_on_pickup' | 'razorpay';
+export type StorePaymentStatus = 'unpaid' | 'pending' | 'paid' | 'failed' | 'refunded';
+
+export interface StoreOrderLineRecord {
+  id: string;
+  order_id: string;
+  item_id: string;
+  variant_id: string | null;
+  item_name: string;
+  variant_name: string | null;
+  sku: string | null;
+  ordered_unit: string;
+  ordered_qty: number;
+  base_qty: number;
+  unit_price: number;
+  line_total: number;
+  wastage_pct: number;
+  created_at: string;
+}
+
+export interface StoreOrderRecord {
+  id: string;
+  order_number: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string | null;
+  status: StoreOrderStatus;
+  fulfillment_type: 'delivery' | 'pickup';
+  zone_id: string | null;
+  delivery_address: string | null;
+  delivery_pincode: string | null;
+  delivery_area: string | null;
+  coupon_code: string | null;
+  subtotal: number;
+  discount_amount: number;
+  delivery_charge: number;
+  grand_total: number;
+  payment_method: StorePaymentMethod;
+  payment_status: StorePaymentStatus;
+  razorpay_order_id: string | null;
+  razorpay_payment_id: string | null;
+  delivery_trip_id: string | null;
+  stock_state: 'none' | 'reserved' | 'deducted' | 'released';
+  customer_notes: string | null;
+  internal_notes: string | null;
+  confirmed_at: string | null;
+  delivered_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
+  lines?: StoreOrderLineRecord[];
+  delivery_trip?: StoreDeliveryTripRecord | null;
+}
+
+export interface ProductReviewRecord {
+  id: string;
+  item_id: string;
+  customer_id: string;
+  customer_name: string;
+  rating: number;
+  title: string | null;
+  comment: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  updated_at: string;
+  item_name?: string;
+}
+
+export interface BreakageReturnRecord {
+  id: string;
+  return_number: string;
+  bill_id: string | null;
+  party_id: string | null;
+  item_id: string;
+  variant_id: string | null;
+  shade: string | null;
+  batch_lot: string | null;
+  qty: number;
+  unit_id: string;
+  reason: string;
+  disposition: 'replace' | 'credit' | 'write_off';
+  credit_amount: number;
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SampleIssueRecord {
+  id: string;
+  sample_number: string;
+  party_id: string | null;
+  party_name: string;
+  item_id: string;
+  variant_id: string | null;
+  shade: string | null;
+  qty: number;
+  unit_id: string;
+  issued_date: string;
+  expected_return_date: string | null;
+  returned_date: string | null;
+  status: 'issued' | 'returned' | 'kept' | 'cancelled';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractorRateCardRecord {
+  id: string;
+  party_id: string;
+  item_id: string;
+  variant_id: string | null;
+  agreed_rate: number;
+  discount_pct: number;
+  min_qty: number;
+  valid_until: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CommissionEntryRecord {
+  id: string;
+  party_id: string | null;
+  party_name: string;
+  bill_id: string | null;
+  bill_number: string | null;
+  bill_date: string;
+  base_amount: number;
+  commission_pct: number;
+  commission_amount: number;
+  status: 'pending' | 'approved' | 'paid' | 'cancelled';
+  paid_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplierPriceListRecord {
+  id: string;
+  party_id: string;
+  item_id: string;
+  supplier_sku: string | null;
+  supplier_rate: number;
+  moq: number;
+  lead_time_days: number;
+  valid_until: string | null;
+  notes: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ErpDeliveryTripRecord {
+  id: string;
+  trip_number: string;
+  trip_date: string;
+  party_id: string | null;
+  party_name: string;
+  site_id: string | null;
+  site_name: string | null;
+  bill_id: string | null;
+  driver_name: string;
+  driver_phone: string | null;
+  vehicle_no: string | null;
+  status: 'planned' | 'dispatched' | 'delivered' | 'cancelled';
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}

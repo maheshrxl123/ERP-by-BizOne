@@ -54,7 +54,7 @@ if (fs.existsSync(envPath)) {
   }
 }
 
-console.log('=== BizOne ERP Supabase Migration & Setup Check ===');
+console.log('=== DecorBiz Supabase Migration & Setup Check ===');
 
 execSync('node scripts/check-env.mjs', { stdio: 'inherit', env: process.env });
 
@@ -120,9 +120,18 @@ async function applyMigrationsIfToken() {
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'bills') AS has_p4,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'purchase_bills') AS has_p5_9,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'notifications') AS has_p5_10,
-      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'item_batches') AS has_p6_11,
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'hardware_estimates') AS has_p6_11,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'drive_connections') AS has_p6_12,
-      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ai_provider_profiles') AS has_p7_13;
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'ai_provider_profiles') AS has_p7_13,
+      NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'item_batches') AS has_p16_clean,
+      EXISTS (SELECT 1 FROM public.modules_state WHERE module_key = 'online_store') AS has_p17_modules,
+      EXISTS (SELECT 1 FROM public.integration_settings WHERE integration_key = 'online_payments') AS has_p18_int,
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'items' AND column_name = 'product_line') AS has_p19_lines,
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'item_specs_tiles_slabs') AS has_p20_specs,
+      EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stock_ledger' AND column_name = 'batch_lot') AS has_p21_variants,
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'staff_totp') AS has_p22_sec,
+      EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'store_orders') AS has_p23_store,
+      EXISTS (SELECT 1 FROM public.modules_state WHERE module_key = 'breakage_returns') AS has_p24_step2_mods;
   `);
 
   const state = stateRows?.[0] || {};
@@ -149,6 +158,15 @@ async function applyMigrationsIfToken() {
     '0011_phase6_packs_data_management.sql': Boolean(state.has_p6_11),
     '0012_phase6_import_demo_backup_drive.sql': Boolean(state.has_p6_12),
     '0013_phase7_ai_advanced_v1.sql': Boolean(state.has_p7_13),
+    '0016_decorbiz_step1_pack_cleanup.sql': Boolean(state.has_p16_clean),
+    '0017_decorbiz_step1_modules.sql': Boolean(state.has_p17_modules),
+    '0018_decorbiz_step1_integrations.sql': Boolean(state.has_p18_int),
+    '0019_decorbiz_step2_product_lines.sql': Boolean(state.has_p19_lines),
+    '0020_decorbiz_step2_item_specs.sql': Boolean(state.has_p20_specs),
+    '0021_decorbiz_step2_variants_lots.sql': Boolean(state.has_p21_variants),
+    '0022_decorbiz_step3_security.sql': Boolean(state.has_p22_sec),
+    '0023_decorbiz_step4_ecommerce.sql': Boolean(state.has_p23_store),
+    '0024_decorbiz_step2_modules_and_security.sql': Boolean(state.has_p24_step2_mods),
   };
 
   const forceSync = process.argv.includes('--force-sync');
@@ -158,6 +176,15 @@ async function applyMigrationsIfToken() {
     '0013_phase7_ai_advanced_v1.sql',
     '0014_tax_fixes_and_ai_features.sql',
     '0015_service_role_and_phase1_grants.sql',
+    '0016_decorbiz_step1_pack_cleanup.sql',
+    '0017_decorbiz_step1_modules.sql',
+    '0018_decorbiz_step1_integrations.sql',
+    '0019_decorbiz_step2_product_lines.sql',
+    '0020_decorbiz_step2_item_specs.sql',
+    '0021_decorbiz_step2_variants_lots.sql',
+    '0022_decorbiz_step3_security.sql',
+    '0023_decorbiz_step4_ecommerce.sql',
+    '0024_decorbiz_step2_modules_and_security.sql',
   ]);
 
   for (const file of migrationFiles) {
@@ -185,6 +212,29 @@ async function applyMigrationsIfToken() {
     `);
     console.log(`[setup] Applied/synced migration: ${file}`);
   }
+
+  // Ensure private DecorBiz storage bucket exists
+  const rawBucket = (process.env.SUPABASE_STORAGE_BUCKET || '')
+    .replace(/^['"]+|['"]+$/g, '')
+    .trim();
+  const bucketName = /^[a-z0-9][a-z0-9._-]{1,61}$/.test(rawBucket)
+    ? rawBucket
+    : 'decorbiz-private';
+  await runMgmtQuery(`
+    INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    VALUES (
+      '${bucketName.replace(/'/g, "''")}',
+      '${bucketName.replace(/'/g, "''")}',
+      false,
+      10485760,
+      ARRAY['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
+    )
+    ON CONFLICT (id) DO UPDATE
+    SET public = false,
+        file_size_limit = EXCLUDED.file_size_limit,
+        allowed_mime_types = EXCLUDED.allowed_mime_types;
+  `);
+  console.log(`[setup] Verified private storage bucket: ${bucketName}`);
 
   const summary = await runMgmtQuery(`
     NOTIFY pgrst, 'reload schema';
@@ -224,7 +274,7 @@ async function verifyConnectivity() {
   await applyMigrationsIfToken();
   await verifyConnectivity();
   console.log(
-    '[setup] All BizOne ERP migrations (0001..0015) are verified and live.'
+    '[setup] All DecorBiz migrations (0001..0024) & private storage bucket are verified and live.'
   );
 })().catch((err) => {
   console.error('[setup] Error:', err.message);

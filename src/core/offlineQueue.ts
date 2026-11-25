@@ -1,7 +1,7 @@
-import type { OfflineBillQueueItem, OfflineSyncResultItem } from '../types/bizone';
+import type { OfflineBillQueueItem, OfflineSyncResultItem } from '../types/decorbiz';
 import { supabase } from './supabase';
 
-const STORAGE_KEY = 'bizone_pos_offline_queue_v1';
+const STORAGE_KEY = 'decorbiz_pos_offline_queue_v1';
 
 export function generateOfflineIdempotencyKey(): string {
   const rand =

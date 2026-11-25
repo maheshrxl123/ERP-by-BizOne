@@ -12,8 +12,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { printReportHtml } from '../../core/export';
 import { formatDate, formatINR } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
-import type { PurchaseBillRecord, PurchaseLineRecord } from '../../types/bizone';
+import type { PurchaseBillRecord, PurchaseLineRecord } from '../../types/decorbiz';
 import { PurchaseReturnModal } from './PurchaseReturnModal';
 
 interface PurchaseDetailModalProps {
@@ -54,12 +55,9 @@ export function PurchaseDetailModal({
       setLines((data as PurchaseLineRecord[] | null) ?? []);
 
       if (purchase.attachment_file_id && session?.access_token) {
-        const res = await fetch('/api/files/signed-url', {
+        const res = await erpFetch('/api/erp/files/signed-url', session.access_token, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileId: purchase.attachment_file_id }),
         });
         const json = await res.json();
@@ -243,8 +241,16 @@ export function PurchaseDetailModal({
                       <tr key={l.id} className="border-b border-[var(--border)] last:border-b-0">
                         <td className="px-3 py-2">
                           <div className="font-medium">{l.item_name}</div>
-                          {l.hsn_code && (
-                            <div className="text-[11px] text-[var(--text-muted)]">HSN {l.hsn_code}</div>
+                          {Boolean(l.hsn_code || l.line_meta?.shade || l.line_meta?.batch_lot) && (
+                            <div className="text-[11px] text-[var(--text-muted)]">
+                              {[
+                                l.hsn_code ? `HSN ${l.hsn_code}` : null,
+                                typeof l.line_meta?.shade === 'string' && l.line_meta.shade ? `Shade: ${l.line_meta.shade}` : null,
+                                typeof l.line_meta?.batch_lot === 'string' && l.line_meta.batch_lot ? `Lot: ${l.line_meta.batch_lot}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' · ')}
+                            </div>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">

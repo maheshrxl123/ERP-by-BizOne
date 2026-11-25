@@ -12,8 +12,9 @@ import { convertToBaseQty, formatStockQty } from '../../core/units';
 import type {
   ItemCatalogRecord,
   ItemUnitRecord,
+  ItemVariantRecord,
   UnitConversionRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 interface StockAdjustmentModalProps {
   open: boolean;
@@ -39,6 +40,10 @@ export function StockAdjustmentModal({
   const [reason, setReason] = useState('');
   const [movementDate, setMovementDate] = useState(() => todayLocalIso());
   const [idempKey, setIdempKey] = useState(() => crypto.randomUUID());
+  const [variants, setVariants] = useState<ItemVariantRecord[]>([]);
+  const [variantId, setVariantId] = useState('');
+  const [shade, setShade] = useState('');
+  const [batchLot, setBatchLot] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,7 +55,24 @@ export function StockAdjustmentModal({
     setReason('');
     setMovementDate(todayLocalIso());
     setIdempKey(crypto.randomUUID());
+    setVariantId('');
+    setShade('');
+    setBatchLot('');
     setError(null);
+
+    let active = true;
+    supabase
+      .from('item_variants_view')
+      .select('*')
+      .eq('item_id', item.id)
+      .eq('is_active', true)
+      .order('variant_name')
+      .then(({ data }) => {
+        if (active) setVariants((data as ItemVariantRecord[] | null) ?? []);
+      });
+    return () => {
+      active = false;
+    };
   }, [open, item]);
 
   const selectableUnits = useMemo(() => {
@@ -122,6 +144,9 @@ export function StockAdjustmentModal({
         p_reason: reason.trim(),
         p_movement_date: movementDate,
         p_idempotency_key: idempKey,
+        p_variant_id: variantId || null,
+        p_shade: shade.trim() || null,
+        p_batch_lot: batchLot.trim() || null,
       });
       if (rpcErr) throw rpcErr;
 
@@ -273,6 +298,63 @@ export function StockAdjustmentModal({
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Optional Variant, Shade & Batch Lot Tracking */}
+          {(variants.length > 0 || item.product_line === 'tiles_slabs') && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)]/50">
+              {variants.length > 0 && (
+                <div className="sm:col-span-3">
+                  <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                    Variant (Optional)
+                  </label>
+                  <select
+                    value={variantId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setVariantId(nextId);
+                      const v = variants.find((x) => x.id === nextId);
+                      if (v) {
+                        if (v.shade) setShade(v.shade);
+                        if (v.batch_lot) setBatchLot(v.batch_lot);
+                      }
+                    }}
+                    className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                  >
+                    <option value="">Base Item (No Variant)</option>
+                    {variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.variant_name} ({formatStockQty(v.qty_on_hand, item.base_unit_code)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div className={variants.length > 0 ? 'sm:col-span-1' : 'sm:col-span-1'}>
+                <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                  Shade / Tone
+                </label>
+                <input
+                  type="text"
+                  value={shade}
+                  onChange={(e) => setShade(e.target.value)}
+                  placeholder="e.g. A12 / Ivory"
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-medium text-[var(--text-muted)] mb-1">
+                  Batch / Lot No.
+                </label>
+                <input
+                  type="text"
+                  value={batchLot}
+                  onChange={(e) => setBatchLot(e.target.value)}
+                  placeholder="e.g. LOT-2026-03"
+                  className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-mono"
+                />
+              </div>
             </div>
           )}
 

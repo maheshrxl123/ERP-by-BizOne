@@ -22,7 +22,7 @@ import {
   type ImportEntityType,
 } from '../../core/spreadsheet';
 import { supabase } from '../../core/supabase';
-import type { ImportJobResult } from '../../types/bizone';
+import type { ImportJobResult } from '../../types/decorbiz';
 
 interface ImportJobHistoryRow {
   id: string;
@@ -81,7 +81,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
     setImportResult(null);
     try {
       const buf = await file.arrayBuffer();
-      const parsed = parseSpreadsheetBuffer(buf, file.name);
+      const parsed = await parseSpreadsheetBuffer(buf, file.name);
       setRawBuffer(buf);
       setFileName(file.name);
       setSheetNames(parsed.sheetNames);
@@ -96,10 +96,10 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
     }
   };
 
-  const handleSheetChange = (nextSheet: string) => {
+  const handleSheetChange = async (nextSheet: string) => {
     if (!rawBuffer) return;
     try {
-      const parsed = parseSpreadsheetBuffer(rawBuffer, fileName, nextSheet);
+      const parsed = await parseSpreadsheetBuffer(rawBuffer, fileName, nextSheet);
       setSelectedSheet(parsed.selectedSheet);
       setHeaders(parsed.headers);
       setRows(parsed.rows);
@@ -157,9 +157,9 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
         const { data } = await supabase.from('party_balances').select('*').order('name');
         sheets.push({
           name: 'Parties',
-          headers: ['Name', 'Type', 'Price Tier', 'Phone', 'Email', 'GSTIN', 'Net Balance', 'To Receive', 'To Give', 'Credit Limit', 'Credit Days'],
+          headers: ['Name', 'Type', 'Phone', 'Email', 'GSTIN', 'Net Balance', 'To Receive', 'To Give', 'Credit Limit', 'Credit Days'],
           rows: (data || []).map((p) => [
-            p.name, p.party_type, p.price_tier || 'standard', p.phone || '', p.email || '',
+            p.name, p.party_type, p.phone || '', p.email || '',
             p.gstin || '', p.net_balance, p.to_receive, p.to_give, p.credit_limit, p.credit_days,
           ]),
         });
@@ -215,8 +215,8 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
         });
       }
 
-      exportSheetsToBrowser(
-        `bizone-${target}-${new Date().toISOString().slice(0, 10)}`,
+      await exportSheetsToBrowser(
+        `decorbiz-${target}-${new Date().toISOString().slice(0, 10)}`,
         sheets,
         target === 'full_workbook' ? 'xlsx' : format
       );
@@ -301,7 +301,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => downloadImportTemplate(entityType, 'xlsx')}
+                  onClick={() => void downloadImportTemplate(entityType, 'xlsx')}
                   className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-medium inline-flex items-center gap-1.5"
                 >
                   <IconDownload size={14} stroke={2} />
@@ -309,7 +309,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => downloadImportTemplate(entityType, 'csv')}
+                  onClick={() => void downloadImportTemplate(entityType, 'csv')}
                   className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-medium inline-flex items-center gap-1.5"
                 >
                   <IconDownload size={14} stroke={2} />
@@ -323,7 +323,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                 <input
                   ref={fileRef}
                   type="file"
-                  accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                   onChange={(e) => void handleFileSelect(e.target.files?.[0])}
                   className="hidden"
                 />
@@ -339,7 +339,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                 {sheetNames.length > 1 && (
                   <select
                     value={selectedSheet}
-                    onChange={(e) => handleSheetChange(e.target.value)}
+                    onChange={(e) => void handleSheetChange(e.target.value)}
                     className="h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
                   >
                     {sheetNames.map((s) => (

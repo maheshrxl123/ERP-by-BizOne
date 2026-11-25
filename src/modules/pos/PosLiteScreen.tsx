@@ -32,7 +32,7 @@ import type {
   PartyBalanceRecord,
   PaymentMode,
   PosCashRegisterRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 interface CartLine {
   item: ItemCatalogRecord;
@@ -371,8 +371,6 @@ export function PosLiteScreen() {
         p_payment_reference: splitNote,
         p_idempotency_key: generateOfflineIdempotencyKey(),
         p_site_id: null,
-        p_job_id: null,
-        p_prescription: null,
       });
       if (error) throw error;
       const issued = data as { bill_number?: string };

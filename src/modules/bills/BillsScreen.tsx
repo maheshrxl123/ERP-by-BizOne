@@ -10,7 +10,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
-import type { BillRecord, BillingSummary } from '../../types/bizone';
+import type { BillRecord, BillingSummary } from '../../types/decorbiz';
 import { BillDetailView } from './BillDetailView';
 import { NewBillScreen } from './NewBillScreen';
 

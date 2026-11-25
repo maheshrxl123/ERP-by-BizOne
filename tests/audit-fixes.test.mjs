@@ -4,10 +4,9 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
-import * as XLSX from 'xlsx';
 import { buildSignedBackupBlob, verifyBackupEnvelope } from '../src/core/backup.ts';
 import { escapeCsvCell } from '../src/core/format.ts';
-import { buildErrorCsvText, buildExportWorkbookBuffer } from '../src/core/spreadsheet.ts';
+import { buildErrorCsvText, buildExportWorkbookBuffer, parseSpreadsheetBuffer } from '../src/core/spreadsheet.ts';
 import { isSupabaseConfigured, supabase } from '../src/core/supabase.ts';
 import { IndiaGstTaxEngine } from '../src/core/taxEngine.ts';
 
@@ -40,7 +39,7 @@ function getFreePort() {
 test('Audit Fix: verifyBackupEnvelope accepts p5-v1, p6-v1, and p7-v1 and rejects invalid schemas or tampered data', async () => {
   for (const version of ['p5-v1', 'p6-v1', 'p7-v1']) {
     const blob = await buildSignedBackupBlob({
-      app: 'BizOne ERP',
+      app: 'DecorBiz',
       schema_version: version,
       exported_at: new Date().toISOString(),
       record_counts: { parties: 1 },
@@ -55,7 +54,7 @@ test('Audit Fix: verifyBackupEnvelope accepts p5-v1, p6-v1, and p7-v1 and reject
   }
 
   const badVersionBlob = await buildSignedBackupBlob({
-    app: 'BizOne ERP',
+    app: 'DecorBiz',
     schema_version: 'p99-v1',
     exported_at: new Date().toISOString(),
     record_counts: {},
@@ -67,7 +66,7 @@ test('Audit Fix: verifyBackupEnvelope accepts p5-v1, p6-v1, and p7-v1 and reject
   );
 
   const p7Blob = await buildSignedBackupBlob({
-    app: 'BizOne ERP',
+    app: 'DecorBiz',
     schema_version: 'p7-v1',
     exported_at: new Date().toISOString(),
     record_counts: {},
@@ -80,14 +79,14 @@ test('Audit Fix: verifyBackupEnvelope accepts p5-v1, p6-v1, and p7-v1 and reject
   );
 });
 
-test('Audit Fix: escapeCsvCell and spreadsheet CSV exporters neutralize formula injection payloads', () => {
+test('Audit Fix: escapeCsvCell and spreadsheet CSV exporters neutralize formula injection payloads', async () => {
   assert.equal(escapeCsvCell('=CMD|"/C calc"!A0'), '"\'=CMD|""/C calc""!A0"');
   assert.equal(escapeCsvCell('+SUM(A1:A2)'), "'+SUM(A1:A2)");
   assert.equal(escapeCsvCell('-1+1'), "'-1+1");
   assert.equal(escapeCsvCell('@SUM(1,2)'), '"\'@SUM(1,2)"');
   assert.equal(escapeCsvCell('Normal Item'), 'Normal Item');
 
-  const csvExport = buildExportWorkbookBuffer(
+  const csvExport = await buildExportWorkbookBuffer(
     [
       {
         name: 'Parties',
@@ -112,13 +111,12 @@ test('Audit Fix: escapeCsvCell and spreadsheet CSV exporters neutralize formula 
   assert.ok(errCsv.includes("'=1+1"));
 
   // XLSX keeps raw string values (no spurious quote prefix in workbook sheet objects)
-  const xlsxExport = buildExportWorkbookBuffer(
+  const xlsxExport = await buildExportWorkbookBuffer(
     [{ name: 'Sheet1', headers: ['Col'], rows: [['+91 9876543210']] }],
     'xlsx'
   );
-  const wb = XLSX.read(xlsxExport.buffer, { type: 'array' });
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets.Sheet1, { header: 1 });
-  assert.equal(rows[1][0], '+91 9876543210');
+  const parsed = await parseSpreadsheetBuffer(xlsxExport.buffer, 'export.xlsx');
+  assert.equal(parsed.rows[0].Col, '+91 9876543210');
 });
 
 test('Audit Fix: IndiaGstTaxEngine uses decimal-safe roundHalfUp without 1.005 IEEE-754 drift', () => {

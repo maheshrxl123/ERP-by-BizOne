@@ -17,7 +17,7 @@ import type {
   KhataTotalsSummary,
   PartyBalanceRecord,
   PaymentDirection,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { PartyDetailView } from './PartyDetailView';
 import { PartyFormModal } from './PartyFormModal';
 import { PaymentModal } from './PaymentModal';

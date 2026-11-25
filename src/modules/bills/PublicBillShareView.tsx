@@ -2,7 +2,7 @@ import { IconAlertCircle, IconCheck, IconLoader2, IconPrinter } from '@tabler/ic
 import { useEffect, useMemo, useState } from 'react';
 import { buildUpiDeepLink, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
-import type { PublicSharedBillPayload } from '../../types/bizone';
+import type { PublicSharedBillPayload } from '../../types/decorbiz';
 import { UpiQrSvg } from './UpiQrSvg';
 
 interface PublicBillShareViewProps {
@@ -85,7 +85,7 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
         : Number(payload.bill.balance_due);
     return buildUpiDeepLink({
       upiId: payload.assets.upiId,
-      businessName: payload.bill.business_snapshot?.name || 'BizOne Store',
+      businessName: payload.bill.business_snapshot?.name || 'DecorBiz Store',
       amount: amount > 0 ? amount : undefined,
       note: payload.bill.bill_number || 'Invoice Payment',
     });

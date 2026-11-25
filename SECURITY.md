@@ -1,4 +1,4 @@
-# Security Policy — BizOne ERP
+# Security Policy — DecorBiz
 
 ## Supported Versions
 | Version | Supported |

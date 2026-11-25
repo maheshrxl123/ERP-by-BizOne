@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
 import { supabase } from '../../core/supabase';
-import type { PurchaseBillRecord, PurchaseSummary } from '../../types/bizone';
+import type { PurchaseBillRecord, PurchaseSummary } from '../../types/decorbiz';
 import { PurchaseDetailModal } from './PurchaseDetailModal';
 import { NewPurchaseScreen } from './NewPurchaseScreen';
 

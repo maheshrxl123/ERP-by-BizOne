@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
-import * as XLSX from 'xlsx';
+import readXlsxFile from 'read-excel-file/universal';
 import {
   buildSignedBackupBlob,
   decryptBackupWithPassphrase,
@@ -25,18 +25,12 @@ import {
   applyDiscountPreset,
   calculateMarginPct,
   calculatePaintLitres,
-  calculateServiceJobMargin,
   calculateTileBoxes,
   calculateWireCoils,
-  classifyBatchExpiry,
-  computeAmountFromWeight,
-  computeLooseWeightFromAmount,
-  computeMrpSavings,
-  generateVariantMatrixCombinations,
-  getPackWorkflow,
-  PACK_WORKFLOWS,
-  resolveWholesaleUnitPrice,
-  sortBatchesFefo,
+  DECORBIZ_WORKSPACE_META,
+  getPackWorkspaceTitle,
+  getRecommendedModulesForPack,
+  getWorkspaceMeta,
 } from '../src/packs/registry.ts';
 
 dotenv.config();
@@ -77,74 +71,17 @@ function collectLeafPaths(obj, prefix = '') {
   return paths;
 }
 
-test('Phase P6 packs: all 7 business-type workflows & domain calculators work accurately', () => {
-  const expectedPacks = [
-    'kirana',
-    'medical',
-    'clothing',
-    'hardware',
-    'general_retail',
-    'wholesale',
-    'service',
-  ];
-  assert.deepEqual(Object.keys(PACK_WORKFLOWS).sort(), expectedPacks.slice().sort());
+test('Phase P6 DecorBiz workspace metadata & domain calculators work accurately', () => {
+  const wf = getWorkspaceMeta();
+  assert.equal(wf.key, 'decorbiz');
+  assert.equal(wf, DECORBIZ_WORKSPACE_META);
+  assert.ok(wf.workspaceLabelEn.length > 3);
+  assert.ok(wf.workspaceLabelHi.length > 3);
+  assert.ok(getRecommendedModulesForPack().includes('billing'));
+  assert.equal(getPackWorkspaceTitle('decorbiz', 'en'), DECORBIZ_WORKSPACE_META.workspaceLabelEn);
+  assert.equal(getPackWorkspaceTitle('decorbiz', 'hi'), DECORBIZ_WORKSPACE_META.workspaceLabelHi);
 
-  for (const pack of expectedPacks) {
-    const wf = getPackWorkflow(pack);
-    assert.equal(wf.key, pack);
-    assert.ok(wf.workspaceLabelEn.length > 3);
-    assert.ok(wf.workspaceLabelHi.length > 3);
-    assert.ok(wf.recommendedModules.includes('billing'));
-  }
-
-  // Medical & Clothing enforce required modules
-  assert.ok(getPackWorkflow('medical').requiredModules.includes('batch_expiry'));
-  assert.ok(getPackWorkflow('clothing').requiredModules.includes('variants'));
-
-  // 1. Kirana: loose weight <-> ₹ calculator & MRP savings
-  const kiranaWt = computeLooseWeightFromAmount(120, 80, 1);
-  assert.equal(kiranaWt.enteredQty, 1.5);
-  assert.equal(kiranaWt.baseQty, 1.5);
-  assert.equal(kiranaWt.actualAmount, 120);
-  assert.equal(computeAmountFromWeight(2.5, 64, 1), 160);
-  assert.equal(computeMrpSavings(50, 42, 3), 24);
-  assert.equal(computeMrpSavings(40, 45, 2), 0);
-
-  // 2. Medical: expiry status classification + FEFO sorting + expired filter
-  assert.equal(classifyBatchExpiry('2026-01-01', '2026-06-01', 90), 'expired');
-  assert.equal(classifyBatchExpiry('2026-07-15', '2026-06-01', 90), 'near_expiry');
-  assert.equal(classifyBatchExpiry('2027-03-01', '2026-06-01', 90), 'ok');
-
-  const batches = sortBatchesFefo(
-    [
-      { id: 'b-late', expiry_date: '2027-09-01', qty_on_hand: 10, is_active: true, created_at: '2026-01-01' },
-      { id: 'b-expired', expiry_date: '2026-05-01', qty_on_hand: 25, is_active: true, created_at: '2026-01-01' },
-      { id: 'b-empty', expiry_date: '2026-06-15', qty_on_hand: 0, is_active: true, created_at: '2026-01-01' },
-      { id: 'b-soon', expiry_date: '2026-08-01', qty_on_hand: 5, is_active: true, created_at: '2026-01-02' },
-    ],
-    '2026-06-01'
-  );
-  assert.deepEqual(
-    batches.map((b) => b.id),
-    ['b-soon', 'b-late']
-  );
-
-  // 3. Clothing: size × color matrix generator
-  const matrix = generateVariantMatrixCombinations({
-    sizes: ['M', 'L'],
-    colors: ['Blue', 'Black'],
-    baseSku: 'KURTA',
-    sellingPrice: 899,
-    mrp: 1199,
-    purchasePrice: 540,
-    defaultQty: 12,
-  });
-  assert.equal(matrix.length, 4);
-  assert.equal(matrix[0].sku, 'KURTA-M-BLUE');
-  assert.equal(matrix[3].sku, 'KURTA-L-BLAC');
-  assert.equal(matrix[0].qty_on_hand, 12);
-
-  // 4. Hardware: tile boxes, paint litres & wire coil estimators
+  // Tiles, paint & wire material estimators
   const tiles = calculateTileBoxes(100, 16, 10);
   assert.equal(tiles.totalSqFtWithWastage, 110);
   assert.equal(tiles.boxesNeeded, 7);
@@ -156,62 +93,21 @@ test('Phase P6 packs: all 7 business-type workflows & domain calculators work ac
   assert.equal(wire.coilsNeeded, 3);
   assert.equal(wire.surplusMeters, 60);
 
-  // 5. Wholesale: custom rate card > qty slab > base price precedence
-  const slabs = [
-    { min_qty: 10, rate: 95, tier: 'all' },
-    { min_qty: 20, rate: 88, tier: 'wholesale_a' },
-  ];
-  assert.deepEqual(
-    resolveWholesaleUnitPrice({
-      basePrice: 100,
-      priceTier: 'wholesale_a',
-      qty: 5,
-      slabs,
-    }),
-    { unitPrice: 100, source: 'base' }
-  );
-  assert.deepEqual(
-    resolveWholesaleUnitPrice({
-      basePrice: 100,
-      priceTier: 'wholesale_a',
-      qty: 25,
-      slabs,
-    }),
-    { unitPrice: 88, source: 'slab' }
-  );
-  assert.deepEqual(
-    resolveWholesaleUnitPrice({
-      basePrice: 100,
-      priceTier: 'wholesale_a',
-      qty: 25,
-      slabs,
-      partyCustomRate: { custom_rate: 82, min_qty: 15 },
-    }),
-    { unitPrice: 82, source: 'custom_rate' }
-  );
-
-  // 6. Service & 7. General Retail margin helpers
-  const job = calculateServiceJobMargin({
-    billedRevenue: 5000,
-    estimatedAmount: 4500,
-    expensesTotal: 1800,
-  });
-  assert.deepEqual(job, { effectiveRevenue: 5000, netMargin: 3200, marginPct: 64 });
   assert.equal(applyDiscountPreset(1000, 15), 850);
   assert.equal(calculateMarginPct(1000, 750), 25);
 });
 
-test('Phase P6 CSV/XLSX import/export: templates, column mapping, error rows CSV & multi-sheet XLSX', () => {
+test('Phase P6 CSV/XLSX import/export: templates, column mapping, error rows CSV & multi-sheet XLSX', async () => {
   // 1. Roundtrip XLSX item template
-  const itemTpl = buildTemplateWorkbookBuffer('items', 'xlsx');
+  const itemTpl = await buildTemplateWorkbookBuffer('items', 'xlsx');
   assert.ok(itemTpl.buffer.byteLength > 100);
-  const parsedItems = parseSpreadsheetBuffer(itemTpl.buffer, itemTpl.filename);
+  const parsedItems = await parseSpreadsheetBuffer(itemTpl.buffer, itemTpl.filename);
   assert.equal(parsedItems.selectedSheet, 'Items');
   assert.equal(parsedItems.rows.length, 1);
 
   // 2. Roundtrip CSV party template
-  const partyTpl = buildTemplateWorkbookBuffer('parties', 'csv');
-  const parsedParties = parseSpreadsheetBuffer(partyTpl.buffer, partyTpl.filename);
+  const partyTpl = await buildTemplateWorkbookBuffer('parties', 'csv');
+  const parsedParties = await parseSpreadsheetBuffer(partyTpl.buffer, partyTpl.filename);
   assert.equal(parsedParties.rows.length, 1);
 
   // 3. Auto-mapping aliased headers & row validation errors
@@ -272,31 +168,34 @@ test('Phase P6 CSV/XLSX import/export: templates, column mapping, error rows CSV
   assert.equal(itemValidation.invalidRows.length, 2);
 
   // 5. Multi-sheet XLSX export buffer
-  const multi = buildExportWorkbookBuffer(
+  const multi = await buildExportWorkbookBuffer(
     [
       { name: 'Parties', headers: ['Name', 'Balance'], rows: [['Patel', 1500]] },
       { name: 'Items', headers: ['Name', 'Price'], rows: [['Soap', 45]] },
     ],
     'xlsx'
   );
-  const wb = XLSX.read(multi.buffer, { type: 'array' });
-  assert.deepEqual(wb.SheetNames, ['Parties', 'Items']);
+  const sheets = await readXlsxFile(multi.buffer);
+  assert.deepEqual(
+    sheets.map((s) => s.sheet),
+    ['Parties', 'Items']
+  );
 });
 
 test('Phase P6 backup/restore security: p5-v1 + p6-v1 verification, tamper rejection & AES-256-GCM passphrase encryption', async () => {
   const snapshotP6 = {
-    app: 'BizOne ERP',
+    app: 'DecorBiz',
     schema_version: 'p6-v1',
     exported_at: '2026-11-13T15:00:00Z',
-    exported_by: 'owner@bizone.test',
+    exported_by: 'owner@decorbiz.test',
     include_files: true,
-    record_counts: { items: 1, item_batches: 1 },
+    record_counts: { items: 1, party_sites: 1 },
     data: {
-      business: { id: 1, name: 'Carewell Medicals', pack: 'medical' },
-      items: [{ id: 'it-1', name: 'Dolo 650' }],
+      business: { id: 1, name: 'Shree Ganesh Tiles & Sanitary', pack: 'decorbiz' },
+      items: [{ id: 'it-1', name: 'Somany Wall Tile 2x1' }],
     },
     attachments: [
-      { id: 'f-1', storage_path: 'demo/rx.png', mime_type: 'image/png', base64: 'AAAA' },
+      { id: 'f-1', storage_path: 'demo/site.png', mime_type: 'image/png', base64: 'AAAA' },
     ],
   };
 
@@ -318,7 +217,7 @@ test('Phase P6 backup/restore security: p5-v1 + p6-v1 verification, tamper rejec
 
   // Tamper rejected
   await assert.rejects(
-    () => verifyBackupEnvelope(signed.jsonText.replace('Carewell Medicals', 'Tampered Name')),
+    () => verifyBackupEnvelope(signed.jsonText.replace('Shree Ganesh Tiles & Sanitary', 'Tampered Name')),
     /checksum mismatch/i
   );
 
@@ -328,7 +227,7 @@ test('Phase P6 backup/restore security: p5-v1 + p6-v1 verification, tamper rejec
   const enc = await encryptBackupWithPassphrase(snapshotP6, 'secret-vault-2026');
   assert.equal(isEncryptedBackupEnvelope(enc.jsonText), true);
   assert.equal(isEncryptedBackupEnvelope(signed.jsonText), false);
-  assert.ok(!enc.jsonText.includes('Carewell Medicals'));
+  assert.ok(!enc.jsonText.includes('Shree Ganesh Tiles & Sanitary'));
 
   // Wrong passphrase fails decryption
   await assert.rejects(
@@ -357,10 +256,22 @@ test('Phase P6 server, migrations & i18n contracts: Google Drive encryption/revo
   assert.ok(en.nav.pack && hi.nav.pack);
   assert.ok(en.nav.data && hi.nav.data);
   assert.ok(en.settings.tabs.data && hi.settings.tabs.data);
-  assert.ok(en.reports.tabs.pack && hi.reports.tabs.pack);
 
-  // 2. Verify server.ts encrypts Google Drive secrets/tokens & handles disconnect revocation + optional disabled path
-  const serverSrc = fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8');
+  // 2. Verify server route modules encrypt Google Drive secrets/tokens & handle disconnect revocation + optional disabled path
+  const readCombinedServerSrc = () => {
+    const parts = [fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8')];
+    const collect = (dir) => {
+      if (!fs.existsSync(dir)) return;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) collect(full);
+        else if (entry.name.endsWith('.ts')) parts.push(fs.readFileSync(full, 'utf8'));
+      }
+    };
+    collect(path.resolve(process.cwd(), 'src/server'));
+    return parts.join('\n');
+  };
+  const serverSrc = readCombinedServerSrc();
   assert.match(serverSrc, /\/api\/backup\/export-bundle/);
   assert.match(serverSrc, /\/api\/backup\/restore-bundle/);
   assert.match(serverSrc, /\/api\/integrations\/google-drive\/status/);
@@ -383,26 +294,26 @@ test('Phase P6 server, migrations & i18n contracts: Google Drive encryption/revo
   const expectedSig = crypto.createHmac('sha256', stateKey).update(part).digest('base64url');
   assert.equal(gotSig, expectedSig);
 
-  // 3. Verify SQL migrations expose all P6 RPCs & strict RESET WORKSPACE confirmation
-  const mig11 = fs.readFileSync(
-    path.resolve(process.cwd(), 'supabase/migrations/0011_phase6_packs_data_management.sql'),
-    'utf8'
-  );
+  // 3. Verify SQL migrations expose P6 import/backup RPCs & 0016 removes non-DecorBiz packs
   const mig12 = fs.readFileSync(
     path.resolve(process.cwd(), 'supabase/migrations/0012_phase6_import_demo_backup_drive.sql'),
     'utf8'
   );
-  assert.match(mig11, /FUNCTION public\.get_salt_substitutes/);
-  assert.match(mig11, /FUNCTION public\.get_pack_reports/);
+  const mig16 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/0016_decorbiz_step1_pack_cleanup.sql'),
+    'utf8'
+  );
   assert.match(mig12, /FUNCTION public\.import_parties_batch/);
   assert.match(mig12, /FUNCTION public\.import_items_batch/);
-  assert.match(mig12, /FUNCTION public\.seed_pack_demo_data/);
   assert.match(mig12, /FUNCTION public\.remove_demo_data/);
-  assert.match(mig12, /FUNCTION public\.switch_business_pack/);
   assert.match(mig12, /FUNCTION public\.reset_workspace_data/);
   assert.match(mig12, /'RESET WORKSPACE'/);
   assert.match(mig12, /FUNCTION public\.export_workspace_backup/);
   assert.match(mig12, /FUNCTION public\.restore_workspace_backup/);
+  assert.match(mig16, /DROP TABLE IF EXISTS public\.item_batches/);
+  assert.match(mig16, /DROP TABLE IF EXISTS public\.item_variants/);
+  assert.match(mig16, /DROP TABLE IF EXISTS public\.service_jobs/);
+  assert.match(mig16, /CREATE OR REPLACE FUNCTION public\.seed_demo_data\(/);
 });
 
 test(

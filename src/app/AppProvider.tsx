@@ -8,6 +8,13 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  clearTotpProof,
+  erpFetch,
+  onTotpRequired,
+  setActiveStaffUserId,
+  setTotpProof,
+} from '../core/erpFetch';
 import { isSupabaseConfigured, supabase } from '../core/supabase';
 import enDict from '../i18n/en.json';
 import hiDict from '../i18n/hi.json';
@@ -16,7 +23,7 @@ import type {
   BusinessRecord,
   ModuleStateRecord,
   ProfileRecord,
-} from '../types/bizone';
+} from '../types/decorbiz';
 
 type Language = 'en' | 'hi';
 type ThemeMode = 'light' | 'dark';
@@ -42,6 +49,12 @@ interface AppContextValue {
   clearPasswordRecovery: () => void;
   needsSetup: boolean;
   checkingSetup: boolean;
+  totpChecking: boolean;
+  totpRequired: boolean;
+  totpVerified: boolean;
+  verifyTotpToken: (token: string) => Promise<void>;
+  markTotpEnrolled: (totpProof?: string | null) => void;
+  refreshTotpStatus: () => Promise<void>;
   business: BusinessRecord | null;
   profile: ProfileRecord | null;
   staff: ProfileRecord[];
@@ -85,6 +98,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
+  const [totpChecking, setTotpChecking] = useState(false);
+  const [totpRequired, setTotpRequired] = useState(false);
+  const [totpVerified, setTotpVerified] = useState(true);
 
   const [business, setBusiness] = useState<BusinessRecord | null>(null);
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
@@ -99,11 +115,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const prefsHydratedForUserRef = useRef<string | null>(null);
 
   const [language, setLanguageState] = useState<Language>(() => {
-    const saved = localStorage.getItem('bizone_lang');
+    const saved = localStorage.getItem('decorbiz_lang');
     return saved === 'hi' ? 'hi' : 'en';
   });
   const [theme, setThemeState] = useState<ThemeMode>(() => {
-    const saved = localStorage.getItem('bizone_theme');
+    const saved = localStorage.getItem('decorbiz_theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -127,13 +143,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('bizone_theme', theme);
+    localStorage.setItem('decorbiz_theme', theme);
   }, [theme]);
 
+  const hindiEnabled = useMemo(() => {
+    if (modules.length === 0) return true;
+    const found = modules.find((m) => m.module_key === 'hindi');
+    return found ? found.enabled : true;
+  }, [modules]);
+
+  const effectiveLanguage: Language = hindiEnabled ? language : 'en';
+
   useEffect(() => {
-    localStorage.setItem('bizone_lang', language);
-    document.documentElement.lang = language === 'hi' ? 'hi' : 'en';
-  }, [language]);
+    localStorage.setItem('decorbiz_lang', language);
+    document.documentElement.lang = effectiveLanguage === 'hi' ? 'hi' : 'en';
+  }, [language, effectiveLanguage]);
 
   const showToast = useCallback(
     (message: string, tone: 'success' | 'error' | 'info' = 'info') => {
@@ -162,7 +186,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
     setCheckingSetup(true);
     try {
-      const res = await fetch('/api/setup/status');
+      const res = await fetch('/api/erp/setup/status');
       const data = await res.json();
       setNeedsSetup(Boolean(data?.needsSetup));
     } catch {
@@ -176,6 +200,82 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const userId = session?.user?.id;
   const userEmail = session?.user?.email;
 
+  useEffect(() => {
+    setActiveStaffUserId(userId ?? null);
+  }, [userId]);
+
+  useEffect(() => {
+    return onTotpRequired(() => {
+      setTotpRequired(true);
+      setTotpVerified(false);
+    });
+  }, []);
+
+  const refreshTotpStatus = useCallback(async () => {
+    if (!isSupabaseConfigured || !userId || !accessToken) {
+      setTotpRequired(false);
+      setTotpVerified(true);
+      setTotpChecking(false);
+      return;
+    }
+    setTotpChecking(true);
+    try {
+      const res = await erpFetch('/api/erp/auth/totp-status', accessToken);
+      if (res.ok) {
+        const data = await res.json();
+        const enabled = Boolean(data?.enabled);
+        setTotpRequired(enabled);
+        setTotpVerified(!enabled || Boolean(data?.verified));
+      } else {
+        setTotpRequired(false);
+        setTotpVerified(true);
+      }
+    } catch {
+      setTotpRequired(false);
+      setTotpVerified(true);
+    } finally {
+      setTotpChecking(false);
+    }
+  }, [userId, accessToken]);
+
+  useEffect(() => {
+    void refreshTotpStatus();
+  }, [refreshTotpStatus]);
+
+  const verifyTotpToken = useCallback(
+    async (token: string) => {
+      if (!accessToken || !userId) {
+        throw new Error('Staff session not active.');
+      }
+      const res = await erpFetch('/api/erp/auth/totp-validate', accessToken, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || 'Invalid verification code.');
+      }
+      if (typeof data?.totpProof === 'string' && data.totpProof) {
+        setTotpProof(userId, data.totpProof);
+      }
+      setTotpRequired(Boolean(data?.enabled ?? true));
+      setTotpVerified(true);
+    },
+    [accessToken, userId]
+  );
+
+  const markTotpEnrolled = useCallback(
+    (totpProof?: string | null) => {
+      if (userId && totpProof) {
+        setTotpProof(userId, totpProof);
+      }
+      setTotpRequired(true);
+      setTotpVerified(true);
+    },
+    [userId]
+  );
+
   const getSignedUrl = useCallback(
     async (fileId: string | null | undefined): Promise<string | null> => {
       if (!fileId || !accessToken) return null;
@@ -185,11 +285,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const res = await fetch('/api/files/signed-url', {
+        const res = await erpFetch('/api/erp/files/signed-url', accessToken, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({ fileId }),
         });
@@ -214,13 +313,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const refreshWorkspace = useCallback(async () => {
-    if (!isSupabaseConfigured || !userId) {
-      prefsHydratedForUserRef.current = null;
-      setBusiness(null);
-      setProfile(null);
-      setStaff([]);
-      setModules([]);
-      setAuditLogs([]);
+    if (!isSupabaseConfigured || !userId || (totpRequired && !totpVerified)) {
+      if (!userId) {
+        prefsHydratedForUserRef.current = null;
+        setBusiness(null);
+        setProfile(null);
+        setStaff([]);
+        setModules([]);
+        setAuditLogs([]);
+      }
       setWorkspaceError(null);
       return;
     }
@@ -292,7 +393,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         err instanceof Error ? err.message : 'Unable to load workspace data.'
       );
     }
-  }, [userId, userEmail]);
+  }, [userId, userEmail, totpRequired, totpVerified]);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -304,6 +405,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     refreshSetupStatus();
 
     supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        setTotpChecking(true);
+      }
       setSession(data.session ?? null);
       setAuthLoading(false);
     });
@@ -314,6 +418,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setPasswordRecoveryMode(true);
         } else if (event === 'SIGNED_OUT') {
           setPasswordRecoveryMode(false);
+          clearTotpProof();
+          setTotpRequired(false);
+          setTotpVerified(true);
+        } else if (nextSession) {
+          setTotpChecking(true);
         }
         setSession(nextSession ?? null);
         setAuthLoading(false);
@@ -349,6 +458,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setLanguage = useCallback(
     (lang: Language) => {
+      if (!hindiEnabled && lang === 'hi') {
+        setLanguageState('en');
+        return;
+      }
       setLanguageState(lang);
       if (userId && profile?.is_active) {
         void supabase
@@ -357,7 +470,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .eq('id', userId);
       }
     },
-    [userId, profile?.is_active]
+    [hindiEnabled, userId, profile?.is_active]
   );
 
   const setTheme = useCallback(
@@ -374,8 +487,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const dict = useMemo(
-    () => (language === 'hi' ? hiDict : enDict) as Record<string, unknown>,
-    [language]
+    () => (effectiveLanguage === 'hi' ? hiDict : enDict) as Record<string, unknown>,
+    [effectiveLanguage]
   );
 
   const t = useCallback(
@@ -392,11 +505,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const signOut = useCallback(async () => {
+    clearTotpProof(userId);
     await supabase.auth.signOut();
     setSignedUrlEntries({});
     prefsHydratedForUserRef.current = null;
     setPasswordRecoveryMode(false);
-  }, []);
+    setTotpRequired(false);
+    setTotpVerified(true);
+  }, [userId]);
 
   return (
     <AppContext.Provider
@@ -408,13 +524,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         clearPasswordRecovery,
         needsSetup,
         checkingSetup,
+        totpChecking,
+        totpRequired,
+        totpVerified,
+        verifyTotpToken,
+        markTotpEnrolled,
+        refreshTotpStatus,
         business,
         profile,
         staff,
         modules,
         auditLogs,
         workspaceError,
-        language,
+        language: effectiveLanguage,
         theme,
         toasts,
         signedUrlCache,

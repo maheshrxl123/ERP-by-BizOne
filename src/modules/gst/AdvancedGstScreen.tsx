@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { downloadCsvFile } from '../../core/export';
 import { formatDate, formatINR, todayLocalIso } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { roundHalfUp } from '../../core/money';
 import { supabase } from '../../core/supabase';
 import type {
@@ -19,7 +20,7 @@ import type {
   GstSummaryResult,
   HsnSummaryRow,
   TdsEntryRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 type GstTab = 'gstr1' | 'gstr3b' | 'gstr2b' | 'einvoice' | 'tds';
 
@@ -103,11 +104,13 @@ export function AdvancedGstScreen() {
           .eq('status', 'issued')
           .order('bill_date', { ascending: false })
           .limit(30),
-        supabase
-          .from('einvoice_records')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(30),
+        einvoiceEnabled
+          ? supabase
+              .from('einvoice_records')
+              .select('*')
+              .order('created_at', { ascending: false })
+              .limit(30)
+          : Promise.resolve({ data: [] as EinvoiceRecord[], error: null }),
         supabase
           .from('tds_entries')
           .select('*')
@@ -136,11 +139,17 @@ export function AdvancedGstScreen() {
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to load GST data.', 'error');
     }
-  }, [fromDate, toDate, periodMonth, showToast]);
+  }, [fromDate, toDate, periodMonth, einvoiceEnabled, showToast]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!einvoiceEnabled && tab === 'einvoice') {
+      setTab('gstr1');
+    }
+  }, [einvoiceEnabled, tab]);
 
   const handleExportGstr1Csv = () => {
     if (!gstr1) return;
@@ -199,7 +208,7 @@ export function AdvancedGstScreen() {
         cn.grand_total ?? 0,
       ]);
     }
-    downloadCsvFile(`bizone-gstr1-${fromDate}-to-${toDate}.csv`, headers, rows);
+    downloadCsvFile(`decorbiz-gstr1-${fromDate}-to-${toDate}.csv`, headers, rows);
   };
 
   const handleAddGstr2b = async (e: React.FormEvent) => {
@@ -249,12 +258,9 @@ export function AdvancedGstScreen() {
     if (!session?.access_token || !selectedBillId) return;
     setGeneratingIrn(true);
     try {
-      const res = await fetch('/api/einvoice/generate', {
+      const res = await erpFetch('/api/erp/einvoice/generate', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           billId: selectedBillId,
           vehicleNo: vehicleNo.trim() || undefined,
@@ -358,13 +364,15 @@ export function AdvancedGstScreen() {
       <div className="flex items-center gap-2 overflow-x-auto border-b border-[var(--border)] pb-2">
         {(
           [
-            { key: 'gstr1', label: 'GSTR-1', icon: IconFileSpreadsheet },
-            { key: 'gstr3b', label: 'GSTR-3B & HSN', icon: IconScale },
-            { key: 'gstr2b', label: 'GSTR-2B ITC Match', icon: IconShieldCheck },
-            { key: 'einvoice', label: 'E-Invoice / E-Way', icon: IconReceipt },
-            { key: 'tds', label: 'TDS / TCS', icon: IconPlus },
+            { key: 'gstr1', label: 'GSTR-1', icon: IconFileSpreadsheet, visible: true },
+            { key: 'gstr3b', label: 'GSTR-3B & HSN', icon: IconScale, visible: true },
+            { key: 'gstr2b', label: 'GSTR-2B ITC Match', icon: IconShieldCheck, visible: true },
+            { key: 'einvoice', label: 'E-Invoice / E-Way', icon: IconReceipt, visible: einvoiceEnabled },
+            { key: 'tds', label: 'TDS / TCS', icon: IconPlus, visible: true },
           ] as const
-        ).map((item) => {
+        )
+          .filter((item) => item.visible)
+          .map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -678,14 +686,9 @@ export function AdvancedGstScreen() {
       )}
 
       {/* E-Invoice & E-Way Bill */}
-      {tab === 'einvoice' && (
+      {einvoiceEnabled && tab === 'einvoice' && (
         <div className="space-y-4">
-          {!einvoiceEnabled ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 text-sm text-[var(--text-muted)]">
-              E-Invoice & E-Way Bill module is disabled. Enable <code className="font-mono">einvoice</code> in Settings → Modules & Features to activate GSP submissions.
-            </div>
-          ) : (
-            <>
+          <>
               <form
                 onSubmit={handleGenerateEinvoice}
                 className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-3"
@@ -762,8 +765,7 @@ export function AdvancedGstScreen() {
                   ))
                 )}
               </section>
-            </>
-          )}
+          </>
         </div>
       )}
 

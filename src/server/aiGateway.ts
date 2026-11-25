@@ -56,13 +56,6 @@ export const AI_TOOL_ALLOWLIST: Record<string, AiToolDefinition> = {
     allowedRoles: ['owner', 'manager', 'accountant'],
     description: 'Summarize output GST, input GST credit, and net liability.',
   },
-  get_near_expiry_items: {
-    name: 'get_near_expiry_items',
-    kind: 'read',
-    requiredModules: ['inventory', 'batch_expiry'],
-    allowedRoles: ['owner', 'manager', 'storekeeper', 'accountant'],
-    description: 'List batches expiring within 60 days.',
-  },
   get_dead_slow_stock: {
     name: 'get_dead_slow_stock',
     kind: 'read',
@@ -195,7 +188,7 @@ export function isToolAllowedForContext(
 ): { allowed: boolean; reason?: string } {
   const def = AI_TOOL_ALLOWLIST[toolName];
   if (!def) {
-    return { allowed: false, reason: `Tool "${toolName}" is not in the BizOne AI allowlist.` };
+    return { allowed: false, reason: `Tool "${toolName}" is not in the DecorBiz AI allowlist.` };
   }
   const mods = enabledModules instanceof Set ? enabledModules : new Set(enabledModules);
   for (const reqMod of def.requiredModules) {

@@ -64,6 +64,7 @@ import {
   SettingsScreen,
   type SettingsTabKey,
 } from '../modules/settings/SettingsScreen';
+import { OnlineStoreAdminScreen } from '../modules/store/OnlineStoreAdminScreen';
 import { getPackWorkspaceTitle } from '../packs/registry';
 import { useApp } from './AppProvider';
 
@@ -223,7 +224,9 @@ export function AppShell() {
       label: t('nav.pos'),
       icon: IconCalculator,
       visible:
-        isModuleEnabled('billing') && hasCapability(profile?.role, 'create_bills'),
+        isModuleEnabled('pos') &&
+        isModuleEnabled('billing') &&
+        hasCapability(profile?.role, 'create_bills'),
     },
     {
       id: 'accounting',
@@ -235,15 +238,24 @@ export function AppShell() {
     },
     {
       id: 'gst',
-      label: t('nav.gst'),
+      label: isModuleEnabled('einvoice')
+        ? t('nav.gst')
+        : language === 'hi'
+          ? 'जीएसटी रिटर्न'
+          : 'GST Returns',
       icon: IconScale,
       visible:
+        isModuleEnabled('gst_returns') &&
         isModuleEnabled('tax') &&
         ['owner', 'manager', 'accountant'].includes(profile?.role ?? ''),
     },
     {
       id: 'operations',
-      label: t('nav.operations'),
+      label: isModuleEnabled('locations')
+        ? t('nav.operations')
+        : language === 'hi'
+          ? 'संचालन'
+          : 'Operations',
       icon: IconBuildingWarehouse,
       visible:
         (isModuleEnabled('inventory') || isModuleEnabled('locations')) &&
@@ -266,10 +278,18 @@ export function AppShell() {
       visible: isModuleEnabled('ai'),
     },
     {
+      id: 'online_store',
+      label: t('nav.onlineStore'),
+      icon: IconBuildingStore,
+      visible:
+        isModuleEnabled('online_store') &&
+        ['owner', 'manager'].includes(profile?.role ?? ''),
+    },
+    {
       id: 'pack',
       label: getPackWorkspaceTitle(business?.pack, language),
       icon: IconBriefcase,
-      visible: true,
+      visible: isModuleEnabled('estimator'),
     },
     {
       id: 'data',
@@ -492,15 +512,17 @@ export function AppShell() {
               <PWAInstallButton />
             </div>
 
-            <button
-              type="button"
-              onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
-              aria-label="Switch language"
-              className="hidden sm:inline-flex items-center gap-1 h-9 px-2.5 rounded-lg border border-[var(--border)] text-xs font-medium hover:bg-[var(--surface-muted)]"
-            >
-              <IconLanguage size={16} stroke={2} />
-              <span>{language === 'en' ? 'हिं' : 'EN'}</span>
-            </button>
+            {isModuleEnabled('hindi') && (
+              <button
+                type="button"
+                onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
+                aria-label="Switch language"
+                className="hidden sm:inline-flex items-center gap-1 h-9 px-2.5 rounded-lg border border-[var(--border)] text-xs font-medium hover:bg-[var(--surface-muted)]"
+              >
+                <IconLanguage size={16} stroke={2} />
+                <span>{language === 'en' ? 'हिं' : 'EN'}</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -744,13 +766,15 @@ export function AppShell() {
             </RequireModule>
           )}
           {dest === 'pos' && (
-            <RequireModule moduleKey="billing" onNavigate={navigate}>
-              <RequireRole
-                roles={['owner', 'manager', 'cashier', 'accountant']}
-                onNavigate={navigate}
-              >
-                <PosLiteScreen />
-              </RequireRole>
+            <RequireModule moduleKey="pos" onNavigate={navigate}>
+              <RequireModule moduleKey="billing" onNavigate={navigate}>
+                <RequireRole
+                  roles={['owner', 'manager', 'cashier', 'accountant']}
+                  onNavigate={navigate}
+                >
+                  <PosLiteScreen />
+                </RequireRole>
+              </RequireModule>
             </RequireModule>
           )}
           {dest === 'accounting' && (
@@ -764,13 +788,15 @@ export function AppShell() {
             </RequireModule>
           )}
           {dest === 'gst' && (
-            <RequireModule moduleKey="tax" onNavigate={navigate}>
-              <RequireRole
-                roles={['owner', 'manager', 'accountant']}
-                onNavigate={navigate}
-              >
-                <AdvancedGstScreen />
-              </RequireRole>
+            <RequireModule moduleKey="gst_returns" onNavigate={navigate}>
+              <RequireModule moduleKey="tax" onNavigate={navigate}>
+                <RequireRole
+                  roles={['owner', 'manager', 'accountant']}
+                  onNavigate={navigate}
+                >
+                  <AdvancedGstScreen />
+                </RequireRole>
+              </RequireModule>
             </RequireModule>
           )}
           {dest === 'operations' && (
@@ -800,7 +826,20 @@ export function AppShell() {
               />
             </RequireModule>
           )}
-          {dest === 'pack' && <PackWorkspaceScreen onNavigate={navigate} />}
+          {dest === 'online_store' && (
+            <RequireModule moduleKey="online_store" onNavigate={navigate}>
+              <RequireRole roles={['owner', 'manager']} onNavigate={navigate}>
+                <OnlineStoreAdminScreen
+                  onOpenIntegrations={() => navigate('settings', 'integrations')}
+                />
+              </RequireRole>
+            </RequireModule>
+          )}
+          {dest === 'pack' && (
+            <RequireModule moduleKey="estimator" onNavigate={navigate}>
+              <PackWorkspaceScreen onNavigate={navigate} />
+            </RequireModule>
+          )}
           {dest === 'notifications' && (
             <NotificationsScreen onNavigate={navigate} />
           )}
@@ -889,6 +928,7 @@ export function AppShell() {
               'operations',
               'messaging',
               'ai',
+              'online_store',
               'pack',
               'data',
               'notifications',
@@ -1013,19 +1053,21 @@ export function AppShell() {
                 <IconUser size={20} stroke={2} className="text-[var(--text-muted)]" />
                 <span>{t('nav.profile')}</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
-                className="w-full min-h-[52px] flex items-center justify-between text-left text-sm font-medium"
-              >
-                <span className="inline-flex items-center gap-3">
-                  <IconLanguage size={20} stroke={2} className="text-[var(--text-muted)]" />
-                  <span>Language</span>
-                </span>
-                <span className="text-xs text-[var(--primary-dark)]">
-                  {language === 'en' ? 'English -> हिन्दी' : 'हिन्दी -> English'}
-                </span>
-              </button>
+              {isModuleEnabled('hindi') && (
+                <button
+                  type="button"
+                  onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
+                  className="w-full min-h-[52px] flex items-center justify-between text-left text-sm font-medium"
+                >
+                  <span className="inline-flex items-center gap-3">
+                    <IconLanguage size={20} stroke={2} className="text-[var(--text-muted)]" />
+                    <span>Language</span>
+                  </span>
+                  <span className="text-xs text-[var(--primary-dark)]">
+                    {language === 'en' ? 'English -> हिन्दी' : 'हिन्दी -> English'}
+                  </span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}

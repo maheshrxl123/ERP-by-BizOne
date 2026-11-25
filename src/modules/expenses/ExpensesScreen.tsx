@@ -10,12 +10,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
 import type {
   ExpenseCategoryRecord,
   ExpenseRecord,
   ExpenseSummary,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 import { ExpenseFormModal } from './ExpenseFormModal';
 
 interface ExpensesScreenProps {
@@ -109,12 +110,9 @@ export function ExpensesScreen({
   const handleOpenAttachment = async (fileId: string) => {
     if (!session?.access_token) return;
     try {
-      const res = await fetch('/api/files/signed-url', {
+      const res = await erpFetch('/api/erp/files/signed-url', session.access_token, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId }),
       });
       const json = await res.json();

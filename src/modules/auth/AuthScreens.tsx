@@ -5,11 +5,13 @@ import {
   IconKey,
   IconLanguage,
   IconLock,
+  IconLogout,
   IconMoon,
+  IconShieldCheck,
   IconSun,
 } from '@tabler/icons-react';
 import { useState } from 'react';
-import { BUSINESS_PACKS, type BusinessPackKey } from '../../../config/app.config';
+import { DECORBIZ_PACK } from '../../../config/app.config';
 import { useApp } from '../../app/AppProvider';
 import { isValidGstin } from '../../core/format';
 import { supabase, supabaseConfigMismatch } from '../../core/supabase';
@@ -27,9 +29,15 @@ function formatAuthError(err: unknown, fallback: string): string {
 
 export function AuthScreens() {
   const {
+    session,
     needsSetup,
     passwordRecoveryMode,
     clearPasswordRecovery,
+    totpRequired,
+    totpVerified,
+    verifyTotpToken,
+    refreshTotpStatus,
+    signOut,
     language,
     setLanguage,
     theme,
@@ -45,6 +53,7 @@ export function AuthScreens() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
@@ -52,7 +61,6 @@ export function AuthScreens() {
   // First-time setup state
   const [businessName, setBusinessName] = useState('');
   const [ownerName, setOwnerName] = useState('');
-  const [pack, setPack] = useState<BusinessPackKey>('general_retail');
   const [gstRegistered, setGstRegistered] = useState(false);
   const [gstin, setGstin] = useState('');
   const [fyStartMonth, setFyStartMonth] = useState(4);
@@ -76,9 +84,30 @@ export function AuthScreens() {
       } catch {
         // Non-blocking audit log on login
       }
+      await refreshTotpStatus();
       await refreshWorkspace();
     } catch (err) {
       setError(formatAuthError(err, 'Sign in failed.'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleTotpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!totpCode.trim()) {
+      setError('Enter your 6-digit authenticator code or 8-character recovery code.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await verifyTotpToken(totpCode.trim());
+      setTotpCode('');
+      await refreshWorkspace();
+      showToast('Two-factor authentication verified.', 'success');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verification failed.');
     } finally {
       setSubmitting(false);
     }
@@ -142,7 +171,7 @@ export function AuthScreens() {
 
     setSubmitting(true);
     try {
-      const res = await fetch('/api/setup/initialize', {
+      const res = await fetch('/api/erp/setup/initialize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -150,7 +179,7 @@ export function AuthScreens() {
           ownerName: ownerName.trim(),
           email: email.trim(),
           password,
-          pack,
+          pack: DECORBIZ_PACK.key,
           gstRegistered,
           gstin: gstRegistered ? gstin.trim().toUpperCase() : null,
           fyStartMonth,
@@ -225,7 +254,7 @@ export function AuthScreens() {
                   Set New Password
                 </h1>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Choose a strong new password for your BizOne account.
+                  Choose a strong new password for your DecorBiz account.
                 </p>
               </div>
             </div>
@@ -382,45 +411,20 @@ export function AuthScreens() {
                 </div>
               </div>
 
-              <div>
-                <span className="block text-sm font-medium mb-2">
-                  {t('setup.pack')}
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {BUSINESS_PACKS.map((item) => {
-                    const selected = pack === item.key;
-                    return (
-                      <button
-                        key={item.key}
-                        type="button"
-                        onClick={() => setPack(item.key)}
-                        className={`p-3 rounded-lg border text-left transition-colors ${
-                          selected
-                            ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)]'
-                            : 'border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)]'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold">
-                            {language === 'hi' ? item.labelHi : item.labelEn}
-                          </span>
-                          {selected && (
-                            <IconCheck
-                              size={16}
-                              stroke={2.5}
-                              className="text-[var(--primary-dark)] shrink-0"
-                            />
-                          )}
-                        </div>
-                        <p className="text-xs text-[var(--text-muted)] mt-1">
-                          {language === 'hi'
-                            ? item.descriptionHi
-                            : item.descriptionEn}
-                        </p>
-                      </button>
-                    );
-                  })}
+              <div className="p-3.5 rounded-lg border border-[var(--primary-dark)]/40 bg-[var(--primary-soft)]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold">
+                    {language === 'hi' ? DECORBIZ_PACK.labelHi : DECORBIZ_PACK.labelEn}
+                  </span>
+                  <IconCheck
+                    size={16}
+                    stroke={2.5}
+                    className="text-[var(--primary-dark)] shrink-0"
+                  />
                 </div>
+                <p className="text-xs text-[var(--text-muted)] mt-1">
+                  {language === 'hi' ? DECORBIZ_PACK.descriptionHi : DECORBIZ_PACK.descriptionEn}
+                </p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start pt-1">
@@ -485,6 +489,74 @@ export function AuthScreens() {
                 {submitting
                   ? t('setup.creating')
                   : t('setup.createWorkspace')}
+              </button>
+            </form>
+          </div>
+        ) : session && totpRequired && !totpVerified ? (
+          <div className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8 space-y-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-[var(--primary-soft)] text-[var(--primary-dark)] flex items-center justify-center shrink-0">
+                <IconShieldCheck size={20} stroke={2} />
+              </div>
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight">
+                  {language === 'hi' ? 'दो-चरणीय सत्यापन (2FA)' : 'Two-Factor Verification'}
+                </h1>
+                <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                  {session.user.email} · Enter 6-digit authenticator code or recovery code
+                </p>
+              </div>
+            </div>
+
+            {error && (
+              <div
+                role="alert"
+                className="p-3 rounded-lg bg-[var(--give-soft)] border border-[var(--give)]/30 text-xs text-[var(--give)] flex items-start gap-2"
+              >
+                <IconAlertCircle size={16} stroke={2} className="shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleTotpSubmit} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="totp-challenge-input"
+                  className="block text-sm font-medium mb-1.5"
+                >
+                  Authenticator or Recovery Code
+                </label>
+                <input
+                  id="totp-challenge-input"
+                  type="text"
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.toUpperCase())}
+                  placeholder="123456 or A1B2C3D4"
+                  className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono tracking-widest uppercase focus:outline-none focus:ring-2 focus:ring-[var(--primary-dark)]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full h-12 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] font-semibold text-sm hover:opacity-95 disabled:opacity-50"
+              >
+                {submitting ? 'Verifying...' : 'Verify & Open ERP'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  void signOut();
+                }}
+                className="w-full h-11 rounded-lg border border-[var(--border)] text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-[var(--surface-muted)]"
+              >
+                <IconLogout size={16} stroke={2} />
+                <span>Sign Out & Switch Account</span>
               </button>
             </form>
           </div>

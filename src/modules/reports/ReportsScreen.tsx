@@ -15,10 +15,9 @@ import type {
   DayBookResult,
   GstSummaryResult,
   HsnSummaryRow,
-  PackReportsData,
   PartyDuesAgeingRow,
   ProfitEstimateResult,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 type ReportTab =
   | 'dayBook'
@@ -28,7 +27,6 @@ type ReportTab =
   | 'purchases'
   | 'stock'
   | 'ageing'
-  | 'pack'
   | 'audit';
 
 function monthStartIso(): string {
@@ -71,9 +69,6 @@ export function ReportsScreen() {
     if (!isStorekeeper && !isCashier && isModuleEnabled('parties')) {
       list.push({ key: 'ageing', label: t('reports.tabs.ageing') });
     }
-    if (!isStorekeeper && !isCashier) {
-      list.push({ key: 'pack', label: t('reports.tabs.pack') || 'Pack Insights' });
-    }
     if (isOwner) {
       list.push({ key: 'audit', label: t('reports.tabs.audit') });
     }
@@ -107,7 +102,6 @@ export function ReportsScreen() {
     rows: Array<Record<string, unknown>>;
   } | null>(null);
   const [ageingRows, setAgeingRows] = useState<PartyDuesAgeingRow[]>([]);
-  const [packData, setPackData] = useState<PackReportsData | null>(null);
   const [auditRows, setAuditRows] = useState<AuditLogRecord[]>([]);
 
   useEffect(() => {
@@ -185,13 +179,6 @@ export function ReportsScreen() {
         const { data, error } = await supabase.rpc('get_party_dues_ageing');
         if (error) throw error;
         setAgeingRows(((data as { rows?: PartyDuesAgeingRow[] })?.rows) ?? []);
-      } else if (activeTab === 'pack') {
-        const { data, error } = await supabase.rpc('get_pack_reports', {
-          p_from: fromDate,
-          p_to: toDate,
-        });
-        if (error) throw error;
-        setPackData(data as PackReportsData);
       } else if (activeTab === 'audit') {
         const { data, error } = await supabase
           .from('audit_logs')
@@ -298,34 +285,6 @@ export function ReportsScreen() {
           a.bucket_90_plus,
           a.total_outstanding,
         ]),
-      };
-    }
-    if (activeTab === 'pack' && packData) {
-      return {
-        title: `Pack Insights (${packData.pack}) (${fromDate} to ${toDate})`,
-        headers: ['Section', 'Metric / Name', 'Value / Amount'],
-        rows: [
-          ['Medical', 'Near-Expiry Batches (<=90d)', packData.near_expiry_count],
-          ['Medical', 'Expired Stock Value', packData.expired_stock_value],
-          ['Medical', 'Schedule H/H1 Register Entries', packData.schedule_entries_count],
-          ['Hardware', 'Active Warranties', packData.active_warranties_count],
-          ['Hardware', 'Claimed Warranties', packData.claimed_warranties_count],
-          ...packData.tier_sales_summary.map((ts) => [
-            'Wholesale Tier',
-            `${ts.price_tier} (${ts.bill_count} bills)`,
-            ts.total_sales,
-          ]),
-          ...packData.site_sales_summary.map((ss) => [
-            'Contractor Site',
-            `${ss.site_name} (${ss.party_name})`,
-            ss.total_sales,
-          ]),
-          ...packData.job_profitability.map((jb) => [
-            'Service Job',
-            `${jb.job_number} - ${jb.title}`,
-            jb.billed_revenue - jb.job_expenses,
-          ]),
-        ],
       };
     }
     return null;
@@ -824,160 +783,6 @@ export function ReportsScreen() {
               )}
             </tbody>
           </table>
-        </div>
-      ) : activeTab === 'pack' && packData ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-              <div className="text-xs text-[var(--text-muted)]">Near-Expiry Batches</div>
-              <div className="text-lg font-bold mt-0.5 tabular-nums">{packData.near_expiry_count}</div>
-            </div>
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-              <div className="text-xs text-[var(--text-muted)]">Expired Stock Value</div>
-              <div className="text-lg font-bold mt-0.5 tabular-nums text-[var(--give)]">
-                {formatINR(packData.expired_stock_value)}
-              </div>
-            </div>
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-              <div className="text-xs text-[var(--text-muted)]">Schedule Rx Entries</div>
-              <div className="text-lg font-bold mt-0.5 tabular-nums">{packData.schedule_entries_count}</div>
-            </div>
-            <div className="p-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-              <div className="text-xs text-[var(--text-muted)]">Active Warranties</div>
-              <div className="text-lg font-bold mt-0.5 tabular-nums">
-                {packData.active_warranties_count}
-                {packData.claimed_warranties_count > 0
-                  ? ` · ${packData.claimed_warranties_count} claimed`
-                  : ''}
-              </div>
-            </div>
-          </div>
-
-          {packData.variant_stock_summary.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
-              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-muted)] text-xs font-semibold">
-                Clothing Variant Stock Summary
-              </div>
-              <table className="w-full text-xs sm:text-sm border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
-                    <th className="text-left px-3 py-2 font-medium">Size</th>
-                    <th className="text-left px-3 py-2 font-medium">Colour</th>
-                    <th className="text-right px-3 py-2 font-medium">SKUs</th>
-                    <th className="text-right px-3 py-2 font-medium">Total Qty</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {packData.variant_stock_summary.map((v, i) => (
-                    <tr key={`${v.size}-${v.color}-${i}`}>
-                      <td className="px-3 py-2 font-medium">{v.size}</td>
-                      <td className="px-3 py-2">{v.color}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{v.sku_count}</td>
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{v.total_qty}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {packData.tier_sales_summary.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
-              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-muted)] text-xs font-semibold">
-                Wholesale Price-Tier Sales
-              </div>
-              <table className="w-full text-xs sm:text-sm border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
-                    <th className="text-left px-3 py-2 font-medium">Tier</th>
-                    <th className="text-right px-3 py-2 font-medium">Bills</th>
-                    <th className="text-right px-3 py-2 font-medium">Total Sales</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {packData.tier_sales_summary.map((ts) => (
-                    <tr key={ts.price_tier}>
-                      <td className="px-3 py-2 font-medium uppercase">{ts.price_tier.replace(/_/g, ' ')}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{ts.bill_count}</td>
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatINR(ts.total_sales)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {packData.site_sales_summary.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
-              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-muted)] text-xs font-semibold">
-                Contractor Site-wise Sales
-              </div>
-              <table className="w-full text-xs sm:text-sm border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
-                    <th className="text-left px-3 py-2 font-medium">Site</th>
-                    <th className="text-left px-3 py-2 font-medium">Contractor</th>
-                    <th className="text-right px-3 py-2 font-medium">Bills</th>
-                    <th className="text-right px-3 py-2 font-medium">Total Sales</th>
-                    <th className="text-right px-3 py-2 font-medium">Balance Due</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {packData.site_sales_summary.map((ss, i) => (
-                    <tr key={`${ss.site_name}-${i}`}>
-                      <td className="px-3 py-2 font-medium">{ss.site_name}</td>
-                      <td className="px-3 py-2">{ss.party_name}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{ss.bill_count}</td>
-                      <td className="px-3 py-2 text-right font-semibold tabular-nums">{formatINR(ss.total_sales)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums text-[var(--give)]">{formatINR(ss.balance_due)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {packData.job_profitability.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
-              <div className="px-4 py-2.5 border-b border-[var(--border)] bg-[var(--surface-muted)] text-xs font-semibold">
-                Service Job Profitability
-              </div>
-              <table className="w-full text-xs sm:text-sm border-collapse">
-                <thead>
-                  <tr className="border-b border-[var(--border)] text-[var(--text-muted)]">
-                    <th className="text-left px-3 py-2 font-medium">Job #</th>
-                    <th className="text-left px-3 py-2 font-medium">Title / Client</th>
-                    <th className="text-right px-3 py-2 font-medium">Billed</th>
-                    <th className="text-right px-3 py-2 font-medium">Expenses</th>
-                    <th className="text-right px-3 py-2 font-medium">Net Margin</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {packData.job_profitability.map((jb) => {
-                    const net = Number(jb.billed_revenue || 0) - Number(jb.job_expenses || 0);
-                    return (
-                      <tr key={jb.id}>
-                        <td className="px-3 py-2 font-mono font-medium">{jb.job_number}</td>
-                        <td className="px-3 py-2">
-                          <div className="font-medium">{jb.title}</div>
-                          <div className="text-[11px] text-[var(--text-muted)]">{jb.party_name}</div>
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatINR(jb.billed_revenue)}</td>
-                        <td className="px-3 py-2 text-right tabular-nums text-[var(--give)]">{formatINR(jb.job_expenses)}</td>
-                        <td
-                          className={`px-3 py-2 text-right font-semibold tabular-nums ${
-                            net >= 0 ? 'text-[var(--receive-text)]' : 'text-[var(--give)]'
-                          }`}
-                        >
-                          {formatINR(net)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       ) : activeTab === 'audit' ? (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">

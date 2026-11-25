@@ -3,14 +3,14 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { FileUpload, type UploadedFileItem } from '../../components/upload/FileUpload';
 import { todayLocalIso } from '../../core/format';
+import { erpFetch } from '../../core/erpFetch';
 import { roundHalfUp } from '../../core/money';
 import { supabase } from '../../core/supabase';
 import type {
   ExpenseCategoryRecord,
   ExpenseRecord,
   PaymentMode,
-  ServiceJobRecord,
-} from '../../types/bizone';
+} from '../../types/decorbiz';
 
 interface ExpenseFormModalProps {
   open: boolean;
@@ -36,7 +36,7 @@ export function ExpenseFormModal({
   onClose,
   onSaved,
 }: ExpenseFormModalProps) {
-  const { business, session, language, showToast, t } = useApp();
+  const { session, language, showToast, t } = useApp();
 
   const [categoryId, setCategoryId] = useState('');
   const [expenseDate, setExpenseDate] = useState(todayLocalIso());
@@ -45,8 +45,6 @@ export function ExpenseFormModal({
   const [paidTo, setPaidTo] = useState('');
   const [referenceNo, setReferenceNo] = useState('');
   const [notes, setNotes] = useState('');
-  const [jobId, setJobId] = useState('');
-  const [serviceJobs, setServiceJobs] = useState<ServiceJobRecord[]>([]);
   const [attachment, setAttachment] = useState<UploadedFileItem | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -57,17 +55,6 @@ export function ExpenseFormModal({
     setErrorMsg(null);
     setIdempotencyKey(`exp_${crypto.randomUUID()}`);
 
-    if (business?.pack === 'service' || editingExpense?.job_id) {
-      supabase
-        .from('service_jobs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(100)
-        .then(({ data }) => setServiceJobs((data as ServiceJobRecord[]) || []));
-    } else {
-      setServiceJobs([]);
-    }
-
     if (editingExpense) {
       setCategoryId(editingExpense.category_id);
       setExpenseDate(editingExpense.expense_date);
@@ -76,15 +63,11 @@ export function ExpenseFormModal({
       setPaidTo(editingExpense.paid_to || '');
       setReferenceNo(editingExpense.reference_no || '');
       setNotes(editingExpense.notes || '');
-      setJobId(editingExpense.job_id || '');
 
       if (editingExpense.attachment_file_id && session?.access_token) {
-        fetch('/api/files/signed-url', {
+        erpFetch('/api/erp/files/signed-url', session.access_token, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session.access_token}`,
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileId: editingExpense.attachment_file_id }),
         })
           .then((r) => r.json())
@@ -111,10 +94,9 @@ export function ExpenseFormModal({
       setPaidTo('');
       setReferenceNo('');
       setNotes('');
-      setJobId('');
       setAttachment(null);
     }
-  }, [open, editingExpense, categories, session?.access_token, business?.pack]);
+  }, [open, editingExpense, categories, session?.access_token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -142,7 +124,6 @@ export function ExpenseFormModal({
         p_notes: notes.trim() || null,
         p_attachment_file_id: attachment?.fileId ?? null,
         p_idempotency_key: editingExpense ? null : idempotencyKey,
-        p_job_id: jobId || null,
       });
       if (error) throw error;
       showToast(
@@ -298,27 +279,6 @@ export function ExpenseFormModal({
               />
             </div>
           </div>
-
-          {(business?.pack === 'service' || serviceJobs.length > 0) && (
-            <div>
-              <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
-                Link to Service Job (Optional)
-              </label>
-              <select
-                value={jobId}
-                onChange={(e) => setJobId(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-              >
-                <option value="">General Business Expense (Unlinked)</option>
-                {serviceJobs.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.job_number ? `${j.job_number} · ` : ''}
-                    {j.title} ({j.status})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div>
             <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">

@@ -1,6 +1,6 @@
-# BizOne ERP (v1.0.0) — Complete Deployment, Configuration & Upgrade Guide
+# DecorBiz (v1.0.0) — Complete Deployment, Configuration & Upgrade Guide
 
-This guide walks you step-by-step through creating your environment variables, provisioning the Supabase PostgreSQL database, deploying **BizOne ERP** to **Vercel via GitHub** (or a VPS / Cloud PaaS / Local PC), setting up advanced modules and optional integrations, and upgrading safely.
+This guide walks you step-by-step through creating your environment variables, provisioning the Supabase PostgreSQL database, deploying **DecorBiz** to **Vercel via GitHub** (or a VPS / Cloud PaaS / Local PC), setting up advanced modules and optional integrations, and upgrading safely.
 
 ---
 
@@ -22,16 +22,16 @@ This guide walks you step-by-step through creating your environment variables, p
 ## 1. Architecture Overview
 
 - **Single-Business Isolation**: One Supabase project and one deployment serve **one business workspace** with 6 fixed roles (`owner`, `manager`, `cashier`, `storekeeper`, `accountant`, `viewer`).
-- **Frontend**: React 19 + TypeScript + Tailwind CSS v4 + Vite 8 PWA (`dist/`).
-- **Backend API (`/api/*`)**: Express server (`server.ts`, also exported via `api/index.ts` for Vercel Serverless Functions) handling trusted operations that must never run in the browser:
-  - First-time workspace & Owner initialization (`/api/setup/*`)
-  - Staff user creation, role updates & deactivation (`/api/admin/users*`)
-  - Private file & image upload validation + signed URLs (`/api/files/*`)
-  - AES-256-GCM encrypted integration credentials (`/api/integrations/*`)
-  - Google Drive OAuth 2.0 flow & encrypted cloud backups (`/api/integrations/google-drive/*`)
-  - Allowlisted BizOne AI gateway & Owner proposal approvals (`/api/ai/*`)
-  - E-Invoice / E-Way Bill IRN & QR generation (`/api/einvoice/*`)
-  - Public revocable invoice share links (`/api/public/bills/:token`)
+- **Frontend (Dual Vite Bundles)**: React 19 + TypeScript + Tailwind CSS v4 + Vite 8 — public storefront PWA at `dist/` (`/`) and isolated staff ERP console at `dist/ERP/` (`/ERP/`).
+- **Backend API (`/api/*`)**: Express server (`server.ts`, also exported via `api/index.ts` for Vercel Serverless Functions) split into `/api/store/*` (customer auth & checkout) and `/api/erp/*` (staff auth + IP allowlist + TOTP enforcement) handling trusted operations that must never run in the browser:
+  - First-time workspace & Owner initialization (`/api/erp/setup/*`)
+  - Staff user creation, role updates, 2FA reset & deactivation (`/api/erp/admin/users*`, `/api/erp/auth/totp-*`)
+  - Private file & image upload validation + signed URLs (`/api/erp/files/*`)
+  - AES-256-GCM encrypted integration credentials (`/api/erp/integrations/*`)
+  - Google Drive OAuth 2.0 flow & encrypted cloud backups (`/api/erp/integrations/google-drive/*`)
+  - Allowlisted DecorBiz AI gateway & Owner proposal approvals (`/api/erp/ai/*`)
+  - E-Invoice / E-Way Bill IRN & QR generation (`/api/erp/einvoice/*`)
+  - Public revocable invoice share links (`/api/share/bill/:token`)
 
 ---
 
@@ -39,7 +39,7 @@ This guide walks you step-by-step through creating your environment variables, p
 
 ### 2.1 Create a New Supabase Project
 1. Sign in to [https://supabase.com/dashboard](https://supabase.com/dashboard) and click **New Project**.
-2. Choose your organization, enter a project name (e.g., `bizone-erp-demo`), set a strong database password, and select the closest region (e.g., **South Asia (Mumbai)** `ap-south-1`).
+2. Choose your organization, enter a project name (e.g., `decorbiz-demo`), set a strong database password, and select the closest region (e.g., **South Asia (Mumbai)** `ap-south-1`).
 3. Wait ~60 seconds for your PostgreSQL database to finish provisioning.
 
 ### 2.2 Collect Your Environment Variables
@@ -48,7 +48,7 @@ This guide walks you step-by-step through creating your environment variables, p
 | :--- | :--- | :---: | :--- |
 | `VITE_SUPABASE_URL` | Browser + Server | **Yes** | In Supabase Dashboard → **Project Settings → Data API** → copy **Project URL** (`https://<project_ref>.supabase.co`). |
 | `VITE_SUPABASE_ANON_KEY` | Browser + Server | **Yes** | In Supabase Dashboard → **Project Settings → API Keys** → copy the `anon` (`public`) key. Protected by PostgreSQL Row Level Security (RLS). |
-| `VITE_APP_NAME` | Browser | Optional | Display name (defaults to `"BizOne ERP"`). |
+| `VITE_APP_NAME` | Browser | Optional | Display name (defaults to `"DecorBiz"`). |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Server-Only** | **Yes** | In Supabase Dashboard → **Project Settings → API Keys** → reveal and copy the `service_role` (`secret`) key. **Never** prefix this with `VITE_`. |
 | `APP_ENCRYPTION_KEY` | **Server-Only** | **Yes** | 32-byte (64-hex-character) master key used by the server to encrypt AI API keys, Google Drive tokens, SMTP, and WhatsApp credentials with AES-256-GCM. |
 | `SUPABASE_PROJECT_REF` | Server / CLI | Optional | Your 20-character project ID from **Project Settings → General → Reference ID** (used by `npm run setup` to auto-apply SQL migrations). |
@@ -78,7 +78,7 @@ cp .env.example .env
 ```dotenv
 VITE_SUPABASE_URL="https://abcdefghijklm.supabase.co"
 VITE_SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-VITE_APP_NAME="BizOne ERP"
+VITE_APP_NAME="DecorBiz"
 
 SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 APP_ENCRYPTION_KEY="64_HEX_CHARACTER_RANDOM_KEY_FROM_ABOVE"
@@ -98,53 +98,47 @@ npm run check-env
 
 ## 3. Step 2: Apply Database Migrations & Storage Bucket
 
-BizOne ERP includes 13 sequential idempotent SQL migrations in `supabase/migrations/`:
+DecorBiz includes **24 sequential idempotent SQL migrations** (`0001_phase1_foundation.sql` through `0024_decorbiz_step2_modules_and_security.sql`) in `supabase/migrations/`. See **[Supabase & Vercel Deployment Guide](deployment-supabase-vercel.md)** for full details on migrations `0001` → `0024`, dual storefront (`/`) + ERP (`/ERP`) routing, `ALLOWED_ORIGINS`, and Razorpay setup.
 
-1. `0001_phase1_foundation.sql` — Core tables (`business`, `profiles`, `modules_state`, `files`, `audit_logs`, `integration_settings`) & RLS
-2. `0002_phase1_hardening.sql` — Trigger hardening & onboarding RPCs
-3. `0003_audit_fixes.sql` — Security & constraint refinements
-4. `0004_phase2_parties_khata_payments.sql` — Parties, addresses, immutable khata ledger, payments & FIFO/manual allocations
-5. `0005_phase3_items_inventory.sql` — Units, categories, brands, items, unit conversions & stock movements
-6. `0006_phase4_billing_sales.sql` — Numbering series, GST bills, quotations, credit notes & public share links
-7. `0007_audit_fixes_p4.sql` — Billing concurrency & rounding safeguards
-8. `0008_phase5_purchases_expenses_accounting.sql` — Supplier purchases, purchase returns & expenses
-9. `0009_phase5_books_reports.sql` — Day Book, Cash Book, Bank Book & ledger views
-10. `0010_phase5_reports_backup_notifications.sql` — Dashboard metrics, GST/HSN/Profit/Ageing RPCs & notifications
-11. `0011_phase6_packs_data_management.sql` — All 7 Business-Type Pack tables (batches, variants, rate cards, sites, job cards)
-12. `0012_phase6_import_demo_backup_drive.sql` — Batch CSV/XLSX import RPCs, Demo Data seeder/cleaner & Google Drive backup metadata
-13. `0013_phase7_ai_advanced_v1.sql` — Double-entry accounting (`account_groups`, `ledgers`, `vouchers`), GSTR-1/2B/E-Invoice/TDS, POS-Lite held bills & cash registers, multi-location stock transfers, orders/leads/cheques/recurring rules, messaging logs, AI conversations/playbooks/proposals, and `p7-v1` backup/restore RPCs
+Related guides in `/docs`:
+- **[Supabase & Vercel Deployment Guide](deployment-supabase-vercel.md)**
+- **[Backup & Restore Guide](backup-and-restore.md)**
+- **[Business Owner Manual](owner-manual.md)**
+- **[Staff Operations Guide](staff-guide.md)**
+- **[Owner Break-Glass Recovery](owner-break-glass-recovery.md)**
 
 ### Option A: Automated Provisioning (`npm run setup`)
 If you added `SUPABASE_PROJECT_REF` and `SUPABASE_ACCESS_TOKEN` to `.env`, run:
 ```bash
+npm run rehearse
 npm run setup
 ```
 This script automatically:
-- Applies `0001_*.sql` through `0013_*.sql` in order via the Supabase Management API.
-- Creates the private storage bucket `bizone-private` (with 10 MB upload limit and MIME allowlist).
+- Applies `0001_*.sql` through `0024_*.sql` in order via the Supabase Management API.
+- Creates the private storage bucket `decorbiz-private` (with 10 MB upload limit and MIME allowlist).
 
 ### Option B: Manual SQL Editor (No Access Token Needed)
 1. Open **Supabase Dashboard → SQL Editor → New Query**.
-2. Copy and run each file from `supabase/migrations/0001_phase1_foundation.sql` through `0013_phase7_ai_advanced_v1.sql` in numerical order.
-3. Open **Supabase Dashboard → Storage** and create a **Private** bucket named `bizone-private` (or let `/api/setup/initialize` create it automatically when you complete the in-app Setup screen).
+2. Copy and run each file from `supabase/migrations/0001_phase1_foundation.sql` through `supabase/migrations/0024_decorbiz_step2_modules_and_security.sql` in numerical order.
+3. Open **Supabase Dashboard → Storage** and create a **Private** bucket named `decorbiz-private` (or let `/api/erp/setup/initialize` create it automatically when you complete the in-app Setup screen at `/ERP`).
 
 ---
 
 ## 4. Step 3: Deploy on Vercel via GitHub (Testing, Demo & Production)
 
-BizOne ERP is pre-configured for **one-click GitHub → Vercel deployment** via `vercel.json` and `api/index.ts`.
+DecorBiz is pre-configured for **one-click GitHub → Vercel deployment** via `vercel.json` and `api/index.ts`.
 
-### How Vercel Routing Works in BizOne ERP
-- **Static SPA Build**: Vercel runs `npm run build` (`vite build`) and serves the compiled React PWA from `dist/`.
+### How Vercel Routing Works in DecorBiz
+- **Dual Static SPA Build**: Vercel runs `npm run build` (`vite build && vite build --config vite.erp.config.ts && node scripts/check-bundle.mjs`) and outputs storefront PWA (`dist/`) and isolated ERP (`dist/ERP/`).
 - **Serverless API (`/api/*`)**: `vercel.json` routes all `/api/*` requests to `api/index.ts`, which exports the Express application from `server.ts`.
-- **SPA Deep-Link Fallback**: Client routes (including `/share/:token` public invoice links) rewrite cleanly to `/index.html`.
+- **SPA Deep-Link Fallback**: `/ERP` and `/ERP/*` rewrite to `/ERP/erp.html` (with `X-Robots-Tag: noindex, nofollow`), while storefront paths rewrite cleanly to `/index.html`.
 
 ### Step-by-Step GitHub to Vercel Deployment
 1. **Push Repository to GitHub**:
    ```bash
    git init
    git add .
-   git commit -m "chore: BizOne ERP v1.0.0 ready for Vercel"
+   git commit -m "chore: DecorBiz v1.0.0 ready for Vercel"
    git branch -M main
    git remote add origin https://github.com/<your-username>/<your-repo>.git
    git push -u origin main
@@ -159,7 +153,7 @@ BizOne ERP is pre-configured for **one-click GitHub → Vercel deployment** via 
    - `VITE_SUPABASE_ANON_KEY` = `<your-supabase-anon-key>`
    - `SUPABASE_SERVICE_ROLE_KEY` = `<your-supabase-service-role-key>`
    - `APP_ENCRYPTION_KEY` = `<your-64-char-hex-key>`
-   - *(Optional)* `VITE_APP_NAME` = `BizOne ERP`
+   - *(Optional)* `VITE_APP_NAME` = `DecorBiz`
 4. **Click Deploy**:
    - Vercel builds the frontend bundle and deploys the `/api/*` serverless function.
    - Once deployed, visit `https://<your-vercel-domain>.vercel.app/api/health` — it should return:
@@ -177,7 +171,7 @@ BizOne ERP is pre-configured for **one-click GitHub → Vercel deployment** via 
 
 ### 5.1 Launch Business Workspace (In-App Wizard)
 1. Open your deployed URL (`https://<your-vercel-domain>.vercel.app`).
-2. When the database has no business record yet, BizOne automatically opens the **Set Up Your Business** screen:
+2. When the database has no business record yet, DecorBiz automatically opens the **Set Up Your Business** screen:
    - Enter **Business Name**, **Owner Full Name**, **Owner Email**, and **Owner Password**.
    - Choose your **Business Type (Pack)**:
      - **Kirana / Grocery**
@@ -214,7 +208,7 @@ Open **Settings → Modules & Features** (Owner only) to enable or disable optio
 | `cheques` | **Cheque / PDC Register** | Post-dated cheque tracking (`pending`, `cleared`, `bounced`, `cancelled`) for receivables and payables. |
 | `recurring` | **Recurring Templates** | Weekly, monthly, and quarterly recurring invoice & expense rules. |
 | `messaging` | **WhatsApp / SMS / Email Logs** | Bilingual (`EN`/`HI`) message templates and delivery audit logs. |
-| `ai` | **BizOne AI Assistant** | Read-only business Q&A, 6 operational playbooks, and Owner-approved draft action proposals. |
+| `ai` | **DecorBiz AI Assistant** | Read-only business Q&A, 6 operational playbooks, and Owner-approved draft action proposals. |
 
 ---
 
@@ -222,8 +216,8 @@ Open **Settings → Modules & Features** (Owner only) to enable or disable optio
 
 All external integrations are **100% optional** and disabled by default. Credentials are entered inside **Settings → Integrations**, encrypted on the server using `APP_ENCRYPTION_KEY` (AES-256-GCM), and **never** exposed to browser code or plain JSON backups.
 
-### 7.1 BizOne AI Assistant (`Settings → Integrations → AI Provider`)
-1. Enable the **BizOne AI** module in **Settings → Modules & Features**.
+### 7.1 DecorBiz AI Assistant (`Settings → Integrations → AI Provider`)
+1. Enable the **DecorBiz AI** module in **Settings → Modules & Features**.
 2. Go to **Settings → Integrations → AI Provider Configuration**.
 3. Select your preferred provider and model:
    - **Google Gemini**: e.g., `gemini-4-hydrogen` (paste your Gemini API Key)
@@ -233,16 +227,16 @@ All external integrations are **100% optional** and disabled by default. Credent
    - **xAI Grok**: e.g., `grok-2-latest`
    - **Custom OpenAI-Compatible HTTPS Endpoint**: provide Base URL (`https://...`) + API Key + Model ID
 4. Click **Save & Encrypt Key**, then click **Test Connection**.
-5. Open **BizOne AI** from the sidebar to run natural-language queries, execute **Playbooks** (Collections Follow-up, Low-Stock Reorder, Near-Expiry Clearance, Monthly GST Pre-Check, Expense Spike Review, Slow/Dead Stock), or generate **Draft Action Proposals** that require explicit Owner approval.
+5. Open **DecorBiz AI** from the sidebar to run natural-language queries, execute **Playbooks** (Collections Follow-up, Low-Stock Reorder, Near-Expiry Clearance, Monthly GST Pre-Check, Expense Spike Review, Slow/Dead Stock), or generate **Draft Action Proposals** that require explicit Owner approval.
 
 ### 7.2 Google Drive Cloud Backup (`Settings → Backup & Storage`)
 1. Open [Google Cloud Console → APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials).
 2. Enable the **Google Drive API** in your Google Cloud project.
 3. Click **Create Credentials → OAuth client ID** → select **Web application**.
 4. Under **Authorized redirect URIs**, add your deployment callback URL:
-   - For Vercel: `https://<your-vercel-domain>.vercel.app/api/integrations/google-drive/callback`
-   - For Local Dev: `http://localhost:3000/api/integrations/google-drive/callback`
-5. Copy the **Client ID** and **Client Secret**, open **BizOne → Settings → Backup & Storage → Google Drive Cloud Backup**, and save them.
+   - For Vercel: `https://<your-vercel-domain>.vercel.app/api/erp/integrations/google-drive/callback`
+   - For Local Dev: `http://localhost:3000/api/erp/integrations/google-drive/callback`
+5. Copy the **Client ID** and **Client Secret**, open **DecorBiz → Settings → Backup & Storage → Google Drive Cloud Backup**, and save them.
 6. Click **Connect Google Drive** to complete the OAuth consent flow. You can now trigger **Upload Encrypted Cloud Backup Now** or restore directly from your Drive backup history.
 
 ### 7.3 NIC / GSP E-Invoice & E-Way Bill (`Settings → Integrations`)
@@ -265,14 +259,14 @@ All external integrations are **100% optional** and disabled by default. Credent
 
 ### Mode B: Single Ubuntu VPS (PM2 + Nginx / Caddy HTTPS)
 ```bash
-git clone https://github.com/<your-org>/bizone-erp.git
-cd bizone-erp
+git clone https://github.com/<your-org>/decorbiz.git
+cd decorbiz
 npm ci
 cp .env.example .env
 # Edit .env with your production keys
 npm run check-env
 npm run build
-NODE_ENV=production pm2 start "node server.ts" --name bizone-erp
+NODE_ENV=production pm2 start "node server.ts" --name decorbiz
 ```
 Configure Caddy or Nginx to reverse-proxy `https://erp.yourdomain.com` to `http://127.0.0.1:3000`.
 
@@ -289,9 +283,9 @@ Configure Caddy or Nginx to reverse-proxy `https://erp.yourdomain.com` to `http:
    - Log in as **Owner** → **Settings → Backup & Storage**.
    - Click **Download Local Backup (.json)**. Optionally enter a passphrase to encrypt the backup with **PBKDF2-SHA256 (120,000 iterations) + AES-256-GCM**.
 2. **Apply New SQL Migrations**:
-   - Run any new migration files in `supabase/migrations/` sequentially (`0001` → `0013`). All migrations use `IF NOT EXISTS` and `CREATE OR REPLACE` for safe, non-destructive upgrades.
+   - Run any new migration files in `supabase/migrations/` sequentially (`0001` → `0024`). All migrations use `IF NOT EXISTS` and `CREATE OR REPLACE` for safe, non-destructive upgrades.
 3. **Backward-Compatible Restore**:
-   - BizOne `v1.0.0` exports schema version `p7-v1` (signed with a SHA-256 checksum over the canonical data payload).
+   - DecorBiz `v1.0.0` exports schema version `p7-v1` (signed with a SHA-256 checksum over the canonical data payload).
    - Both `verifyBackupEnvelope()` and the PostgreSQL `restore_workspace_backup()` RPC accept `p5-v1`, `p6-v1`, and `p7-v1` backups and verify the SHA-256 checksum before restoring.
 
 ---
@@ -308,4 +302,4 @@ npm test            # Runs unit, pack, security, CSV, tax engine & contract test
 
 - **`/api/health` returns `"supabaseConfigured": false`**: Verify `VITE_SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set in your hosting provider's Environment Variables and redeploy.
 - **`/api/health` returns `"encryptionConfigured": false`**: Ensure `APP_ENCRYPTION_KEY` is at least 32 characters (64 hex chars recommended from `openssl rand -hex 32`).
-- **Google Drive OAuth Redirect Error (`redirect_uri_mismatch`)**: Ensure the exact callback URL `https://<your-domain>/api/integrations/google-drive/callback` is listed under Authorized Redirect URIs in Google Cloud Console.
+- **Google Drive OAuth Redirect Error (`redirect_uri_mismatch`)**: Ensure the exact callback URL `https://<your-domain>/api/erp/integrations/google-drive/callback` is listed under Authorized Redirect URIs in Google Cloud Console.

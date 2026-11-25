@@ -66,6 +66,9 @@ function RootRouter() {
     checkingSetup,
     needsSetup,
     passwordRecoveryMode,
+    totpChecking,
+    totpRequired,
+    totpVerified,
     profile,
     language,
     setLanguage,
@@ -88,7 +91,7 @@ function RootRouter() {
                     : 'Workspace Backend Not Configured'}
                 </h1>
                 <p className="text-xs text-[var(--text-muted)]">
-                  BizOne ERP
+                  DecorBiz
                 </p>
               </div>
             </div>
@@ -105,7 +108,7 @@ function RootRouter() {
           <p className="text-sm text-[var(--text-muted)] leading-relaxed">
             {language === 'hi'
               ? 'ऐप शुरू हो चुका है, लेकिन आपका सुपाबेस प्रोजेक्ट अभी जुड़ा नहीं है। अपने प्रोजेक्ट रूट में .env फ़ाइल सेट करें और सर्वर रीस्टार्ट करें।'
-              : 'The BizOne server is running, but your Supabase project credentials are not set yet. Configure the environment file at your project root and restart the server.'}
+              : 'The DecorBiz server is running, but your Supabase project credentials are not set yet. Configure the environment file at your project root and restart the server.'}
           </p>
 
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-4 space-y-2 text-xs">
@@ -139,18 +142,18 @@ function RootRouter() {
     );
   }
 
-  if (authLoading || checkingSetup) {
+  if (authLoading || checkingSetup || (session && totpChecking)) {
     return (
       <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
         <div className="flex items-center gap-2.5 text-sm font-medium text-[var(--text-muted)]">
           <IconLoader2 size={20} stroke={2} className="animate-spin text-[var(--primary-dark)]" />
-          <span>Loading BizOne workspace...</span>
+          <span>Loading DecorBiz workspace...</span>
         </div>
       </div>
     );
   }
 
-  if (needsSetup || !session || passwordRecoveryMode) {
+  if (needsSetup || !session || passwordRecoveryMode || (totpRequired && !totpVerified)) {
     return <AuthScreens />;
   }
 

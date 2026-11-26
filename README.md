@@ -68,7 +68,7 @@ npm run dev       # Starts Storefront (/) + ERP (/ERP) + API on http://localhost
 
 ---
 
-## Deploying to Vercel via GitHub (Testing, Demo & Production)
+## Deploying to Vercel via GitHub (Testing & Production)
 
 DecorBiz includes built-in Vercel support (`vercel.json` + `api/index.ts`) so deploying from GitHub works out of the box:
 
@@ -80,7 +80,7 @@ DecorBiz includes built-in Vercel support (`vercel.json` + `api/index.ts`) so de
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `APP_ENCRYPTION_KEY`
 4. Click **Deploy**.
-5. Open your Vercel URL to complete the **First-Time Business Setup** screen, and optionally click **Load Sample Demo Data** in **Settings → Business Profile** to populate sample data for testing and live demos.
+5. Open your Vercel URL to complete the **First-Time Business Setup** screen.
 
 For complete step-by-step documentation, read:
 - **[Supabase & Vercel Deployment Guide](docs/deployment-supabase-vercel.md)**

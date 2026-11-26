@@ -420,7 +420,6 @@ export function NewBillScreen({
             pack_metadata: {},
             notes: null,
             is_active: false,
-            is_demo: false,
             version: 1,
             created_at: editingDraft.created_at,
             updated_at: editingDraft.updated_at,

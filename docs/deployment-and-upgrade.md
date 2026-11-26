@@ -9,8 +9,8 @@ This guide walks you step-by-step through creating your environment variables, p
 1. [Architecture Overview](#1-architecture-overview)
 2. [Step 1: Create Your Supabase Project & Environment Variables](#2-step-1-create-your-supabase-project--environment-variables)
 3. [Step 2: Apply Database Migrations & Storage Bucket](#3-step-2-apply-database-migrations--storage-bucket)
-4. [Step 3: Deploy on Vercel via GitHub (Testing, Demo & Production)](#4-step-3-deploy-on-vercel-via-github-testing-demo--production)
-5. [Step 4: First-Time Workspace Setup & Demo Data Seeding](#5-step-4-first-time-workspace-setup--demo-data-seeding)
+4. [Step 3: Deploy on Vercel via GitHub (Testing & Production)](#4-step-3-deploy-on-vercel-via-github-testing--production)
+5. [Step 4: First-Time Workspace Setup](#5-step-4-first-time-workspace-setup)
 6. [Step 5: Enabling & Configuring Advanced Modules](#6-step-5-enabling--configuring-advanced-modules)
 7. [Step 6: Setting Up Optional Integrations (AI, Google Drive, WhatsApp/SMS, SMTP, E-Invoice)](#7-step-6-setting-up-optional-integrations-ai-google-drive-whatsappsms-smtp-e-invoice)
 8. [Alternative Deployment Modes (Cloud Run, Render, VPS, Local Shop PC)](#8-alternative-deployment-modes-cloud-run-render-vps-local-shop-pc)
@@ -39,7 +39,7 @@ This guide walks you step-by-step through creating your environment variables, p
 
 ### 2.1 Create a New Supabase Project
 1. Sign in to [https://supabase.com/dashboard](https://supabase.com/dashboard) and click **New Project**.
-2. Choose your organization, enter a project name (e.g., `decorbiz-demo`), set a strong database password, and select the closest region (e.g., **South Asia (Mumbai)** `ap-south-1`).
+2. Choose your organization, enter a project name (e.g., `decorbiz-erp`), set a strong database password, and select the closest region (e.g., **South Asia (Mumbai)** `ap-south-1`).
 3. Wait ~60 seconds for your PostgreSQL database to finish provisioning.
 
 ### 2.2 Collect Your Environment Variables
@@ -124,7 +124,7 @@ This script automatically:
 
 ---
 
-## 4. Step 3: Deploy on Vercel via GitHub (Testing, Demo & Production)
+## 4. Step 3: Deploy on Vercel via GitHub (Testing & Production)
 
 DecorBiz is pre-configured for **one-click GitHub → Vercel deployment** via `vercel.json` and `api/index.ts`.
 
@@ -167,7 +167,7 @@ DecorBiz is pre-configured for **one-click GitHub → Vercel deployment** via `v
 
 ---
 
-## 5. Step 4: First-Time Workspace Setup & Demo Data Seeding
+## 5. Step 4: First-Time Workspace Setup
 
 ### 5.1 Launch Business Workspace (In-App Wizard)
 1. Open your deployed URL (`https://<your-vercel-domain>.vercel.app`).
@@ -176,13 +176,6 @@ DecorBiz is pre-configured for **one-click GitHub → Vercel deployment** via `v
    - DecorBiz uses a single fixed **Tiles, Sanitaryware & Building Materials** workspace configuration (`decorbiz`).
    - Toggle **GST Registered Business** (and enter 15-character GSTIN if registered).
 3. Click **Launch Business Workspace** — you are signed in immediately as the **Business Owner**.
-
-### 5.2 Seed Sample Data for Testing & Live Demos
-To quickly showcase or test all features on Vercel:
-1. Go to **Settings → Business Profile**.
-2. Click **Load Sample Demo Data** (`seed_demo_data`).
-   - This populates realistic Indian parties (customers & suppliers), contractor sites, DecorBiz items across all 5 product lines, and opening stock tagged with `is_demo = true`.
-3. When you finish testing or demoing, click **Remove Demo Data** (`remove_demo_data`) to cleanly remove sample records without touching your real business transactions.
 
 ---
 
@@ -234,7 +227,7 @@ All external integrations are **100% optional** and disabled by default. Credent
 
 ### 7.3 NIC / GSP E-Invoice & E-Way Bill (`Settings → Integrations`)
 1. Enable **Advanced GST & E-Invoice** in **Settings → Modules & Features**.
-2. In **Settings → Integrations → E-Invoice GSP**, choose **Sandbox** (for testing/demo) or **Production** (with your GSP Base URL, Client ID, Client Secret, and Username/Password).
+2. In **Settings → Integrations → E-Invoice GSP**, choose **Sandbox** (for testing) or **Production** (with your GSP Base URL, Client ID, Client Secret, and Username/Password).
 3. In **GST & E-Invoice → E-Invoice & E-Way Bill**, select any issued Tax Invoice to generate a 64-character IRN, Ack No, and signed QR payload.
 
 ### 7.4 WhatsApp / SMS & SMTP Email Relay (`Settings → Integrations`)

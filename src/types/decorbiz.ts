@@ -164,7 +164,6 @@ export interface PartyRecord {
   credit_days: number;
   notes: string | null;
   is_active: boolean;
-  is_demo: boolean;
   version: number;
   created_by: string | null;
   created_at: string;
@@ -432,7 +431,6 @@ export interface ItemCatalogRecord {
   pack_metadata: Record<string, unknown>;
   notes: string | null;
   is_active: boolean;
-  is_demo: boolean;
   version: number;
   created_at: string;
   updated_at: string;
@@ -1011,7 +1009,6 @@ export interface PartySiteRecord {
   contact_phone: string | null;
   address: string | null;
   is_active: boolean;
-  is_demo?: boolean;
   created_at: string;
 }
 
@@ -1029,7 +1026,6 @@ export interface HardwareEstimateRecord {
   status: 'open' | 'converted' | 'archived';
   converted_bill_id: string | null;
   notes: string | null;
-  is_demo?: boolean;
   created_at: string;
   updated_at: string;
 }

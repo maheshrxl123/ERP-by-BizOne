@@ -1,6 +1,5 @@
 import {
   IconAlertTriangle,
-  IconBriefcase,
   IconCheck,
   IconCloud,
   IconCloudUpload,
@@ -165,8 +164,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
   const [allowCashierPriceOverride, setAllowCashierPriceOverride] = useState(false);
   const [savingBiz, setSavingBiz] = useState(false);
 
-  // Demo Data & Workspace Reset state
-  const [demoLoading, setDemoLoading] = useState(false);
+  // Workspace Reset state
   const [resetPhrase, setResetPhrase] = useState('');
   const [resettingWorkspace, setResettingWorkspace] = useState(false);
 
@@ -941,42 +939,6 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
         err instanceof Error ? err.message : 'Unable to disconnect Google Drive.',
         'error'
       );
-    }
-  };
-
-  const handleLoadDemoData = async () => {
-    if (!isOwner) return;
-    setDemoLoading(true);
-    try {
-      const { error } = await supabase.rpc('seed_demo_data');
-      if (error) throw error;
-      await refreshWorkspace();
-      showToast('Sample demo records loaded for DecorBiz.', 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to load demo data.',
-        'error'
-      );
-    } finally {
-      setDemoLoading(false);
-    }
-  };
-
-  const handleRemoveDemoData = async () => {
-    if (!isOwner) return;
-    setDemoLoading(true);
-    try {
-      const { error } = await supabase.rpc('remove_demo_data');
-      if (error) throw error;
-      await refreshWorkspace();
-      showToast('Sample demo records removed.', 'success');
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to remove demo data.',
-        'error'
-      );
-    } finally {
-      setDemoLoading(false);
     }
   };
 
@@ -1759,41 +1721,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
           </div>
         </form>
 
-        {/* Sample Demo Data & Workspace Reset */}
+        {/* Workspace Reset */}
         <div className="mt-6 space-y-6">
-          <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 sm:p-6 space-y-4">
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] pb-3">
-              <div>
-                <h2 className="text-base font-semibold inline-flex items-center gap-2">
-                  <IconBriefcase size={18} stroke={2} className="text-[var(--primary-dark)]" />
-                  <span>Sample Demo Data</span>
-                </h2>
-                <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Load or remove sample DecorBiz tiles, sanitaryware & contractor demo records for testing.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                disabled={demoLoading}
-                onClick={() => void handleLoadDemoData()}
-                className="h-10 px-4 rounded-lg border border-[var(--border)] text-xs font-semibold hover:bg-[var(--surface-muted)] disabled:opacity-50"
-              >
-                {demoLoading ? 'Working...' : 'Load Sample Demo Data'}
-              </button>
-              <button
-                type="button"
-                disabled={demoLoading}
-                onClick={() => void handleRemoveDemoData()}
-                className="h-10 px-4 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--give)] hover:bg-[var(--give-soft)] disabled:opacity-50"
-              >
-                Remove Demo Data
-              </button>
-            </div>
-          </section>
-
           {/* Danger Zone: Reset Workspace */}
           <section className="rounded-xl border border-[var(--give)]/35 bg-[var(--surface)] p-5 sm:p-6 space-y-4">
             <div className="flex items-start gap-2.5">

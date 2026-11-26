@@ -363,7 +363,6 @@ test('Audit Fix: 0016 and 0026 reset_workspace_data and restore_workspace_backup
 
   assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.reset_workspace_data/);
   assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.restore_workspace_backup/);
-  assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.remove_demo_data/);
   assert.match(m0026, /store_order_lines/);
   assert.match(m0026, /breakage_returns/);
   assert.match(m0026, /sample_issues/);

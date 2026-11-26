@@ -12,13 +12,13 @@
   },
   "redirects": [
     {
-      "source": "/(?!ERP$)[Ee][Rr][Pp]",
+      "source": "/:prefix(erp|Erp|ERp|eRp|eRP|erP|ErP)",
       "destination": "/ERP",
       "permanent": true
     },
     {
-      "source": "/(?!ERP/)[Ee][Rr][Pp]/(.*)",
-      "destination": "/ERP/$1",
+      "source": "/:prefix(erp|Erp|ERp|eRp|eRP|erP|ErP)/:rest*",
+      "destination": "/ERP/:rest*",
       "permanent": true
     }
   ],

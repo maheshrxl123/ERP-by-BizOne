@@ -178,7 +178,7 @@ test('Phase P6 backup/restore security: p5-v1 + p6-v1 verification, tamper rejec
       items: [{ id: 'it-1', name: 'Somany Wall Tile 2x1' }],
     },
     attachments: [
-      { id: 'f-1', storage_path: 'demo/site.png', mime_type: 'image/png', base64: 'AAAA' },
+      { id: 'f-1', storage_path: 'sites/site.png', mime_type: 'image/png', base64: 'AAAA' },
     ],
   };
 
@@ -288,7 +288,6 @@ test('Phase P6 server, migrations & i18n contracts: Google Drive encryption/revo
   );
   assert.match(mig12, /FUNCTION public\.import_parties_batch/);
   assert.match(mig12, /FUNCTION public\.import_items_batch/);
-  assert.match(mig12, /FUNCTION public\.remove_demo_data/);
   assert.match(mig12, /FUNCTION public\.reset_workspace_data/);
   assert.match(mig12, /'RESET WORKSPACE'/);
   assert.match(mig12, /FUNCTION public\.export_workspace_backup/);
@@ -296,11 +295,10 @@ test('Phase P6 server, migrations & i18n contracts: Google Drive encryption/revo
   assert.match(mig16, /DROP TABLE IF EXISTS public\.item_batches/);
   assert.match(mig16, /DROP TABLE IF EXISTS public\.item_variants/);
   assert.match(mig16, /DROP TABLE IF EXISTS public\.service_jobs/);
-  assert.match(mig16, /CREATE OR REPLACE FUNCTION public\.seed_demo_data\(/);
 });
 
 test(
-  'Phase P6 live integration: pack switch, demo seed/remove, batch import duplicate modes & Drive disabled guard',
+  'Phase P6 live integration: pack switch, batch import duplicate modes & Drive disabled guard',
   { skip: hasLiveSupabase ? false : 'Live Supabase credentials are not configured in environment' },
   async () => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {

@@ -131,7 +131,15 @@ async function applyMigrationsIfToken() {
       EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'stock_ledger' AND column_name = 'batch_lot') AS has_p21_variants,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'staff_totp') AS has_p22_sec,
       EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'store_orders') AS has_p23_store,
-      EXISTS (SELECT 1 FROM public.modules_state WHERE module_key = 'breakage_returns') AS has_p24_step2_mods;
+      EXISTS (SELECT 1 FROM public.modules_state WHERE module_key = 'breakage_returns') AS has_p24_step2_mods,
+      (
+        EXISTS (SELECT 1 FROM information_schema.views WHERE table_schema = 'public' AND table_name = 'khata_totals_summary')
+        AND has_table_privilege('authenticated', 'public.item_lot_balances', 'SELECT')
+      ) AS has_p25_views,
+      (
+        pg_get_functiondef('public.reset_workspace_data(text)'::regprocedure) ILIKE '%WHERE true%'
+        AND pg_get_functiondef('public.restore_workspace_backup(jsonb,text,text,text)'::regprocedure) ILIKE '%WHERE true%'
+      ) AS has_p26_reset;
   `);
 
   const state = stateRows?.[0] || {};
@@ -167,6 +175,8 @@ async function applyMigrationsIfToken() {
     '0022_decorbiz_step3_security.sql': Boolean(state.has_p22_sec),
     '0023_decorbiz_step4_ecommerce.sql': Boolean(state.has_p23_store),
     '0024_decorbiz_step2_modules_and_security.sql': Boolean(state.has_p24_step2_mods),
+    '0025_decorbiz_fix_views_and_grants.sql': Boolean(state.has_p25_views),
+    '0026_decorbiz_fix_reset_and_restore.sql': Boolean(state.has_p26_reset),
   };
 
   const forceSync = process.argv.includes('--force-sync');
@@ -185,6 +195,8 @@ async function applyMigrationsIfToken() {
     '0022_decorbiz_step3_security.sql',
     '0023_decorbiz_step4_ecommerce.sql',
     '0024_decorbiz_step2_modules_and_security.sql',
+    '0025_decorbiz_fix_views_and_grants.sql',
+    '0026_decorbiz_fix_reset_and_restore.sql',
   ]);
 
   for (const file of migrationFiles) {
@@ -274,7 +286,7 @@ async function verifyConnectivity() {
   await applyMigrationsIfToken();
   await verifyConnectivity();
   console.log(
-    '[setup] All DecorBiz migrations (0001..0024) & private storage bucket are verified and live.'
+    '[setup] All DecorBiz migrations (0001..0026) & private storage bucket are verified and live.'
   );
 })().catch((err) => {
   console.error('[setup] Error:', err.message);

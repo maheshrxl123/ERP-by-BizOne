@@ -15,9 +15,11 @@ import {
   requireModuleEnabled,
   requireOwner,
   resolveRequestOrigin,
+  verifyMagicBytes,
   writeAudit,
   type AuthenticatedRequest,
 } from '../middleware.ts';
+import { sanitizeStorageRelativePath } from '../rateLimit.ts';
 
 async function getGoogleDriveOAuthConfig(admin: SupabaseClient) {
   const { data, error } = await admin
@@ -273,18 +275,35 @@ export function registerGoogleDriveRoutes(app: Express): void {
       return;
     }
 
+    const escapeHtml = (str: string) =>
+      str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    const serializeForInlineScript = (val: unknown) =>
+      JSON.stringify(val)
+        .replace(/</g, '\\u003c')
+        .replace(/>/g, '\\u003e')
+        .replace(/&/g, '\\u0026')
+        .replace(/\u2028/g, '\\u2028')
+        .replace(/\u2029/g, '\\u2029');
+
     const sendPopupCloseHtml = (ok: boolean, message: string) => {
-      const safeMsg = JSON.stringify(message);
+      const safeMsg = serializeForInlineScript(message);
+      const safeHtmlMsg = escapeHtml(message);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(`<!doctype html><html><body style="font-family:system-ui,sans-serif;padding:32px;background:#0f172a;color:#f8fafc;">
         <h2 style="margin:0 0 8px;">${ok ? 'Google Drive Connected' : 'Google Drive Authorization Failed'}</h2>
-        <p style="opacity:0.85;">${message.replace(/</g, '&lt;')}</p>
+        <p style="opacity:0.85;">${safeHtmlMsg}</p>
         <script>
           if (window.opener) {
-            window.opener.postMessage({ type: 'decorbiz-drive-oauth', ok: ${ok}, message: ${safeMsg} }, window.location.origin);
+            window.opener.postMessage({ type: 'decorbiz-drive-oauth', ok: ${Boolean(ok)}, message: ${safeMsg} }, window.location.origin);
             setTimeout(() => window.close(), 700);
           } else {
-            setTimeout(() => window.location.replace('/?drive=${ok ? 'connected' : 'error'}'), 900);
+            setTimeout(() => window.location.replace('/ERP/?drive=${ok ? 'connected' : 'error'}'), 900);
           }
         </script>
       </body></html>`);
@@ -700,17 +719,23 @@ export function registerGoogleDriveRoutes(app: Express): void {
         }
 
         let filesRestored = 0;
+        const allowedRestoreMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
         if (Array.isArray(parsed.attachments)) {
           for (const item of parsed.attachments as Array<Record<string, unknown>>) {
-            const storagePath = String(item.storage_path || '').trim();
+            const safePath = sanitizeStorageRelativePath(String(item.storage_path || '').trim());
             const bucket = String(item.bucket || STORAGE_BUCKET).trim();
-            const mimeType = String(item.mime_type || 'application/octet-stream');
+            const mimeType = String(item.mime_type || '');
             const b64 = String(item.base64 || '');
-            if (!storagePath || !b64) continue;
+            if (!safePath || bucket !== STORAGE_BUCKET || !b64 || !allowedRestoreMimes.has(mimeType)) {
+              continue;
+            }
             const buf = Buffer.from(b64, 'base64');
+            if (buf.length < 12 || buf.length > 6 * 1024 * 1024 || !verifyMagicBytes(buf, mimeType)) {
+              continue;
+            }
             const { error: upErr } = await supabaseAdmin.storage
-              .from(bucket)
-              .upload(storagePath, buf, { contentType: mimeType, upsert: true });
+              .from(STORAGE_BUCKET)
+              .upload(safePath, buf, { contentType: mimeType, upsert: true });
             if (!upErr) filesRestored += 1;
           }
         }

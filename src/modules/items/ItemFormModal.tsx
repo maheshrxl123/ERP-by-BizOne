@@ -1,5 +1,6 @@
 import {
   IconArrowsExchange,
+  IconBuildingStore,
   IconCamera,
   IconChevronDown,
   IconChevronUp,
@@ -28,11 +29,17 @@ import {
   type ProductLineKey,
 } from '../../core/productLines';
 import {
+  createEmptyServiceSpecs,
   createEmptySpecs,
+  formatItemSpecSummary,
+  formatServiceSpecSummary,
+  normalizeServiceSpecsFromMetadata,
   normalizeSpecsFromRecord,
   SQFT_PER_SQM,
   validateProductSpecs,
+  validateServiceSpecs,
   type AnySpecsMap,
+  type ServiceSpecs,
 } from '../../core/productSpecs';
 import { erpFetch } from '../../core/erpFetch';
 import { supabase } from '../../core/supabase';
@@ -46,7 +53,7 @@ import type {
   ItemUnitRecord,
   UnitConversionRecord,
 } from '../../types/decorbiz';
-import { ProductSpecFields } from './ProductSpecFields';
+import { ProductSpecFields, ServiceSpecFields } from './ProductSpecFields';
 
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28];
 
@@ -88,6 +95,8 @@ export function ItemFormModal({
 
   const canViewCost = hasCapability(profile?.role, 'view_profit');
   const partiesEnabled = isModuleEnabled('parties');
+  const onlineStoreEnabled = isModuleEnabled('online_store');
+  const aiEnabled = isModuleEnabled('ai');
   const uploadedDuringSessionRef = useRef<Set<string>>(new Set());
 
   const [name, setName] = useState('');
@@ -124,6 +133,15 @@ export function ItemFormModal({
   const [images, setImages] = useState<UploadedImageItem[]>([]);
   const [specs, setSpecs] = useState<AnySpecsMap>(() => createEmptySpecs(initialProductLine));
   const [specErrors, setSpecErrors] = useState<Record<string, string>>({});
+  const [serviceSpecs, setServiceSpecs] = useState<ServiceSpecs>(() => createEmptyServiceSpecs());
+  const [serviceSpecErrors, setServiceSpecErrors] = useState<Record<string, string>>({});
+
+  // Online Store / E-Commerce Publishing
+  const [publishOnline, setPublishOnline] = useState(false);
+  const [onlinePrice, setOnlinePrice] = useState('');
+  const [onlineSlug, setOnlineSlug] = useState('');
+  const [onlineDescription, setOnlineDescription] = useState('');
+  const [aiStoreDrafting, setAiStoreDrafting] = useState(false);
 
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [inlineAddType, setInlineAddType] = useState<'category' | 'brand' | null>(
@@ -141,31 +159,43 @@ export function ItemFormModal({
   );
 
   const scopedCategories = useMemo(() => {
+    if (itemType === 'service') return categories;
     const filtered = filterTaxonomyByProductLine(categories, productLine);
     if (categoryId && !filtered.some((c) => c.id === categoryId)) {
       const curr = categories.find((c) => c.id === categoryId);
       if (curr) return [curr, ...filtered];
     }
     return filtered;
-  }, [categories, productLine, categoryId]);
+  }, [categories, productLine, categoryId, itemType]);
 
   const scopedBrands = useMemo(() => {
+    if (itemType === 'service') return brands;
     const filtered = filterTaxonomyByProductLine(brands, productLine);
     if (brandId && !filtered.some((b) => b.id === brandId)) {
       const curr = brands.find((b) => b.id === brandId);
       if (curr) return [curr, ...filtered];
     }
     return filtered;
-  }, [brands, productLine, brandId]);
+  }, [brands, productLine, brandId, itemType]);
 
   const scopedUnits = useMemo(() => {
+    if (itemType === 'service') {
+      const preferredCodes = new Set(['NOS', 'PCS', 'HRS', 'DAY', 'SQFT', 'SQM', 'JOB', 'SET']);
+      const serviceUnits = units.filter((u) => preferredCodes.has(u.code.toUpperCase()));
+      const list = serviceUnits.length > 0 ? serviceUnits : units;
+      if (baseUnitId && !list.some((u) => u.id === baseUnitId)) {
+        const curr = units.find((u) => u.id === baseUnitId);
+        if (curr) return [curr, ...list];
+      }
+      return list;
+    }
     const filtered = filterTaxonomyByProductLine(units, productLine);
     if (baseUnitId && !filtered.some((u) => u.id === baseUnitId)) {
       const curr = units.find((u) => u.id === baseUnitId);
       if (curr) return [curr, ...filtered];
     }
     return filtered;
-  }, [units, productLine, baseUnitId]);
+  }, [units, productLine, baseUnitId, itemType]);
 
   const initStampRef = useRef<string | null>(null);
 
@@ -224,6 +254,7 @@ export function ItemFormModal({
       const pm: Record<string, string> = {};
       if (item.pack_metadata && typeof item.pack_metadata === 'object') {
         for (const [k, v] of Object.entries(item.pack_metadata)) {
+          if (k === 'service_specs' || (typeof v === 'object' && v !== null)) continue;
           if (v !== null && v !== undefined) pm[k] = String(v);
         }
       }
@@ -235,6 +266,15 @@ export function ItemFormModal({
         })
       );
       setSpecErrors({});
+      setServiceSpecs(normalizeServiceSpecsFromMetadata(item.pack_metadata, item.hsn_code));
+      setServiceSpecErrors({});
+
+      setPublishOnline(Boolean(item.is_published_online));
+      setOnlinePrice(
+        item.online_price !== null && item.online_price !== undefined ? String(item.online_price) : ''
+      );
+      setOnlineSlug(item.online_slug || '');
+      setOnlineDescription(item.online_description || '');
 
       setConversions(
         initialConversions.map((c) => ({
@@ -302,6 +342,12 @@ export function ItemFormModal({
         })
       );
       setSpecErrors({});
+      setServiceSpecs(createEmptyServiceSpecs());
+      setServiceSpecErrors({});
+      setPublishOnline(false);
+      setOnlinePrice('');
+      setOnlineSlug('');
+      setOnlineDescription('');
       setConversions([]);
       setImages([]);
       setShowAdvanced(true);
@@ -534,6 +580,76 @@ export function ItemFormModal({
     setSpecErrors({});
   };
 
+  const handleItemTypeChange = (nextType: ItemType) => {
+    setItemType(nextType);
+    if (!item && nextType === 'service') {
+      const preferredServiceUnit =
+        units.find((u) => u.code === 'NOS') ||
+        units.find((u) => u.code === 'PCS') ||
+        units[0];
+      if (preferredServiceUnit) {
+        setBaseUnitId(preferredServiceUnit.id);
+        setOpeningUnitId(preferredServiceUnit.id);
+      }
+      if (!hsnCode.trim() || ['6907', '6910', '8481', '3214', '6908'].includes(hsnCode.trim())) {
+        setHsnCode('9954');
+      }
+      setGstRate('18');
+      setServiceSpecErrors({});
+    } else if (!item && nextType === 'goods') {
+      const meta = getProductLineMeta(productLine);
+      const nextUnitObj = units.find((u) => u.code === meta.defaultUnitCode);
+      if (nextUnitObj) {
+        setBaseUnitId(nextUnitObj.id);
+        setOpeningUnitId(nextUnitObj.id);
+      }
+      setHsnCode(meta.defaultHsn);
+      setGstRate(String(meta.defaultGst));
+      setSpecErrors({});
+    }
+  };
+
+  const handleAiDraftOnlineListing = async () => {
+    if (!session?.access_token) return;
+    if (!name.trim()) {
+      showToast('Enter an item or service name first.', 'error');
+      return;
+    }
+    setAiStoreDrafting(true);
+    try {
+      const categoryName = categories.find((c) => c.id === categoryId)?.name || '';
+      const brandName = brands.find((b) => b.id === brandId)?.name || '';
+      const specsSummary =
+        itemType === 'service'
+          ? formatServiceSpecSummary({ service_specs: serviceSpecs })
+          : formatItemSpecSummary(productLine, specs);
+
+      const res = await erpFetch('/api/erp/ai/store-assist', session.access_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'item_listing',
+          itemName: name.trim(),
+          categoryName,
+          brandName,
+          itemType,
+          productLine: itemType === 'service' ? 'service' : productLine,
+          sellingPrice: sellingPrice ? Number(sellingPrice) : undefined,
+          specsSummary,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'AI Store draft failed.');
+      if (data.draft?.online_slug) setOnlineSlug(String(data.draft.online_slug));
+      if (data.draft?.online_description) setOnlineDescription(String(data.draft.online_description));
+      showToast('AI drafted storefront URL slug and description.', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'AI Store draft failed.', 'error');
+    } finally {
+      setAiStoreDrafting(false);
+    }
+  };
+
   const handleInlineCreateTaxonomy = async () => {
     const clean = inlineAddName.trim();
     if (!clean || !inlineAddType) return;
@@ -678,18 +794,37 @@ export function ItemFormModal({
       return;
     }
 
-    const specCheck = validateProductSpecs(productLine, specs);
-    if (!specCheck.valid) {
-      setSpecErrors(specCheck.errors);
-      const firstErr = Object.values(specCheck.errors)[0] || t('items.requiredSpecsMissing');
-      setError(firstErr);
-      return;
+    const isService = itemType === 'service';
+    const effectiveProductLine: ProductLineKey = isService ? 'other_general' : productLine;
+
+    let cleanedSpecs: AnySpecsMap | null = null;
+    let cleanedServiceSpecs: ServiceSpecs | null = null;
+
+    if (isService) {
+      const srvCheck = validateServiceSpecs(serviceSpecs);
+      if (!srvCheck.valid) {
+        setServiceSpecErrors(srvCheck.errors);
+        const firstErr = Object.values(srvCheck.errors)[0] || 'Required service fields are missing.';
+        setError(firstErr);
+        return;
+      }
+      setServiceSpecErrors({});
+      cleanedServiceSpecs = srvCheck.cleaned;
+    } else {
+      const specCheck = validateProductSpecs(productLine, specs);
+      if (!specCheck.valid) {
+        setSpecErrors(specCheck.errors);
+        const firstErr = Object.values(specCheck.errors)[0] || t('items.requiredSpecsMissing');
+        setError(firstErr);
+        return;
+      }
+      setSpecErrors({});
+      cleanedSpecs = specCheck.cleaned;
     }
-    setSpecErrors({});
 
     const sourceConversions =
-      conversions.length === 0 && productLine === 'tiles_slabs'
-        ? buildTileAutoConversions(baseUnitId, specCheck.cleaned)
+      !isService && conversions.length === 0 && productLine === 'tiles_slabs' && cleanedSpecs
+        ? buildTileAutoConversions(baseUnitId, cleanedSpecs)
         : conversions;
 
     const cleanConvs: Array<{
@@ -717,7 +852,7 @@ export function ItemFormModal({
       });
     }
 
-    if (!item && openQty > 0) {
+    if (!item && !isService && openQty > 0) {
       const selectedBase = units.find((u) => u.id === baseUnitId);
       try {
         convertToBaseQty({
@@ -739,7 +874,7 @@ export function ItemFormModal({
       is_primary: img.isPrimary ?? idx === 0,
     }));
 
-    const cleanPackMeta: Record<string, string> = {};
+    const cleanPackMeta: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(packMeta)) {
       if (v.trim()) cleanPackMeta[k] = v.trim();
     }
@@ -750,11 +885,29 @@ export function ItemFormModal({
       return;
     }
 
-    if (productLine === 'tiles_slabs' && specCheck.cleaned.sqft_per_box) {
-      cleanPackMeta.sqft_per_box = String(specCheck.cleaned.sqft_per_box);
+    if (!isService && productLine === 'tiles_slabs' && cleanedSpecs?.sqft_per_box) {
+      cleanPackMeta.sqft_per_box = String(cleanedSpecs.sqft_per_box);
     }
 
-    const isService = itemType === 'service';
+    let effectiveHsn = hsnCode.trim() || null;
+    if (isService && cleanedServiceSpecs) {
+      cleanPackMeta.service_specs = cleanedServiceSpecs;
+      if (cleanedServiceSpecs.sac_code) {
+        cleanPackMeta.sac_code = cleanedServiceSpecs.sac_code;
+        if (!effectiveHsn) effectiveHsn = cleanedServiceSpecs.sac_code;
+      }
+      if (cleanedServiceSpecs.est_duration) {
+        cleanPackMeta.est_duration = cleanedServiceSpecs.est_duration;
+      }
+    }
+
+    if (onlineStoreEnabled && onlinePrice.trim()) {
+      const op = Number(onlinePrice);
+      if (!Number.isFinite(op) || op < 0) {
+        setError('Online price must be 0 or greater.');
+        return;
+      }
+    }
 
     setSaving(true);
     try {
@@ -762,7 +915,7 @@ export function ItemFormModal({
         p_id: item?.id ?? null,
         p_name: name.trim(),
         p_sku: sku.trim() || null,
-        p_barcode: barcode.trim() || null,
+        p_barcode: isService ? null : barcode.trim() || null,
         p_category_id: categoryId || null,
         p_brand_id: brandId || null,
         p_base_unit_id: baseUnitId,
@@ -770,7 +923,7 @@ export function ItemFormModal({
         p_mrp: mrpVal,
         p_purchase_price: canViewCost ? pp : null,
         p_gst_rate: Number(gstRate || 0),
-        p_hsn_code: hsnCode.trim() || null,
+        p_hsn_code: effectiveHsn,
         p_tax_inclusive: taxInclusive,
         p_low_stock_alert: isService ? 0 : alertQty,
         p_allow_negative_stock: isService ? true : allowNegativeStock,
@@ -782,16 +935,45 @@ export function ItemFormModal({
         p_images: cleanImages,
         p_expected_version: item?.version ?? null,
         p_item_type: itemType,
-        p_product_line: productLine,
+        p_product_line: effectiveProductLine,
         p_supplier_id: supplierId || null,
-        p_country_of_origin: countryOfOrigin.trim() || null,
+        p_country_of_origin: isService ? null : countryOfOrigin.trim() || null,
         p_warranty_months: warrantyVal,
         p_video_url: videoUrl.trim() || null,
         p_description: description.trim() || null,
-        p_specs: specCheck.cleaned,
+        p_specs: cleanedSpecs,
       });
 
       if (rpcErr) throw rpcErr;
+
+      const shouldSyncOnline =
+        onlineStoreEnabled &&
+        session?.access_token &&
+        (publishOnline ||
+          onlinePrice.trim() !== '' ||
+          onlineSlug.trim() !== '' ||
+          onlineDescription.trim() !== '' ||
+          Boolean(item?.is_published_online) ||
+          item?.online_price != null ||
+          Boolean(item?.online_slug) ||
+          Boolean(item?.online_description));
+
+      if (shouldSyncOnline && data?.id) {
+        const storeRes = await erpFetch(`/api/erp/store-admin/items/${data.id}`, session!.access_token, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            is_published_online: publishOnline,
+            online_price: onlinePrice.trim() ? Number(onlinePrice) : null,
+            online_slug: onlineSlug.trim() || null,
+            online_description: onlineDescription.trim() || null,
+          }),
+        });
+        if (!storeRes.ok) {
+          const storeJson = await storeRes.json().catch(() => ({}));
+          throw new Error(storeJson?.error || 'Item saved, but online listing sync failed.');
+        }
+      }
 
       // Clean up any replaced/removed images cleanly
       const removedIds: string[] = Array.isArray(data?.removed_file_ids)
@@ -888,7 +1070,7 @@ export function ItemFormModal({
                   <button
                     key={opt.id}
                     type="button"
-                    onClick={() => setItemType(opt.id)}
+                    onClick={() => handleItemTypeChange(opt.id)}
                     className={`h-9 px-3 text-xs font-medium ${
                       itemType === opt.id
                         ? 'bg-[var(--primary)] text-[var(--on-primary)]'
@@ -901,38 +1083,40 @@ export function ItemFormModal({
               </div>
               {itemType === 'service' && (
                 <span className="text-[11px] text-[var(--text-muted)]">
-                  Stock deduction skipped automatically on bills
+                  Non-stock service — separate details & SAC specifications (no physical Product Line stock tracking)
                 </span>
               )}
             </div>
 
-            {/* Product Line (Fixed 5 Lines) */}
-            <div className="sm:col-span-2">
-              <div className="flex items-center justify-between gap-2 mb-1.5">
-                <label className="text-xs font-semibold">
-                  {t('items.productLine')} *
-                </label>
-                <span className="text-[11px] text-[var(--text-muted)]">
-                  Fixed product line (cannot add or rename lines)
-                </span>
+            {/* Product Line (Fixed 5 Physical Lines — Goods Only) */}
+            {itemType === 'goods' && (
+              <div className="sm:col-span-2">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className="text-xs font-semibold">
+                    {t('items.productLine')} *
+                  </label>
+                  <span className="text-[11px] text-[var(--text-muted)]">
+                    Fixed product line (cannot add or rename lines)
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                  {PRODUCT_LINES.map((pl) => (
+                    <button
+                      key={pl.key}
+                      type="button"
+                      onClick={() => handleProductLineChange(pl.key)}
+                      className={`px-2.5 py-2 rounded-lg border text-xs font-medium text-left transition-colors ${
+                        productLine === pl.key
+                          ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                          : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
+                      }`}
+                    >
+                      {language === 'hi' ? pl.shortLabelHi : pl.shortLabelEn}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                {PRODUCT_LINES.map((pl) => (
-                  <button
-                    key={pl.key}
-                    type="button"
-                    onClick={() => handleProductLineChange(pl.key)}
-                    className={`px-2.5 py-2 rounded-lg border text-xs font-medium text-left transition-colors ${
-                      productLine === pl.key
-                        ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
-                        : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)] hover:text-[var(--text)]'
-                    }`}
-                  >
-                    {language === 'hi' ? pl.shortLabelHi : pl.shortLabelEn}
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
             <div className="sm:col-span-2">
               <div className="flex items-center justify-between gap-2 mb-1">
@@ -1058,71 +1242,90 @@ export function ItemFormModal({
 
             <div>
               <label className="block text-xs font-medium mb-1">
-                {t('items.sku')}
+                {itemType === 'service' ? 'Service Code / SKU' : t('items.sku')}
               </label>
               <input
                 type="text"
                 value={sku}
                 onChange={(e) => setSku(e.target.value.toUpperCase())}
-                placeholder="e.g., OIL-001"
+                placeholder={itemType === 'service' ? 'e.g., SRV-TILE-01' : 'e.g., TILE-6012'}
                 className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
               />
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-1 gap-2">
-                <label className="text-xs font-medium">{t('items.barcode')}</label>
-                <div className="flex items-center gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setBarcodeScannerOpen(true)}
-                    className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
-                    title="Scan barcode via camera"
-                  >
-                    <IconCamera size={12} stroke={2} />
-                    <span>Scan</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleGenerateBarcode}
-                    className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
-                  >
-                    <IconWand size={12} stroke={2} />
-                    <span>{t('items.generateCode')}</span>
-                  </button>
+            {itemType === 'goods' && (
+              <div>
+                <div className="flex items-center justify-between mb-1 gap-2">
+                  <label className="text-xs font-medium">{t('items.barcode')}</label>
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setBarcodeScannerOpen(true)}
+                      className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                      title="Scan barcode via camera"
+                    >
+                      <IconCamera size={12} stroke={2} />
+                      <span>Scan</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGenerateBarcode}
+                      className="text-[11px] font-medium text-[var(--primary-dark)] inline-flex items-center gap-1"
+                    >
+                      <IconWand size={12} stroke={2} />
+                      <span>{t('items.generateCode')}</span>
+                    </button>
+                  </div>
                 </div>
+                <input
+                  type="text"
+                  value={barcode}
+                  onChange={(e) => setBarcode(e.target.value.toUpperCase())}
+                  placeholder="Scan or enter barcode"
+                  className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
+                />
               </div>
-              <input
-                type="text"
-                value={barcode}
-                onChange={(e) => setBarcode(e.target.value.toUpperCase())}
-                placeholder="Scan or enter barcode"
-                className="w-full h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono uppercase"
-              />
-            </div>
+            )}
           </div>
 
-          {/* Line-Specific Typed Specifications */}
+          {/* Line-Specific Typed Specifications (Goods) OR Dedicated Service Specifications */}
           <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] space-y-3">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-xs font-semibold">
-                {t('items.technicalSpecs')}
+                {itemType === 'service'
+                  ? 'Service Details & Specifications'
+                  : t('items.technicalSpecs')}
               </h3>
               <span className="text-[11px] text-[var(--text-muted)]">
-                Required * fields depend on product line
+                {itemType === 'service'
+                  ? 'Non-stock service scope, billing basis & SAC'
+                  : 'Required * fields depend on product line'}
               </span>
             </div>
-            <ProductSpecFields
-              productLine={productLine}
-              specs={specs}
-              errors={specErrors}
-              onChange={(nextSpecs) => {
-                setSpecs(nextSpecs);
-                if (Object.keys(specErrors).length > 0) {
-                  setSpecErrors({});
-                }
-              }}
-            />
+            {itemType === 'service' ? (
+              <ServiceSpecFields
+                specs={serviceSpecs}
+                errors={serviceSpecErrors}
+                onChange={(nextSrv) => {
+                  setServiceSpecs(nextSrv);
+                  if (Object.keys(serviceSpecErrors).length > 0) {
+                    setServiceSpecErrors({});
+                  }
+                }}
+              />
+            ) : (
+              <ProductSpecFields
+                productLine={productLine}
+                specs={specs}
+                errors={specErrors}
+                onChange={(nextSpecs) => {
+                  setSpecs(nextSpecs);
+                  if (Object.keys(specErrors).length > 0) {
+                    setSpecErrors({});
+                  }
+                }}
+              />
+            )}
           </div>
 
           {/* Pricing & GST */}
@@ -1345,7 +1548,7 @@ export function ItemFormModal({
                   {t('items.alternateUnits')}
                 </span>
                 <div className="flex items-center gap-3">
-                  {productLine === 'tiles_slabs' && (
+                  {itemType === 'goods' && productLine === 'tiles_slabs' && (
                     <button
                       type="button"
                       onClick={handleAutoFillTileConversions}
@@ -1466,6 +1669,85 @@ export function ItemFormModal({
             helperText={t('items.photosHelp')}
           />
 
+          {/* Online Store / E-Commerce Listing (when Online Store module is enabled) */}
+          {onlineStoreEnabled && (
+            <div className="p-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <IconBuildingStore size={16} stroke={2} className="text-[var(--primary-dark)]" />
+                  <h3 className="text-xs font-semibold">Online Store / E-Commerce</h3>
+                </div>
+                <div className="flex items-center gap-3">
+                  {aiEnabled && (
+                    <button
+                      type="button"
+                      disabled={aiStoreDrafting}
+                      onClick={() => void handleAiDraftOnlineListing()}
+                      className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline disabled:opacity-50"
+                    >
+                      {aiStoreDrafting ? (
+                        <IconLoader2 size={12} className="animate-spin" />
+                      ) : (
+                        <IconSparkles size={12} stroke={2} />
+                      )}
+                      <span>{aiStoreDrafting ? 'Drafting...' : 'AI Draft Slug & Copy'}</span>
+                    </button>
+                  )}
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={publishOnline}
+                      onChange={(e) => setPublishOnline(e.target.checked)}
+                    />
+                    <span>Publish to Online Store (/)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    Online Store Price (₹)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={onlinePrice}
+                    onChange={(e) => setOnlinePrice(e.target.value)}
+                    placeholder={sellingPrice ? `Defaults to ₹${sellingPrice}` : 'Optional override price'}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">
+                    SEO URL Slug
+                  </label>
+                  <input
+                    type="text"
+                    value={onlineSlug}
+                    onChange={(e) => setOnlineSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-'))}
+                    placeholder="auto-generated-from-name"
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium mb-1">
+                  Online Store Description
+                </label>
+                <textarea
+                  rows={2}
+                  value={onlineDescription}
+                  onChange={(e) => setOnlineDescription(e.target.value)}
+                  placeholder="Highlights shown to online customers (usage, finish care, delivery/installation note)"
+                  className="w-full p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Collapsible Advanced / Pack-Specific Options */}
           <div className="border border-[var(--border)] rounded-xl overflow-hidden">
             <button
@@ -1473,7 +1755,11 @@ export function ItemFormModal({
               onClick={() => setShowAdvanced((v) => !v)}
               className="w-full px-4 py-3 bg-[var(--surface-muted)]/60 flex items-center justify-between text-xs font-semibold"
             >
-              <span>Stock Policy, Pack Details & Notes</span>
+              <span>
+                {itemType === 'service'
+                  ? 'Additional Service Options, Media & Notes'
+                  : 'Stock Policy, Pack Details & Notes'}
+              </span>
               {showAdvanced ? (
                 <IconChevronUp size={16} stroke={2} />
               ) : (
@@ -1483,91 +1769,56 @@ export function ItemFormModal({
             {showAdvanced && (
               <div className="p-4 space-y-3.5 border-t border-[var(--border)]">
                 {itemType === 'goods' && (
-                  <label className="inline-flex items-center gap-2 text-xs font-medium">
-                    <input
-                      type="checkbox"
-                      checked={allowNegativeStock}
-                      onChange={(e) => setAllowNegativeStock(e.target.checked)}
-                    />
-                    <span>{t('items.allowNegativeStock')}</span>
-                  </label>
-                )}
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium mb-1">
-                      Sq.Ft per Box / Coverage
-                    </label>
-                    <input
-                      type="number"
-                      step="any"
-                      min="0"
-                      value={packMeta.sqft_per_box || ''}
-                      onChange={(e) =>
-                        setPackMeta((p) => ({ ...p, sqft_per_box: e.target.value }))
-                      }
-                      placeholder="e.g., 16"
-                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium mb-1">
-                      Coverage Note
-                    </label>
-                    <input
-                      type="text"
-                      value={packMeta.coverage || ''}
-                      onChange={(e) =>
-                        setPackMeta((p) => ({ ...p, coverage: e.target.value }))
-                      }
-                      placeholder="e.g., 110 sq.ft / L"
-                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                    />
-                  </div>
-                </div>
-
-                {itemType === 'service' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        SAC Code
-                      </label>
+                  <>
+                    <label className="inline-flex items-center gap-2 text-xs font-medium">
                       <input
-                        type="text"
-                        value={packMeta.sac_code || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({ ...p, sac_code: e.target.value }))
-                        }
-                        placeholder="e.g., 998714"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-mono"
+                        type="checkbox"
+                        checked={allowNegativeStock}
+                        onChange={(e) => setAllowNegativeStock(e.target.checked)}
                       />
+                      <span>{t('items.allowNegativeStock')}</span>
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium mb-1">
+                          Sq.Ft per Box / Coverage
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={packMeta.sqft_per_box || ''}
+                          onChange={(e) =>
+                            setPackMeta((p) => ({ ...p, sqft_per_box: e.target.value }))
+                          }
+                          placeholder="e.g., 16"
+                          className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1">
+                          Coverage Note
+                        </label>
+                        <input
+                          type="text"
+                          value={packMeta.coverage || ''}
+                          onChange={(e) =>
+                            setPackMeta((p) => ({ ...p, coverage: e.target.value }))
+                          }
+                          placeholder="e.g., 110 sq.ft / L"
+                          className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium mb-1">
-                        Est. Duration (Minutes)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        value={packMeta.duration_mins || ''}
-                        onChange={(e) =>
-                          setPackMeta((p) => ({
-                            ...p,
-                            duration_mins: e.target.value,
-                          }))
-                        }
-                        placeholder="e.g., 60"
-                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm tabular-nums"
-                      />
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {partiesEnabled && (
                     <div>
                       <label className="block text-xs font-medium mb-1">
-                        {t('items.supplier')}
+                        {itemType === 'service' ? 'Partner / Subcontractor' : t('items.supplier')}
                       </label>
                       <select
                         value={supplierId}
@@ -1583,18 +1834,20 @@ export function ItemFormModal({
                       </select>
                     </div>
                   )}
-                  <div>
-                    <label className="block text-xs font-medium mb-1">
-                      {t('items.countryOfOrigin')}
-                    </label>
-                    <input
-                      type="text"
-                      value={countryOfOrigin}
-                      onChange={(e) => setCountryOfOrigin(e.target.value)}
-                      placeholder="e.g., India, Italy, Spain"
-                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
-                    />
-                  </div>
+                  {itemType === 'goods' && (
+                    <div>
+                      <label className="block text-xs font-medium mb-1">
+                        {t('items.countryOfOrigin')}
+                      </label>
+                      <input
+                        type="text"
+                        value={countryOfOrigin}
+                        onChange={(e) => setCountryOfOrigin(e.target.value)}
+                        placeholder="e.g., India, Italy, Spain"
+                        className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="block text-xs font-medium mb-1">
                       {t('items.warrantyMonths')}
@@ -1645,7 +1898,11 @@ export function ItemFormModal({
                     rows={2}
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Internal rack location or handling note"
+                    placeholder={
+                      itemType === 'service'
+                        ? 'Internal technician / site checklist note'
+                        : 'Internal rack location or handling note'
+                    }
                     className="w-full p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
                   />
                 </div>

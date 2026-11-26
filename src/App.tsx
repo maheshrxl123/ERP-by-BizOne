@@ -9,7 +9,9 @@ import {
   IconDatabaseOff,
   IconLanguage,
   IconLoader2,
+  IconLock,
   IconRefresh,
+  IconShieldLock,
   IconX,
 } from '@tabler/icons-react';
 import { AppProvider, useApp } from './app/AppProvider';
@@ -69,6 +71,9 @@ function RootRouter() {
     totpChecking,
     totpRequired,
     totpVerified,
+    totpCheckError,
+    ipBlockedError,
+    refreshTotpStatus,
     profile,
     language,
     setLanguage,
@@ -153,6 +158,79 @@ function RootRouter() {
     );
   }
 
+  if (ipBlockedError) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-xl border border-[var(--give)] bg-[var(--surface)] p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 rounded-xl bg-[var(--give-soft)] text-[var(--give)] flex items-center justify-center shrink-0">
+              <IconShieldLock size={22} stroke={2} />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold inline-flex items-center gap-1.5">
+                <IconLock size={18} stroke={2} className="text-[var(--give)] shrink-0" />
+                <span>IP Address Not Allowed</span>
+              </h1>
+              <p className="text-xs text-[var(--text-muted)]">DecorBiz ERP Security</p>
+            </div>
+          </div>
+          <p className="text-sm text-[var(--text-muted)] leading-relaxed">{ipBlockedError}</p>
+          <p className="text-xs text-[var(--text-muted)]">
+            If your ISP IP changed, ask the Business Owner to update Settings &rarr; Security or use break-glass recovery.
+          </p>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => void refreshTotpStatus()}
+              className="h-10 px-4 rounded-lg border border-[var(--border)] text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
+            >
+              <IconRefresh size={16} stroke={2} />
+              <span>Retry</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (session && totpCheckError) {
+    return (
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
+        <div className="max-w-md w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 space-y-4">
+          <h1 className="text-lg font-semibold inline-flex items-center gap-2">
+            <IconAlertCircle size={20} stroke={2} className="text-[var(--give)] shrink-0" />
+            <span>Security Verification Unavailable</span>
+          </h1>
+          <p className="text-sm text-[var(--text-muted)] leading-relaxed">{totpCheckError}</p>
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => void signOut()}
+              className="h-10 px-4 rounded-lg border border-[var(--border)] text-sm font-medium hover:bg-[var(--surface-muted)]"
+            >
+              Sign Out
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshTotpStatus()}
+              className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5"
+            >
+              <IconRefresh size={16} stroke={2} />
+              <span>Retry Security Check</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (needsSetup || !session || passwordRecoveryMode || (totpRequired && !totpVerified)) {
     return <AuthScreens />;
   }
@@ -162,7 +240,10 @@ function RootRouter() {
       <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
         <div className="max-w-md w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 text-center space-y-4">
           <IconAlertCircle size={32} stroke={2} className="text-[var(--give)] mx-auto" />
-          <h1 className="text-lg font-semibold">Account deactivated</h1>
+          <h1 className="text-lg font-semibold inline-flex items-center gap-2 justify-center">
+            <IconLock size={18} stroke={2} className="text-[var(--give)] shrink-0" />
+            <span>Account deactivated</span>
+          </h1>
           <p className="text-sm text-[var(--text-muted)]">
             Your staff account has been deactivated by the Business Owner.
           </p>

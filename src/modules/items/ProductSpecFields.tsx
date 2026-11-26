@@ -11,12 +11,15 @@ import {
   SANITARYWARE_MOUNTINGS,
   SANITARYWARE_TRAPS,
   SANITARYWARE_TYPES,
+  SERVICE_BILLING_BASES,
+  SERVICE_CATEGORIES,
   SQFT_PER_SQM,
   TILE_EDGE_TYPES,
   TILE_FINISHES,
   TILE_MATERIALS,
   TILE_USE_AREAS,
   type AnySpecsMap,
+  type ServiceSpecs,
 } from '../../core/productSpecs';
 
 interface ProductSpecFieldsProps {
@@ -1091,3 +1094,146 @@ export function ProductSpecDetailGrid({
     </dl>
   );
 }
+
+export function ServiceSpecFields({
+  specs,
+  errors,
+  onChange,
+}: {
+  specs: ServiceSpecs;
+  errors: Record<string, string>;
+  onChange: (next: ServiceSpecs) => void;
+}) {
+  const setField = <K extends keyof ServiceSpecs>(key: K, val: ServiceSpecs[K]) => {
+    onChange({ ...specs, [key]: val });
+  };
+
+  return (
+    <div className="space-y-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium mb-1">Service Category *</label>
+          <select
+            value={specs.service_category}
+            onChange={(e) => setField('service_category', e.target.value)}
+            className={inputCls(Boolean(errors.service_category))}
+          >
+            <option value="">Select service category...</option>
+            {SERVICE_CATEGORIES.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+          <FieldError msg={errors.service_category} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1">Billing Basis *</label>
+          <select
+            value={specs.billing_basis}
+            onChange={(e) => setField('billing_basis', e.target.value)}
+            className={inputCls(Boolean(errors.billing_basis))}
+          >
+            {SERVICE_BILLING_BASES.map((basis) => (
+              <option key={basis} value={basis}>
+                {basis}
+              </option>
+            ))}
+          </select>
+          <FieldError msg={errors.billing_basis} />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1">Estimated Duration</label>
+          <input
+            type="text"
+            value={specs.est_duration}
+            onChange={(e) => setField('est_duration', e.target.value)}
+            placeholder="e.g., 2 hours, 1–2 days"
+            className={inputCls()}
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1">Service Area / Location</label>
+          <input
+            type="text"
+            value={specs.service_area}
+            onChange={(e) => setField('service_area', e.target.value)}
+            placeholder="e.g., City limits / Within 25 km"
+            className={inputCls()}
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1">SAC Code (GST Service)</label>
+          <input
+            type="text"
+            value={specs.sac_code}
+            onChange={(e) => setField('sac_code', e.target.value)}
+            placeholder="e.g., 9954, 998714"
+            className={`${inputCls()} font-mono`}
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium mb-1">Warranty / Service Terms</label>
+          <input
+            type="text"
+            value={specs.service_terms}
+            onChange={(e) => setField('service_terms', e.target.value)}
+            placeholder="e.g., 30-day workmanship warranty"
+            className={inputCls()}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium mb-1">Scope & Deliverables</label>
+        <textarea
+          rows={2}
+          value={specs.scope_deliverables}
+          onChange={(e) => setField('scope_deliverables', e.target.value)}
+          placeholder="What is included, tools/consumables excluded, site readiness requirements..."
+          className="w-full p-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ServiceSpecDetailGrid({ specs }: { specs: ServiceSpecs }) {
+  const rows: SpecDisplayRow[] = [];
+  const push = (label: string, val: string) => {
+    if (!val.trim()) return;
+    rows.push({ label, value: val });
+  };
+  push('Service Category', specs.service_category);
+  push('Billing Basis', specs.billing_basis);
+  push('Estimated Duration', specs.est_duration);
+  push('Service Area', specs.service_area);
+  push('SAC Code', specs.sac_code);
+  push('Service Terms', specs.service_terms);
+  push('Scope & Deliverables', specs.scope_deliverables);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-[var(--text-muted)]">
+        No service details recorded yet. Click Edit to add service category, billing basis, and deliverables.
+      </p>
+    );
+  }
+
+  return (
+    <dl className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
+      {rows.map((r) => (
+        <div key={r.label} className={r.label === 'Scope & Deliverables' ? 'col-span-2 sm:col-span-3 lg:col-span-4' : ''}>
+          <dt className="text-[var(--text-muted)]">{r.label}</dt>
+          <dd className="font-medium mt-0.5">{r.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+

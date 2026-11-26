@@ -114,6 +114,55 @@ export const AI_TOOL_ALLOWLIST: Record<string, AiToolDefinition> = {
     allowedRoles: ['owner', 'manager', 'accountant'],
     description: 'Prepare a balanced double-entry journal voucher draft for Owner approval.',
   },
+  get_store_catalogue_summary: {
+    name: 'get_store_catalogue_summary',
+    kind: 'read',
+    requiredModules: ['online_store', 'inventory'],
+    allowedRoles: ['owner', 'manager', 'storekeeper', 'cashier'],
+    description: 'Summarize published and draft online store items, prices, and available stock.',
+  },
+  get_store_orders_summary: {
+    name: 'get_store_orders_summary',
+    kind: 'read',
+    requiredModules: ['online_store'],
+    allowedRoles: ['owner', 'manager', 'storekeeper', 'cashier'],
+    description: 'Summarize online storefront orders, statuses, delivery trips, and pending reviews.',
+  },
+  get_store_content_summary: {
+    name: 'get_store_content_summary',
+    kind: 'read',
+    requiredModules: ['online_store'],
+    allowedRoles: ['owner', 'manager', 'storekeeper'],
+    description: 'Summarize active storefront banners, CMS pages, delivery zones, and promo coupons.',
+  },
+  propose_store_item_listing: {
+    name: 'propose_store_item_listing',
+    kind: 'propose_write',
+    requiredModules: ['online_store', 'inventory'],
+    allowedRoles: ['owner', 'manager', 'storekeeper'],
+    description: 'Prepare an online store item publish/SEO copy update for Owner approval.',
+  },
+  propose_store_banner: {
+    name: 'propose_store_banner',
+    kind: 'propose_write',
+    requiredModules: ['online_store'],
+    allowedRoles: ['owner', 'manager'],
+    description: 'Prepare a new Online Store hero banner draft for Owner approval.',
+  },
+  propose_store_page: {
+    name: 'propose_store_page',
+    kind: 'propose_write',
+    requiredModules: ['online_store'],
+    allowedRoles: ['owner', 'manager'],
+    description: 'Prepare an Online Store CMS page (About, Policies, FAQ) for Owner approval.',
+  },
+  propose_store_coupon: {
+    name: 'propose_store_coupon',
+    kind: 'propose_write',
+    requiredModules: ['online_store'],
+    allowedRoles: ['owner', 'manager'],
+    description: 'Prepare an Online Store promo coupon draft for Owner approval.',
+  },
 };
 
 const PRIVATE_HOST_SUFFIXES = ['.local', '.internal', '.localhost', '.home.arpa'];

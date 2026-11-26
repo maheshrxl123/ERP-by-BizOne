@@ -11,6 +11,7 @@ import {
 import {
   clearTotpProof,
   erpFetch,
+  onIpBlocked,
   onTotpRequired,
   setActiveStaffUserId,
   setTotpProof,
@@ -52,6 +53,8 @@ interface AppContextValue {
   totpChecking: boolean;
   totpRequired: boolean;
   totpVerified: boolean;
+  totpCheckError: string | null;
+  ipBlockedError: string | null;
   verifyTotpToken: (token: string) => Promise<void>;
   markTotpEnrolled: (totpProof?: string | null) => void;
   refreshTotpStatus: () => Promise<void>;
@@ -101,6 +104,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [totpChecking, setTotpChecking] = useState(false);
   const [totpRequired, setTotpRequired] = useState(false);
   const [totpVerified, setTotpVerified] = useState(true);
+  const [totpCheckError, setTotpCheckError] = useState<string | null>(null);
+  const [ipBlockedError, setIpBlockedError] = useState<string | null>(null);
 
   const [business, setBusiness] = useState<BusinessRecord | null>(null);
   const [profile, setProfile] = useState<ProfileRecord | null>(null);
@@ -206,13 +211,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return onTotpRequired(() => {
+      setTotpCheckError(null);
       setTotpRequired(true);
       setTotpVerified(false);
     });
   }, []);
 
+  useEffect(() => {
+    return onIpBlocked((message) => {
+      setIpBlockedError(message);
+    });
+  }, []);
+
   const refreshTotpStatus = useCallback(async () => {
     if (!isSupabaseConfigured || !userId || !accessToken) {
+      setTotpCheckError(null);
+      setIpBlockedError(null);
       setTotpRequired(false);
       setTotpVerified(true);
       setTotpChecking(false);
@@ -224,15 +238,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         const enabled = Boolean(data?.enabled);
+        setTotpCheckError(null);
+        setIpBlockedError(null);
         setTotpRequired(enabled);
         setTotpVerified(!enabled || Boolean(data?.verified));
       } else {
-        setTotpRequired(false);
-        setTotpVerified(true);
+        const errBody = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          clientIp?: string;
+        };
+        if (res.status === 403 && (errBody.clientIp || String(errBody.error || '').toLowerCase().includes('not allowed in settings'))) {
+          setIpBlockedError(errBody.error || 'Access denied from this IP address.');
+          setTotpCheckError(null);
+        } else {
+          setTotpCheckError(
+            errBody.error || 'Unable to verify two-factor authentication status. Please retry.'
+          );
+        }
+        setTotpRequired(true);
+        setTotpVerified(false);
       }
     } catch {
-      setTotpRequired(false);
-      setTotpVerified(true);
+      setTotpCheckError('Unable to reach workspace authentication server. Please retry.');
+      setTotpRequired(true);
+      setTotpVerified(false);
     } finally {
       setTotpChecking(false);
     }
@@ -512,6 +541,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPasswordRecoveryMode(false);
     setTotpRequired(false);
     setTotpVerified(true);
+    setTotpCheckError(null);
+    setIpBlockedError(null);
   }, [userId]);
 
   return (
@@ -527,6 +558,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         totpChecking,
         totpRequired,
         totpVerified,
+        totpCheckError,
+        ipBlockedError,
         verifyTotpToken,
         markTotpEnrolled,
         refreshTotpStatus,

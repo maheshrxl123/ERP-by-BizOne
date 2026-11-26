@@ -3,7 +3,9 @@ import {
   IconArchive,
   IconArrowLeft,
   IconBarcode,
+  IconBuildingStore,
   IconEdit,
+  IconPackage,
   IconPhoto,
   IconPlus,
   IconRestore,
@@ -16,6 +18,7 @@ import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR } from '../../core/format';
 import { hasCapability } from '../../core/permissions';
 import { getProductLineLabel } from '../../core/productLines';
+import { normalizeServiceSpecsFromMetadata } from '../../core/productSpecs';
 import { supabase } from '../../core/supabase';
 import { formatStockQty } from '../../core/units';
 import type {
@@ -31,7 +34,7 @@ import type {
 } from '../../types/decorbiz';
 import { BarcodeLabelModal } from './BarcodeLabelModal';
 import { ItemFormModal } from './ItemFormModal';
-import { ProductSpecDetailGrid } from './ProductSpecFields';
+import { ProductSpecDetailGrid, ServiceSpecDetailGrid } from './ProductSpecFields';
 import { StockAdjustmentModal } from './StockAdjustmentModal';
 
 interface ItemDetailViewProps {
@@ -53,12 +56,13 @@ export function ItemDetailView({
   onUpdated,
   onTaxonomyUpdated,
 }: ItemDetailViewProps) {
-  const { profile, signedUrlCache, getSignedUrl, language, showToast, t } =
+  const { profile, signedUrlCache, getSignedUrl, isModuleEnabled, language, showToast, t } =
     useApp();
 
   const canEdit = hasCapability(profile?.role, 'items');
   const canAdjust = hasCapability(profile?.role, 'stock_adjustment');
   const canViewCost = hasCapability(profile?.role, 'view_profit');
+  const onlineStoreEnabled = isModuleEnabled('online_store');
 
   const [item, setItem] = useState<ItemCatalogRecord | null>(null);
   const [conversions, setConversions] = useState<UnitConversionRecord[]>([]);
@@ -131,7 +135,6 @@ export function ItemDetailView({
       if (convRes.error) throw convRes.error;
       if (imgRes.error) throw imgRes.error;
       if (varRes.error) throw varRes.error;
-      if (lotRes.error) throw lotRes.error;
       if (ledgerRes.error) throw ledgerRes.error;
       const loadedItem = (itemRes.data as ItemCatalogRecord | null) ?? null;
       const loadedImages = (imgRes.data as ItemImageRecord[] | null) ?? [];
@@ -140,7 +143,9 @@ export function ItemDetailView({
       setConversions((convRes.data as UnitConversionRecord[] | null) ?? []);
       setImages(loadedImages);
       setVariants((varRes.data as ItemVariantRecord[] | null) ?? []);
-      setLotBalances((lotRes.data as ItemLotBalanceRecord[] | null) ?? []);
+      setLotBalances(
+        lotRes.error ? [] : ((lotRes.data as ItemLotBalanceRecord[] | null) ?? [])
+      );
       setLedger((ledgerRes.data as StockLedgerEntryRecord[] | null) ?? []);
 
       const primary =
@@ -293,16 +298,22 @@ export function ItemDetailView({
             <IconArrowLeft size={18} stroke={2} />
           </button>
           <div className="min-w-0">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight truncate">
-              {item.name}
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2 max-w-full">
+              <IconPackage size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+              <span className="truncate">{item.name}</span>
             </h1>
             <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5 truncate">
-              {getProductLineLabel(item.product_line, language)}
+              {item.item_type === 'service'
+                ? language === 'hi'
+                  ? 'सेवा (गैर-स्टॉक)'
+                  : 'Service (Non-Stock)'
+                : getProductLineLabel(item.product_line, language)}
               {' · '}
               {item.category_name || 'Uncategorized'}
               {item.brand_name ? ` · ${item.brand_name}` : ''}
               {item.sku ? ` · SKU ${item.sku}` : ''}
               {item.barcode ? ` · ${item.barcode}` : ''}
+              {item.is_published_online ? ' · Published Online' : ''}
               {!item.is_active ? ' · Archived' : ''}
             </p>
           </div>
@@ -475,12 +486,18 @@ export function ItemDetailView({
 
           {/* Item Specification & Conversions */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
-            <h2 className="text-sm font-semibold">Item Details & Units</h2>
+            <h2 className="text-sm font-semibold">
+              {item.item_type === 'service' ? 'Service Details & Units' : 'Item Details & Units'}
+            </h2>
             <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div>
-                <dt className="text-[var(--text-muted)]">{t('items.productLine')}</dt>
+                <dt className="text-[var(--text-muted)]">
+                  {item.item_type === 'service' ? 'Item Type' : t('items.productLine')}
+                </dt>
                 <dd className="font-medium mt-0.5">
-                  {getProductLineLabel(item.product_line, language)}
+                  {item.item_type === 'service'
+                    ? 'Service (Non-Stock)'
+                    : getProductLineLabel(item.product_line, language)}
                 </dd>
               </div>
               <div>
@@ -494,7 +511,9 @@ export function ItemDetailView({
                 </dd>
               </div>
               <div>
-                <dt className="text-[var(--text-muted)]">{t('items.hsnCode')}</dt>
+                <dt className="text-[var(--text-muted)]">
+                  {item.item_type === 'service' ? 'SAC / HSN Code' : t('items.hsnCode')}
+                </dt>
                 <dd className="font-mono font-medium mt-0.5">
                   {item.hsn_code || '—'}
                 </dd>
@@ -505,15 +524,19 @@ export function ItemDetailView({
                   {item.tax_inclusive ? 'Inclusive' : 'Exclusive'}
                 </dd>
               </div>
-              <div>
-                <dt className="text-[var(--text-muted)]">Negative Stock</dt>
-                <dd className="font-medium mt-0.5">
-                  {item.allow_negative_stock ? 'Allowed' : 'Blocked'}
-                </dd>
-              </div>
+              {item.item_type !== 'service' && (
+                <div>
+                  <dt className="text-[var(--text-muted)]">Negative Stock</dt>
+                  <dd className="font-medium mt-0.5">
+                    {item.allow_negative_stock ? 'Allowed' : 'Blocked'}
+                  </dd>
+                </div>
+              )}
               {item.supplier_name && (
                 <div>
-                  <dt className="text-[var(--text-muted)]">{t('items.supplier')}</dt>
+                  <dt className="text-[var(--text-muted)]">
+                    {item.item_type === 'service' ? 'Partner / Subcontractor' : t('items.supplier')}
+                  </dt>
                   <dd className="font-medium mt-0.5">{item.supplier_name}</dd>
                 </div>
               )}
@@ -580,16 +603,68 @@ export function ItemDetailView({
             )}
           </div>
 
-          {/* Typed Line Specifications */}
+          {/* Typed Line Specifications OR Service Details */}
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">{t('items.technicalSpecs')}</h2>
+              <h2 className="text-sm font-semibold">
+                {item.item_type === 'service'
+                  ? 'Service Details & Specifications'
+                  : t('items.technicalSpecs')}
+              </h2>
               <span className="text-xs text-[var(--text-muted)]">
-                {getProductLineLabel(item.product_line, language)}
+                {item.item_type === 'service'
+                  ? 'Service (Non-Stock)'
+                  : getProductLineLabel(item.product_line, language)}
               </span>
             </div>
-            <ProductSpecDetailGrid productLine={item.product_line} specs={item.specs} />
+            {item.item_type === 'service' ? (
+              <ServiceSpecDetailGrid
+                specs={normalizeServiceSpecsFromMetadata(item.pack_metadata, item.hsn_code)}
+              />
+            ) : (
+              <ProductSpecDetailGrid productLine={item.product_line} specs={item.specs} />
+            )}
           </div>
+
+          {/* Online Store Listing Card */}
+          {(onlineStoreEnabled || item.is_published_online) && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold inline-flex items-center gap-1.5">
+                  <IconBuildingStore size={16} stroke={2} className="text-[var(--primary-dark)]" />
+                  <span>Online Store / E-Commerce</span>
+                </h2>
+                <span
+                  className={`text-xs font-semibold ${
+                    item.is_published_online ? 'text-[var(--receive-text)]' : 'text-[var(--text-muted)]'
+                  }`}
+                >
+                  {item.is_published_online ? 'Published Live' : 'Draft (Not Published)'}
+                </span>
+              </div>
+              <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <dt className="text-[var(--text-muted)]">Online Price</dt>
+                  <dd className="font-semibold mt-0.5 tabular-nums">
+                    {item.online_price !== null && item.online_price !== undefined
+                      ? formatINR(Number(item.online_price))
+                      : `${formatINR(Number(item.selling_price))} (ERP default)`}
+                  </dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-[var(--text-muted)]">Storefront URL Slug</dt>
+                  <dd className="font-mono font-medium mt-0.5">
+                    {item.online_slug ? `/product/${item.online_slug}` : 'Not set yet'}
+                  </dd>
+                </div>
+              </dl>
+              {item.online_description && (
+                <p className="pt-2 border-t border-[var(--border)] text-xs text-[var(--text)]">
+                  {item.online_description}
+                </p>
+              )}
+            </div>
+          )}
         </section>
       </div>
 

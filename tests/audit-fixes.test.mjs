@@ -7,8 +7,10 @@ import test from 'node:test';
 import { buildSignedBackupBlob, verifyBackupEnvelope } from '../src/core/backup.ts';
 import { escapeCsvCell } from '../src/core/format.ts';
 import { buildErrorCsvText, buildExportWorkbookBuffer, parseSpreadsheetBuffer } from '../src/core/spreadsheet.ts';
+import { resolveSafeStorePath } from '../src/core/storeCatalog.ts';
 import { isSupabaseConfigured, supabase } from '../src/core/supabase.ts';
 import { IndiaGstTaxEngine } from '../src/core/taxEngine.ts';
+import { evaluateIpAccess, isErpRequestPath } from '../src/server/ipAllowlist.ts';
 
 function walkDir(dir) {
   const out = [];
@@ -235,3 +237,135 @@ test('Audit Fix: node server.ts boots in production mode and serves /api/health 
     });
   }
 });
+
+test('Audit Fix: resolveSafeStorePath neutralizes external/ERP/protocol URLs while allowing safe store routes', () => {
+  assert.equal(resolveSafeStorePath('/catalogue?line=tiles_slabs'), '/catalogue?line=tiles_slabs');
+  assert.equal(resolveSafeStorePath('/product/statuario-marble'), '/product/statuario-marble');
+  assert.equal(resolveSafeStorePath('https://evil.example/phish'), '/catalogue');
+  assert.equal(resolveSafeStorePath('//evil.example/redirect'), '/catalogue');
+  assert.equal(resolveSafeStorePath('javascript:alert(1)'), '/catalogue');
+  assert.equal(resolveSafeStorePath('/ERP/settings'), '/catalogue');
+  assert.equal(resolveSafeStorePath('/api/admin/users'), '/catalogue');
+});
+
+test('Audit Fix: isErpRequestPath, evaluateIpAccess, STORAGE_BUCKET, Drive callback escaping & TOTP fail-closed guards hold', () => {
+  assert.equal(isErpRequestPath('/api/admin/users'), true);
+  assert.equal(isErpRequestPath('/api/integrations/google-drive/callback'), false);
+  assert.equal(isErpRequestPath('/api/store/catalogue'), false);
+
+  const blocked = evaluateIpAccess({
+    path: '/api/erp/admin/users',
+    clientIp: '203.0.113.9',
+    allowedIps: ['198.51.100.10'],
+    breakGlassTokenEnv: 'secret-token-123',
+  });
+  assert.equal(blocked.allowed, false);
+  assert.equal(blocked.reason, 'blocked');
+
+  const recovered = evaluateIpAccess({
+    path: '/api/erp/admin/users',
+    clientIp: '203.0.113.9',
+    allowedIps: ['198.51.100.10'],
+    breakGlassTokenEnv: 'secret-token-123',
+    breakGlassTokenHeader: 'secret-token-123',
+  });
+  assert.equal(recovered.allowed, true);
+  assert.equal(recovered.reason, 'break_glass_token');
+
+  const configSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/config.ts'), 'utf8');
+  assert.match(configSrc, /SUPABASE_STORAGE_BUCKET/);
+
+  const allowlistSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/ipAllowlist.ts'), 'utf8');
+  assert.match(allowlistSrc, /if \(bizErr\)/);
+  assert.match(allowlistSrc, /res\.status\(503\)/);
+
+  const middlewareSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/middleware.ts'), 'utf8');
+  assert.match(middlewareSrc, /replace\(\/\\\/\+\$\/,\s*''\)/);
+  assert.match(middlewareSrc, /if \(totpErr\)/);
+
+  const driveSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/routes/googleDrive.ts'), 'utf8');
+  assert.match(driveSrc, /serializeForInlineScript/);
+  assert.match(driveSrc, /verifyMagicBytes\(buf,\s*mimeType\)/);
+  assert.match(driveSrc, /sanitizeStorageRelativePath/);
+
+  const appProviderSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/app/AppProvider.tsx'), 'utf8');
+  assert.match(appProviderSrc, /setTotpCheckError/);
+  assert.match(appProviderSrc, /setIpBlockedError/);
+});
+
+test('Audit Fix: 0021/0025 SQL migrations restore khata_totals_summary and grant authenticated SELECT on item_lot_balances, plus UI fallbacks hold', () => {
+  const m0021 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/0021_decorbiz_step2_variants_lots.sql'),
+    'utf8'
+  );
+  assert.match(m0021, /GRANT SELECT ON public\.item_lot_balances TO authenticated/);
+  assert.match(m0021, /REVOKE ALL ON public\.item_lot_balances FROM anon/);
+
+  const m0025 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/0025_decorbiz_fix_views_and_grants.sql'),
+    'utf8'
+  );
+  assert.match(m0025, /CREATE OR REPLACE VIEW public\.khata_totals_summary/);
+  assert.match(m0025, /GRANT SELECT ON public\.khata_totals_summary TO authenticated/);
+  assert.match(m0025, /GRANT SELECT ON public\.item_lot_balances TO authenticated/);
+  assert.match(m0025, /GRANT SELECT ON public\.item_variants_view TO authenticated/);
+  assert.match(m0025, /GRANT SELECT ON public\.party_balances TO authenticated/);
+  assert.match(m0025, /NOTIFY pgrst,\s*'reload schema'/);
+
+  const partiesSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/modules/parties/PartiesScreen.tsx'),
+    'utf8'
+  );
+  assert.doesNotMatch(partiesSrc, /if \(sumRes\.error\) throw sumRes\.error/);
+
+  const paymentsSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/modules/payments/PaymentsScreen.tsx'),
+    'utf8'
+  );
+  assert.doesNotMatch(paymentsSrc, /if \(sumRes\.error\) throw sumRes\.error/);
+
+  const itemDetailSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/modules/items/ItemDetailView.tsx'),
+    'utf8'
+  );
+  assert.doesNotMatch(itemDetailSrc, /if \(lotRes\.error\) throw lotRes\.error/);
+
+  const newBillSrc = fs.readFileSync(
+    path.resolve(process.cwd(), 'src/modules/bills/NewBillScreen.tsx'),
+    'utf8'
+  );
+  assert.doesNotMatch(newBillSrc, /if \(lotRes\.error\) throw lotRes\.error/);
+});
+
+test('Audit Fix: 0016 and 0026 reset_workspace_data and restore_workspace_backup include WHERE clauses on every DELETE statement', () => {
+  const m0016 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/0016_decorbiz_step1_pack_cleanup.sql'),
+    'utf8'
+  );
+  const m0026 = fs.readFileSync(
+    path.resolve(process.cwd(), 'supabase/migrations/0026_decorbiz_fix_reset_and_restore.sql'),
+    'utf8'
+  );
+
+  for (const [name, sql] of [
+    ['0016', m0016],
+    ['0026', m0026],
+  ]) {
+    const bareDeletes = sql
+      .split('\n')
+      .filter((line) => /\bDELETE\s+FROM\s+public\./i.test(line) && !/\bWHERE\b/i.test(line));
+    assert.deepEqual(
+      bareDeletes,
+      [],
+      `${name} contains bare DELETE FROM without WHERE: ${bareDeletes.join(' | ')}`
+    );
+  }
+
+  assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.reset_workspace_data/);
+  assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.restore_workspace_backup/);
+  assert.match(m0026, /CREATE OR REPLACE FUNCTION public\.remove_demo_data/);
+  assert.match(m0026, /store_order_lines/);
+  assert.match(m0026, /breakage_returns/);
+  assert.match(m0026, /sample_issues/);
+});
+

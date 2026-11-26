@@ -219,7 +219,6 @@ export function NewBillScreen({
       if (convRes.error) throw convRes.error;
       if (unitsRes.error) throw unitsRes.error;
       if (varRes.error) throw varRes.error;
-      if (lotRes.error) throw lotRes.error;
       if (rateCardRes.error) throw rateCardRes.error;
       if (partyRes.error) throw partyRes.error;
       if (addrRes.error) throw addrRes.error;
@@ -1071,16 +1070,16 @@ export function NewBillScreen({
             <IconArrowLeft size={16} stroke={2} />
             <span>{t('bills.title')}</span>
           </button>
-          <div className="flex items-center gap-2.5">
-            <IconReceipt size={22} stroke={2} className="text-[var(--primary-dark)]" />
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconReceipt size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>
               {editingDraft
                 ? `${language === 'hi' ? 'ड्राफ्ट संपादित करें' : 'Edit Draft'} · ${t(`bills.${docType === 'tax_invoice' ? 'taxInvoice' : docType === 'bill_of_supply' ? 'billOfSupply' : 'quotation'}`)}`
                 : docType === 'quotation'
                   ? t('bills.newQuotation')
                   : t('bills.newBill')}
-            </h1>
-          </div>
+            </span>
+          </h1>
         </div>
 
         {/* Document Type Switch + Top Quick Actions */}

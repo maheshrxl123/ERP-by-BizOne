@@ -6,11 +6,73 @@ import helmet from 'helmet';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PORT } from './src/server/config.ts';
+import { getSupabaseAdmin, PORT } from './src/server/config.ts';
 import { requireIpAllowlist } from './src/server/ipAllowlist.ts';
-import { createCorsOptions, DEFAULT_JSON_LIMIT } from './src/server/middleware.ts';
+import {
+  createCorsOptions,
+  DEFAULT_JSON_LIMIT,
+  isModuleEnabledServer,
+} from './src/server/middleware.ts';
 import { registerAllApiRoutes } from './src/server/registerRoutes.ts';
 import { VITE_CLIENT_STUB } from './src/server/viteClientStub.ts';
+
+const STATIC_ASSET_EXT_RE = /\.(?:js|mjs|css|map|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|eot|webmanifest|json|txt|xml|mp4|webm)$/i;
+
+export function isStorefrontPageRequest(reqPath: string): boolean {
+  const clean = (reqPath || '/').split('?')[0];
+  const lower = clean.toLowerCase();
+  if (
+    lower.startsWith('/api') ||
+    lower === '/erp' ||
+    lower.startsWith('/erp/') ||
+    lower.startsWith('/@vite') ||
+    lower.startsWith('/@fs') ||
+    lower.startsWith('/src/') ||
+    lower.startsWith('/node_modules/')
+  ) {
+    return false;
+  }
+  if (clean !== '/' && STATIC_ASSET_EXT_RE.test(lower)) {
+    return false;
+  }
+  return true;
+}
+
+function sendStorefrontDisabled404(res: Response): void {
+  res
+    .status(404)
+    .setHeader('Content-Type', 'text/html; charset=utf-8')
+    .setHeader('Cache-Control', 'no-store')
+    .send(
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>404 — Not Found</title><style>body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#faf9f6;color:#1c1917;display:grid;place-items:center;min-height:100vh;padding:24px}main{max-width:460px;text-align:center}code{font-size:12px;letter-spacing:.18em;color:#78716c}h1{margin:10px 0 8px;font-size:28px}p{margin:0;font-size:14px;line-height:1.6;color:#57534e}</style></head><body><main><code>404</code><h1>Storefront Not Found</h1><p>The public online store is currently turned off.</p></main></body></html>`
+    );
+}
+
+async function gateDisabledStorefront(req: Request, res: Response, next: NextFunction): Promise<void> {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    next();
+    return;
+  }
+  if (!isStorefrontPageRequest(req.path)) {
+    next();
+    return;
+  }
+  const admin = getSupabaseAdmin();
+  if (!admin) {
+    next();
+    return;
+  }
+  try {
+    const enabled = await isModuleEnabledServer('online_store');
+    if (!enabled) {
+      sendStorefrontDisabled404(res);
+      return;
+    }
+  } catch {
+    // Allow fallback on transient error
+  }
+  next();
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,7 +152,8 @@ async function startServer() {
       },
       express.static(erpDistDir)
     );
-    app.use(express.static(distDir));
+    app.use(gateDisabledStorefront);
+    app.use(express.static(distDir, { index: false }));
 
     app.get(['/ERP', '/ERP/*'], requireIpAllowlist, (_req: Request, res: Response) => {
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -124,6 +187,7 @@ async function startServer() {
       }
     });
 
+    app.use(gateDisabledStorefront);
     app.use(vite.middlewares);
 
     app.get('*', async (req: Request, res: Response, next: NextFunction) => {

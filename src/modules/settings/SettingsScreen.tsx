@@ -2949,8 +2949,8 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
               </p>
               <ul className="text-xs text-[var(--text-muted)] space-y-1.5 list-disc pl-5">
                 <li>
-                  <code className="font-mono text-[var(--text)]">DECORBIZ_BREAKGLASS_TOKEN</code> — send via{' '}
-                  <code className="font-mono">X-Break-Glass-Token</code> header or <code className="font-mono">?bg_token=</code> query parameter.
+                  <code className="font-mono text-[var(--text)]">DECORBIZ_BREAKGLASS_TOKEN</code> — send via the{' '}
+                  <code className="font-mono">X-Break-Glass-Token</code> request header.
                 </li>
                 <li>
                   <code className="font-mono text-[var(--text)]">DECORBIZ_BREAKGLASS_IP</code> — emergency trusted IP/CIDR that always bypasses the DB allowlist.

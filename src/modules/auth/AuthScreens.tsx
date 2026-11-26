@@ -315,13 +315,18 @@ export function AuthScreens() {
           </div>
         ) : needsSetup ? (
           <div className="w-full max-w-2xl rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-8 space-y-6">
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {t('setup.title')}
-              </h1>
-              <p className="text-sm text-[var(--text-muted)] mt-1">
-                {t('setup.subtitle')}
-              </p>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-[var(--primary-soft)] text-[var(--primary-dark)] flex items-center justify-center shrink-0">
+                <IconBuildingStore size={20} stroke={2} />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">
+                  {t('setup.title')}
+                </h1>
+                <p className="text-sm text-[var(--text-muted)] mt-1">
+                  {t('setup.subtitle')}
+                </p>
+              </div>
             </div>
 
             {error && (

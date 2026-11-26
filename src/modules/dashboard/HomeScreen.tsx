@@ -6,6 +6,7 @@ import {
   IconArrowUpRight,
   IconBell,
   IconBriefcase,
+  IconBuildingStore,
   IconChartBar,
   IconCheck,
   IconCircleDashed,
@@ -255,8 +256,9 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
       {/* Header & Primary Action Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-2 border-b border-[var(--border)]">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {business?.name || t('app.name')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconBuildingStore size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>{business?.name || t('app.name')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {packInfo

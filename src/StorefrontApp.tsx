@@ -18,8 +18,10 @@ import {
   extractStoreFilterFacets,
   filterStoreProducts,
   getItemSizeLabel,
+  resolveSafeStorePath,
 } from './core/storeCatalog';
 import { StoreOrdersView, StoreWishlistView } from './modules/storefront/StoreAccountViews';
+import { StoreAiAssistant } from './modules/storefront/StoreAiAssistant';
 import { StoreAuthModal } from './modules/storefront/StoreAuthModal';
 import { StoreCheckoutDrawer } from './modules/storefront/StoreCheckoutDrawer';
 import { StoreProductDetail } from './modules/storefront/StoreProductDetail';
@@ -42,6 +44,7 @@ const CART_STORAGE_KEY = 'decorbiz_store_cart_v1';
 
 const DEFAULT_CONFIG: StoreConfigPayload = {
   onlineStoreEnabled: true,
+  aiAssistantEnabled: false,
   storeName: 'DecorBiz Architectural Showroom',
   phone: null,
   email: null,
@@ -100,19 +103,46 @@ export default function StorefrontApp() {
   const [cartOpen, setCartOpen] = useState(false);
   const [bannerMessage, setBannerMessage] = useState<string | null>(null);
 
-  const navigate = useCallback((path: string) => {
-    if (typeof window !== 'undefined') {
-      window.history.pushState({}, '', path);
-      setRoute(parseStorePath(path));
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+  const applyQueryFiltersFromLocation = useCallback((rawPathWithSearch: string) => {
+    try {
+      const url = new URL(rawPathWithSearch, 'https://decorbiz.local');
+      if (url.pathname.replace(/\/+$/, '') === '/catalogue') {
+        const qLine = url.searchParams.get('line');
+        const qSearch = url.searchParams.get('q');
+        if (qLine !== null) {
+          setLineFilter(qLine || 'all');
+        }
+        if (qSearch !== null) {
+          setSearchQuery(qSearch);
+        }
+      }
+      setRoute(parseStorePath(url.pathname));
+    } catch {
+      setRoute(parseStorePath(rawPathWithSearch));
     }
   }, []);
 
+  const navigate = useCallback(
+    (path: string) => {
+      if (typeof window !== 'undefined') {
+        window.history.pushState({}, '', path);
+        applyQueryFiltersFromLocation(path);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    },
+    [applyQueryFiltersFromLocation]
+  );
+
   useEffect(() => {
-    const onPop = () => setRoute(parseStorePath(window.location.pathname));
+    if (typeof window !== 'undefined' && window.location.search) {
+      applyQueryFiltersFromLocation(`${window.location.pathname}${window.location.search}`);
+    }
+    const onPop = () => {
+      applyQueryFiltersFromLocation(`${window.location.pathname}${window.location.search}`);
+    };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [applyQueryFiltersFromLocation]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -430,10 +460,11 @@ export default function StorefrontApp() {
       )}
 
       {!config.onlineStoreEnabled ? (
-        <main className="flex-1 max-w-2xl mx-auto px-4 py-20 text-center space-y-4">
-          <h1 className="text-2xl font-bold text-stone-900">Showroom Online Store Offline</h1>
+        <main className="flex-1 max-w-2xl mx-auto px-4 py-24 text-center space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500 tabular-nums">404</p>
+          <h1 className="text-3xl font-bold text-stone-900">Page Not Found</h1>
           <p className="text-sm text-stone-600">
-            Our online ordering catalogue is temporarily closed for stock reconciliation. Please visit our showroom directly.
+            The public storefront is currently disabled and not available at this address.
           </p>
         </main>
       ) : (
@@ -505,7 +536,7 @@ export default function StorefrontApp() {
                           <div className="flex flex-wrap items-center gap-3 pt-2">
                             <button
                               type="button"
-                              onClick={() => navigate('/catalogue')}
+                              onClick={() => navigate(resolveSafeStorePath(primaryBanner?.cta_link, '/catalogue'))}
                               className="h-11 px-6 rounded-xl bg-white text-stone-900 text-sm font-semibold inline-flex items-center gap-2 hover:bg-stone-100"
                             >
                               <span>{primaryBanner?.cta_label || 'Explore Collection'}</span>
@@ -948,6 +979,16 @@ export default function StorefrontApp() {
         onRequireAuth={() => setAuthModalOpen(true)}
         onOrderComplete={handleOrderComplete}
       />
+
+      {config.onlineStoreEnabled && config.aiAssistantEnabled && (
+        <StoreAiAssistant
+          storeName={config.storeName}
+          items={items}
+          onOpenProductSlug={(slug) => navigate(`/product/${encodeURIComponent(slug)}`)}
+          onOpenPageSlug={(slug) => navigate(`/page/${encodeURIComponent(slug)}`)}
+          onAddToCart={handleAddToCart}
+        />
+      )}
     </div>
   );
 }

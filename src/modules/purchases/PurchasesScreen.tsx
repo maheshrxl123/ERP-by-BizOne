@@ -137,8 +137,9 @@ export function PurchasesScreen({
     <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {t('purchases.title')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconShoppingBag size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>{t('purchases.title')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {t('purchases.subtitle')}

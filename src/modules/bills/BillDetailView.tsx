@@ -5,6 +5,7 @@ import {
   IconBan,
   IconCopy,
   IconEdit,
+  IconFileInvoice,
   IconLink,
   IconPrinter,
   IconRefresh,
@@ -346,8 +347,9 @@ export function BillDetailView({
           </button>
 
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight font-mono">
-              {bill.bill_number || 'DRAFT'}
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight font-mono inline-flex items-center gap-2">
+              <IconFileInvoice size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+              <span>{bill.bill_number || 'DRAFT'}</span>
             </h1>
             <span className="text-xs font-medium text-[var(--text-muted)]">
               · {docTypeLabel} ·{' '}

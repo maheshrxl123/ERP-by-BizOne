@@ -22,7 +22,10 @@ export const SUPABASE_URL = (
   ''
 ).trim();
 export const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '';
-export const STORAGE_BUCKET = 'decorbiz-private';
+const rawBucket = (process.env.SUPABASE_STORAGE_BUCKET || '').trim();
+export const STORAGE_BUCKET = /^[a-z0-9][a-z0-9._-]{1,61}$/.test(rawBucket)
+  ? rawBucket
+  : 'decorbiz-private';
 
 function isConfiguredUrl(val: string): boolean {
   return (

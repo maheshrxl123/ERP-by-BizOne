@@ -612,3 +612,111 @@ export function formatItemSpecSummary(
       return '';
   }
 }
+
+export const SERVICE_CATEGORIES = [
+  'Tile / Marble Laying',
+  'Plumbing & Sanitary Installation',
+  'Bathroom Fitting & Waterproofing',
+  'Grouting, Polishing & Sealing',
+  'Site Measurement / Consultation',
+  'Delivery / Unloading / Freight',
+  'Other Service',
+] as const;
+
+export const SERVICE_BILLING_BASES = [
+  'Per Sq.Ft',
+  'Per Job / Visit',
+  'Per Hour',
+  'Per Day',
+  'Per Point / Fixture',
+  'Flat Fee',
+] as const;
+
+export interface ServiceSpecs {
+  service_category: string;
+  billing_basis: string;
+  est_duration: string;
+  service_area: string;
+  scope_deliverables: string;
+  sac_code: string;
+  service_terms: string;
+}
+
+export function createEmptyServiceSpecs(defaults?: { sacCode?: string }): ServiceSpecs {
+  return {
+    service_category: '',
+    billing_basis: 'Per Job / Visit',
+    est_duration: '',
+    service_area: '',
+    scope_deliverables: '',
+    sac_code: defaults?.sacCode || '',
+    service_terms: '',
+  };
+}
+
+export function normalizeServiceSpecsFromMetadata(
+  packMetadata: Record<string, unknown> | null | undefined,
+  fallbackSacCode?: string | null
+): ServiceSpecs {
+  const empty = createEmptyServiceSpecs({ sacCode: fallbackSacCode || '' });
+  if (!packMetadata || typeof packMetadata !== 'object') return empty;
+  const nested =
+    packMetadata.service_specs && typeof packMetadata.service_specs === 'object' && !Array.isArray(packMetadata.service_specs)
+      ? (packMetadata.service_specs as Record<string, unknown>)
+      : null;
+
+  const str = (v: unknown, fb = ''): string => (typeof v === 'string' ? v : v != null ? String(v) : fb);
+  return {
+    service_category: str(nested?.service_category ?? packMetadata.service_category, empty.service_category),
+    billing_basis: str(nested?.billing_basis ?? packMetadata.billing_basis, empty.billing_basis),
+    est_duration: str(
+      nested?.est_duration ??
+        packMetadata.est_duration ??
+        (packMetadata.duration_mins ? `${packMetadata.duration_mins} mins` : ''),
+      ''
+    ),
+    service_area: str(nested?.service_area ?? packMetadata.service_area, ''),
+    scope_deliverables: str(nested?.scope_deliverables ?? packMetadata.scope_deliverables, ''),
+    sac_code: str(nested?.sac_code ?? packMetadata.sac_code ?? fallbackSacCode, ''),
+    service_terms: str(nested?.service_terms ?? packMetadata.service_terms, ''),
+  };
+}
+
+export function validateServiceSpecs(specs: ServiceSpecs): {
+  valid: boolean;
+  errors: Record<string, string>;
+  cleaned: ServiceSpecs;
+} {
+  const errors: Record<string, string> = {};
+  const cleaned: ServiceSpecs = {
+    service_category: String(specs.service_category || '').trim(),
+    billing_basis: String(specs.billing_basis || '').trim(),
+    est_duration: String(specs.est_duration || '').trim(),
+    service_area: String(specs.service_area || '').trim(),
+    scope_deliverables: String(specs.scope_deliverables || '').trim(),
+    sac_code: String(specs.sac_code || '').trim(),
+    service_terms: String(specs.service_terms || '').trim(),
+  };
+
+  if (!cleaned.service_category) {
+    errors.service_category = 'Service category is required.';
+  }
+  if (!cleaned.billing_basis) {
+    errors.billing_basis = 'Billing basis is required.';
+  }
+  return {
+    valid: Object.keys(errors).length === 0,
+    errors,
+    cleaned,
+  };
+}
+
+export function formatServiceSpecSummary(
+  packMetadata: Record<string, unknown> | null | undefined
+): string {
+  const s = normalizeServiceSpecsFromMetadata(packMetadata);
+  return [s.service_category, s.billing_basis, s.est_duration, s.service_area]
+    .filter(Boolean)
+    .join(' · ');
+}
+

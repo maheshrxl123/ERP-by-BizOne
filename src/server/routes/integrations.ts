@@ -273,17 +273,17 @@ export function registerIntegrationRoutes(app: Express): void {
           decryptSecret(slot.encrypted_secret);
           message = `Online Payments (${String(pub.provider || 'razorpay')} · ${String(pub.mode || 'test')}) credentials verified.`;
         } else if (key === 'online_store') {
-          if (typeof pub.base_url === 'string' && pub.base_url.trim()) {
-            const check = validateExternalHttpsUrl(pub.base_url);
+          const hasExternalUrl = typeof pub.base_url === 'string' && pub.base_url.trim().length > 0;
+          if (hasExternalUrl) {
+            const check = validateExternalHttpsUrl(String(pub.base_url));
             if (!check.valid) throw new Error(check.error);
           }
           if (slot.has_secret && slot.encrypted_secret) {
             decryptSecret(slot.encrypted_secret);
           }
-          if (!slot.has_secret && !(typeof pub.base_url === 'string' && pub.base_url.trim())) {
-            throw new Error('Enter a Storefront HTTPS URL or Webhook Signing Secret first.');
-          }
-          message = 'Online Storefront configuration verified.';
+          message = hasExternalUrl
+            ? 'Online Storefront & webhook URL configuration verified.'
+            : 'Built-in same-origin Online Storefront configuration verified.';
         }
 
         await supabaseAdmin

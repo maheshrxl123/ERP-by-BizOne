@@ -1,4 +1,4 @@
-import { IconKeyboard, IconSearch } from '@tabler/icons-react';
+import { IconHelpCircle, IconKeyboard, IconSearch } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 
@@ -119,8 +119,9 @@ export function HelpScreen() {
   return (
     <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-6">
       <div>
-        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-          {t('nav.help')}
+        <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+          <IconHelpCircle size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+          <span>{t('nav.help')}</span>
         </h1>
         <p className="text-sm text-[var(--text-muted)] mt-1">
           {language === 'hi'

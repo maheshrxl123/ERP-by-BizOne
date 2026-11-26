@@ -71,11 +71,23 @@ export function PartiesScreen({
         supabase.from('khata_totals_summary').select('*').maybeSingle(),
         supabase.from('party_balances').select('*').order('name', { ascending: true }),
       ]);
-      if (sumRes.error) throw sumRes.error;
       if (listRes.error) throw listRes.error;
+      const partyRows = (listRes.data as PartyBalanceRecord[] | null) ?? [];
 
-      setSummary((sumRes.data as KhataTotalsSummary | null) ?? null);
-      setParties((listRes.data as PartyBalanceRecord[] | null) ?? []);
+      if (sumRes.error) {
+        const activeRows = partyRows.filter((p) => p.is_active);
+        setSummary({
+          total_to_receive: activeRows.reduce((acc, p) => acc + Number(p.to_receive || 0), 0),
+          total_to_give: activeRows.reduce((acc, p) => acc + Number(p.to_give || 0), 0),
+          active_parties_count: activeRows.length,
+          overdue_parties_count: activeRows.filter((p) => p.is_overdue).length,
+          today_received: 0,
+          today_given: 0,
+        });
+      } else {
+        setSummary((sumRes.data as KhataTotalsSummary | null) ?? null);
+      }
+      setParties(partyRows);
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : 'Unable to load parties.'
@@ -166,8 +178,9 @@ export function PartiesScreen({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {t('parties.title')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconUsers size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>{t('parties.title')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {t('parties.subtitle')}

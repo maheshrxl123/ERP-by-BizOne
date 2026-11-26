@@ -392,3 +392,22 @@ export function computeStockPoolTransition(params: {
     nextStockState: stockState,
   };
 }
+
+export function resolveSafeStorePath(rawPath?: string | null, fallback = '/catalogue'): string {
+  const trimmed = String(rawPath || '').trim();
+  if (!trimmed) return fallback;
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\\')) {
+    return fallback;
+  }
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === '/erp' ||
+    lower.startsWith('/erp/') ||
+    lower === '/erp.html' ||
+    lower.startsWith('/api/')
+  ) {
+    return fallback;
+  }
+  return trimmed;
+}
+

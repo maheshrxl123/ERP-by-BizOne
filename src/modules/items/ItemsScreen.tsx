@@ -22,6 +22,7 @@ import {
 } from '../../core/productLines';
 import {
   formatItemSpecSummary,
+  formatServiceSpecSummary,
   getLineFilterDefinitions,
   matchesLineSpecFilters,
 } from '../../core/productSpecs';
@@ -248,8 +249,9 @@ export function ItemsScreen({
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {t('items.title')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconPackage size={24} stroke={2} className="text-[var(--primary-dark)]" />
+            <span>{t('items.title')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {t('items.subtitle')}
@@ -599,22 +601,32 @@ export function ItemsScreen({
                                 {item.name}
                               </p>
                               <p className="text-xs text-[var(--text-muted)] truncate">
-                                {formatItemSpecSummary(item.product_line, item.specs) ||
+                                {(item.item_type === 'service'
+                                  ? formatServiceSpecSummary(item.pack_metadata)
+                                  : formatItemSpecSummary(item.product_line, item.specs)) ||
                                   (item.sku ? `SKU ${item.sku}` : 'No SKU')}
-                                {item.sku && formatItemSpecSummary(item.product_line, item.specs)
+                                {item.sku &&
+                                (item.item_type === 'service'
+                                  ? formatServiceSpecSummary(item.pack_metadata)
+                                  : formatItemSpecSummary(item.product_line, item.specs))
                                   ? ` · ${item.sku}`
                                   : ''}
                                 {item.barcode ? ` · ${item.barcode}` : ''}
                                 {item.image_count > 1
                                   ? ` · ${item.image_count} photos`
                                   : ''}
+                                {item.is_published_online ? ' · Online Store' : ''}
                               </p>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-xs text-[var(--text-muted)]">
                           <span className="font-medium text-[var(--text)] block">
-                            {getProductLineLabel(item.product_line, language)}
+                            {item.item_type === 'service'
+                              ? language === 'hi'
+                                ? 'सेवा (गैर-स्टॉक)'
+                                : 'Service (Non-Stock)'
+                              : getProductLineLabel(item.product_line, language)}
                           </span>
                           <span>
                             {item.category_name || '—'}
@@ -635,21 +647,29 @@ export function ItemsScreen({
                           </td>
                         )}
                         <td className="px-4 py-3 text-right tabular-nums">
-                          <span
-                            className={`font-semibold ${
-                              item.is_out_of_stock
-                                ? 'text-[var(--give)]'
-                                : item.is_low_stock
-                                  ? 'text-amber-600'
-                                  : 'text-[var(--text)]'
-                            }`}
-                          >
-                            {formatStockQty(item.qty_on_hand, item.base_unit_code)}
-                          </span>
-                          {item.is_low_stock && !item.is_out_of_stock && (
-                            <span className="block text-[11px] text-amber-600">
-                              Low stock
+                          {item.item_type === 'service' ? (
+                            <span className="text-xs font-medium text-[var(--text-muted)]">
+                              Non-Stock
                             </span>
+                          ) : (
+                            <>
+                              <span
+                                className={`font-semibold ${
+                                  item.is_out_of_stock
+                                    ? 'text-[var(--give)]'
+                                    : item.is_low_stock
+                                      ? 'text-amber-600'
+                                      : 'text-[var(--text)]'
+                                }`}
+                              >
+                                {formatStockQty(item.qty_on_hand, item.base_unit_code)}
+                              </span>
+                              {item.is_low_stock && !item.is_out_of_stock && (
+                                <span className="block text-[11px] text-amber-600">
+                                  Low stock
+                                </span>
+                              )}
+                            </>
                           )}
                         </td>
                         <td
@@ -716,8 +736,13 @@ export function ItemsScreen({
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{item.name}</p>
                         <p className="text-xs text-[var(--text-muted)] truncate">
-                          {item.category_name || 'Uncategorized'}
+                          {item.item_type === 'service'
+                            ? language === 'hi'
+                              ? 'सेवा (गैर-स्टॉक)'
+                              : 'Service (Non-Stock)'
+                            : item.category_name || 'Uncategorized'}
                           {item.sku ? ` · ${item.sku}` : ''}
+                          {item.is_published_online ? ' · Online' : ''}
                         </p>
                       </div>
                     </div>
@@ -728,14 +753,18 @@ export function ItemsScreen({
                       </p>
                       <p
                         className={`text-xs font-medium ${
-                          item.is_out_of_stock
-                            ? 'text-[var(--give)]'
-                            : item.is_low_stock
-                              ? 'text-amber-600'
-                              : 'text-[var(--text-muted)]'
+                          item.item_type === 'service'
+                            ? 'text-[var(--text-muted)]'
+                            : item.is_out_of_stock
+                              ? 'text-[var(--give)]'
+                              : item.is_low_stock
+                                ? 'text-amber-600'
+                                : 'text-[var(--text-muted)]'
                         }`}
                       >
-                        {formatStockQty(item.qty_on_hand, item.base_unit_code)}
+                        {item.item_type === 'service'
+                          ? 'Non-Stock'
+                          : formatStockQty(item.qty_on_hand, item.base_unit_code)}
                       </p>
                     </div>
                   </button>

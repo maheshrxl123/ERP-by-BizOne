@@ -237,7 +237,7 @@ const isMain =
   process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
 
 if (isMain) {
-  console.log('=== DecorBiz Fresh-Install Rehearsal (0001..0024) ===');
+  console.log('=== DecorBiz Fresh-Install Rehearsal (0001..0026) ===');
   const staticRes = runStaticFreshInstallRehearsal();
   for (const c of staticRes.checks) {
     console.log(`[rehearse] OK: ${c}`);

@@ -19,6 +19,7 @@ import {
   isModuleEnabledServer,
   resolveRequestOrigin,
   UUID_SCHEMA,
+  writeAudit,
 } from '../middleware.ts';
 import { sendSmtpOrWebhookEmail } from '../mailer.ts';
 import {
@@ -26,6 +27,13 @@ import {
   getStoreRazorpayConfig,
   verifyRazorpaySignature,
 } from '../storePayments.ts';
+import {
+  GeminiSchemaType,
+  callAiStructuredJson,
+  redactSecretsFromText,
+  sanitizeUntrustedText,
+} from '../aiGateway.ts';
+import { enforceDailyAiBudget, resolveActiveAiCredential } from './ai.ts';
 import { createRateLimiter, extractRequestIp } from '../rateLimit.ts';
 
 const storeAuthLoginLimiter = createRateLimiter({
@@ -69,6 +77,13 @@ const storePaymentVerifyLimiter = createRateLimiter({
   windowMs: 10 * 60 * 1000,
   maxRequests: 20,
   message: 'Too many payment verification attempts. Please wait a moment.',
+});
+
+const storeAiChatLimiter = createRateLimiter({
+  name: 'store-ai-chat',
+  windowMs: 60 * 1000,
+  maxRequests: 25,
+  message: 'Too many shopping assistant messages. Please wait a moment.',
 });
 
 const PUBLIC_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -177,6 +192,7 @@ export function registerStorefrontRoutes(app: Express): void {
     if (!admin) {
       res.json({
         onlineStoreEnabled: false,
+        aiAssistantEnabled: false,
         storeName: 'DecorBiz Showroom',
         pickupEnabled: true,
         codEnabled: true,
@@ -192,6 +208,19 @@ export function registerStorefrontRoutes(app: Express): void {
 
     try {
       const onlineStoreEnabled = await isModuleEnabledServer('online_store');
+      let aiAssistantEnabled = false;
+      if (onlineStoreEnabled) {
+        const aiModEnabled = await isModuleEnabledServer('ai');
+        if (aiModEnabled) {
+          try {
+            await resolveActiveAiCredential(admin, 'chat');
+            aiAssistantEnabled = true;
+          } catch {
+            aiAssistantEnabled = false;
+          }
+        }
+      }
+
       const [
         { data: biz },
         { data: storeInt },
@@ -224,6 +253,7 @@ export function registerStorefrontRoutes(app: Express): void {
       const storePub = (storeInt?.config_public || {}) as Record<string, unknown>;
       res.json({
         onlineStoreEnabled,
+        aiAssistantEnabled,
         storeName: biz?.name || 'DecorBiz Showroom',
         phone: biz?.phone || null,
         email: biz?.email || null,
@@ -1050,11 +1080,21 @@ export function registerStorefrontRoutes(app: Express): void {
         throw new Error(lineErr.message);
       }
 
-      if (matchedCoupon && pricing.couponApplied) {
-        await admin
+      if (matchedCoupon && pricing.couponApplied && input.paymentMethod !== 'razorpay') {
+        const expectedCount = Number(matchedCoupon.used_count || 0);
+        const { data: bumped } = await admin
           .from('store_coupons')
-          .update({ used_count: Number(matchedCoupon.used_count || 0) + 1 })
-          .eq('id', matchedCoupon.id);
+          .update({ used_count: expectedCount + 1 })
+          .eq('id', matchedCoupon.id)
+          .eq('used_count', expectedCount)
+          .select('id')
+          .maybeSingle();
+        if (!bumped && matchedCoupon.usage_limit != null && expectedCount + 1 >= Number(matchedCoupon.usage_limit)) {
+          await admin.from('store_order_lines').delete().eq('order_id', createdOrder.id);
+          await admin.from('store_orders').delete().eq('id', createdOrder.id);
+          res.status(409).json({ error: `Coupon "${matchedCoupon.code}" usage limit was just reached.` });
+          return;
+        }
       }
 
       await queueCustomerOrderEmailIfEnabled(
@@ -1139,6 +1179,13 @@ export function registerStorefrontRoutes(app: Express): void {
         return;
       }
 
+      if (order.payment_status === 'paid' && order.razorpay_payment_id === razorpayPaymentId && order.status !== 'pending') {
+        res.json({ verified: true, order });
+        return;
+      }
+
+      const wasAlreadyPaid = order.payment_status === 'paid';
+
       await admin
         .from('store_orders')
         .update({
@@ -1147,6 +1194,20 @@ export function registerStorefrontRoutes(app: Express): void {
           razorpay_signature: razorpaySignature,
         })
         .eq('id', order.id);
+
+      if (!wasAlreadyPaid && order.coupon_code) {
+        const { data: couponRow } = await admin
+          .from('store_coupons')
+          .select('id, used_count')
+          .ilike('code', String(order.coupon_code))
+          .maybeSingle();
+        if (couponRow) {
+          await admin
+            .from('store_coupons')
+            .update({ used_count: Number(couponRow.used_count || 0) + 1 })
+            .eq('id', couponRow.id);
+        }
+      }
 
       const { data: confirmedOrder, error: rpcErr } = await admin.rpc(
         'store_transition_order_stock',
@@ -1157,7 +1218,27 @@ export function registerStorefrontRoutes(app: Express): void {
       );
 
       if (rpcErr) {
-        res.status(400).json({ error: rpcErr.message });
+        const conflictNote = `Paid Razorpay ${razorpayPaymentId}, stock allocation conflict: ${rpcErr.message}`;
+        await admin
+          .from('store_orders')
+          .update({ internal_notes: conflictNote })
+          .eq('id', order.id);
+        await writeAudit(
+          null,
+          req.customer?.email || null,
+          'store.payment_stock_conflict',
+          'store_order',
+          order.id,
+          {
+            order_number: order.order_number,
+            razorpay_payment_id: razorpayPaymentId,
+            error: rpcErr.message,
+          }
+        );
+        res.status(409).json({
+          error: `Payment ${razorpayPaymentId} succeeded for order ${order.order_number}, but available stock changed during checkout. Please contact showroom support with your order number and payment ID.`,
+          paymentRecorded: true,
+        });
         return;
       }
 
@@ -1264,5 +1345,301 @@ export function registerStorefrontRoutes(app: Express): void {
     );
 
     res.json({ order: updated });
+  });
+
+  // --------------------------------------------------------------------------
+  // 8. Customer-Facing Online Store AI Shopping Assistant (Public Safe Read)
+  // --------------------------------------------------------------------------
+  const storeAiChatSchema = z.object({
+    message: z.string().trim().min(1, 'Please enter a message.').max(1000),
+    history: z
+      .array(
+        z.object({
+          role: z.enum(['user', 'assistant']),
+          content: z.string().trim().min(1).max(1200),
+        })
+      )
+      .max(10)
+      .optional()
+      .default([]),
+  });
+
+  app.post('/api/store/ai/chat', storeAiChatLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+    const admin = getSupabaseAdmin();
+    if (!admin) {
+      res.status(503).json({ error: 'Store database not configured.' });
+      return;
+    }
+
+    const aiEnabled = await isModuleEnabledServer('ai');
+    if (!aiEnabled) {
+      res.status(403).json({ error: 'Online Store AI Assistant is currently disabled.' });
+      return;
+    }
+
+    const parsed = storeAiChatSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid chat request.' });
+      return;
+    }
+
+    try {
+      const cred = await resolveActiveAiCredential(admin, 'chat');
+      await enforceDailyAiBudget(admin, cred.dailyTokenLimit);
+
+      const [
+        { data: publishedItems },
+        { data: activeBanners },
+        { data: publishedPages },
+        { data: activeZones },
+        { data: activeCoupons },
+        { data: biz },
+      ] = await Promise.all([
+        admin
+          .from('published_store_items_view')
+          .select(
+            'id, name, online_slug, product_line, item_type, effective_price, mrp, base_unit_code, available_qty, in_stock, primary_image_file_id, online_description, specs'
+          )
+          .order('name', { ascending: true })
+          .limit(80),
+        admin
+          .from('store_banners')
+          .select('title, subtitle, cta_label')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true })
+          .limit(6),
+        admin
+          .from('store_pages')
+          .select('slug, title, content')
+          .eq('is_published', true)
+          .order('title', { ascending: true })
+          .limit(15),
+        admin
+          .from('store_delivery_zones')
+          .select('zone_name, pincodes, delivery_charge, min_order_amount, estimated_days')
+          .eq('is_active', true)
+          .order('zone_name', { ascending: true })
+          .limit(20),
+        admin
+          .from('store_coupons')
+          .select('code, description, discount_type, discount_value, min_order_amount')
+          .eq('is_active', true)
+          .limit(10),
+        admin
+          .from('business')
+          .select('name, phone, email, address')
+          .eq('id', 1)
+          .maybeSingle(),
+      ]);
+
+      const safeItems = (publishedItems || []) as Array<Record<string, unknown>>;
+      const safePages = (publishedPages || []) as Array<{ slug: string; title: string; content?: string }>;
+
+      // Optional area extraction for helpful tile box calculation context
+      const userMsg = parsed.data.message;
+      let detectedAreaSqFt: number | null = null;
+      const dimMatch = userMsg.match(/(\d+(?:\.\d+)?)\s*(?:x|×|\*)\s*(\d+(?:\.\d+)?)/i);
+      const areaMatch = userMsg.match(/(\d+(?:\.\d+)?)\s*(?:sq\.?\s*ft|sqft|square\s*feet)/i);
+      if (dimMatch) {
+        const w = Number(dimMatch[1]);
+        const h = Number(dimMatch[2]);
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 && w * h <= 100000) {
+          detectedAreaSqFt = roundHalfUp(w * h, 2);
+        }
+      } else if (areaMatch) {
+        const sq = Number(areaMatch[1]);
+        if (Number.isFinite(sq) && sq > 0 && sq <= 100000) {
+          detectedAreaSqFt = roundHalfUp(sq, 2);
+        }
+      }
+
+      const catalogueContext = safeItems.map((it) => {
+        const specsObj = it.specs && typeof it.specs === 'object' ? (it.specs as Record<string, unknown>) : null;
+        const rawSqft = Number(specsObj?.sqft_per_box || 0);
+        const sqftPerBox = Number.isFinite(rawSqft) && rawSqft > 0 ? rawSqft : null;
+        const estimatedBoxesWith10Pct =
+          detectedAreaSqFt && sqftPerBox
+            ? Math.ceil((detectedAreaSqFt * 1.1) / sqftPerBox)
+            : null;
+        return {
+          slug: String(it.online_slug || ''),
+          name: sanitizeUntrustedText(String(it.name || '')),
+          line: String(it.product_line || ''),
+          type: String(it.item_type || 'goods'),
+          price_inr: Number(it.effective_price || 0),
+          mrp_inr: it.mrp != null ? Number(it.mrp) : null,
+          unit: String(it.base_unit_code || 'PCS'),
+          sqft_per_box: sqftPerBox,
+          estimated_boxes_needed_for_user_area_incl_10pct_wastage: estimatedBoxesWith10Pct,
+          in_stock: Boolean(it.in_stock),
+          available_qty: Number(it.available_qty || 0),
+          specs: specsObj,
+          description: sanitizeUntrustedText(String(it.online_description || '')).slice(0, 260),
+        };
+      });
+
+      const storeContext = {
+        store_name: sanitizeUntrustedText(String(biz?.name || 'DecorBiz Showroom')),
+        phone: biz?.phone || null,
+        address: sanitizeUntrustedText(String(biz?.address || '')),
+        detected_user_area_sqft: detectedAreaSqFt,
+        active_promotions: (activeBanners || []).map((b) => ({
+          title: sanitizeUntrustedText(String(b.title || '')),
+          subtitle: sanitizeUntrustedText(String(b.subtitle || '')),
+        })),
+        active_coupons: (activeCoupons || []).map((c) => ({
+          code: c.code,
+          description: sanitizeUntrustedText(String(c.description || '')),
+          discount_type: c.discount_type,
+          discount_value: Number(c.discount_value || 0),
+          min_order_amount: Number(c.min_order_amount || 0),
+        })),
+        delivery_zones: (activeZones || []).map((z) => ({
+          zone_name: sanitizeUntrustedText(String(z.zone_name || '')),
+          pincodes: Array.isArray(z.pincodes) ? z.pincodes.slice(0, 10) : [],
+          delivery_charge_inr: Number(z.delivery_charge || 0),
+          min_order_inr: Number(z.min_order_amount || 0),
+          estimated_days: Number(z.estimated_days || 1),
+        })),
+        published_pages: safePages.map((p) => ({
+          slug: p.slug,
+          title: sanitizeUntrustedText(String(p.title || '')),
+          excerpt: sanitizeUntrustedText(String(p.content || '')).slice(0, 320),
+        })),
+        catalogue: catalogueContext,
+      };
+
+      const historyText = parsed.data.history
+        .map((h) => `${h.role === 'user' ? 'Customer' : 'Assistant'}: ${sanitizeUntrustedText(h.content)}`)
+        .join('\n');
+
+      const responseSchema = {
+        type: GeminiSchemaType.OBJECT,
+        properties: {
+          reply: { type: GeminiSchemaType.STRING },
+          suggested_slugs: {
+            type: GeminiSchemaType.ARRAY,
+            items: { type: GeminiSchemaType.STRING },
+          },
+          suggested_page_slugs: {
+            type: GeminiSchemaType.ARRAY,
+            items: { type: GeminiSchemaType.STRING },
+          },
+          box_estimate_note: { type: GeminiSchemaType.STRING },
+        },
+        required: ['reply', 'suggested_slugs'],
+      };
+
+      const aiResult = await callAiStructuredJson<{
+        reply: string;
+        suggested_slugs: string[];
+        suggested_page_slugs?: string[];
+        box_estimate_note?: string;
+      }>({
+        provider: cred.provider,
+        apiKey: cred.apiKey,
+        model: cred.model,
+        baseUrl: cred.baseUrl,
+        responseSchema,
+        systemPrompt: [
+          'You are the helpful Online Showroom Assistant for DecorBiz architectural tiles, sanitaryware, faucets, adhesives, and installation services.',
+          'Answer customer questions politely in clear, concise natural language matching the customer language (English or simple Hindi/Hinglish if asked).',
+          'STRICT GROUNDING RULES:',
+          '1) Recommend ONLY items whose `slug` exists inside <UNTRUSTED_STORE_DATA>.catalogue. Never invent SKUs, prices, dimensions, coupons, or delivery charges.',
+          '2) If `detected_user_area_sqft` is present and tile items match, explain the box calculation clearly including 10% wastage allowance in `box_estimate_note`.',
+          '3) If an item is out of stock or not carried online, mention that honestly and offer the closest published alternative or showroom contact.',
+          '4) Return up to 4 exact matching `suggested_slugs` from `catalogue`, and up to 2 relevant `suggested_page_slugs` from `published_pages` (policies, guides, FAQ) when helpful.',
+        ].join('\n'),
+        userPrompt: [
+          historyText ? `Recent conversation:\n${historyText}\n` : '',
+          `Customer message: ${sanitizeUntrustedText(userMsg)}`,
+          `<UNTRUSTED_STORE_DATA>\n${JSON.stringify(storeContext)}\n</UNTRUSTED_STORE_DATA>`,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      });
+
+      const itemBySlug = new Map(
+        safeItems.map((it) => [String(it.online_slug || ''), it])
+      );
+      const suggestedItems = Array.from(
+        new Set(
+          (Array.isArray(aiResult.data.suggested_slugs) ? aiResult.data.suggested_slugs : []).map((s) =>
+            String(s || '').trim()
+          )
+        )
+      )
+        .map((slug) => itemBySlug.get(slug))
+        .filter((it): it is Record<string, unknown> => Boolean(it))
+        .slice(0, 4)
+        .map((it) => {
+          const specsObj = it.specs && typeof it.specs === 'object' ? (it.specs as Record<string, unknown>) : null;
+          const rawSqft = Number(specsObj?.sqft_per_box || 0);
+          return {
+            id: String(it.id),
+            name: String(it.name),
+            online_slug: String(it.online_slug),
+            product_line: String(it.product_line),
+            item_type: String(it.item_type || 'goods'),
+            effective_price: Number(it.effective_price || 0),
+            mrp: it.mrp != null ? Number(it.mrp) : null,
+            base_unit_code: String(it.base_unit_code || 'PCS'),
+            sqft_per_box: Number.isFinite(rawSqft) && rawSqft > 0 ? rawSqft : null,
+            available_qty: Number(it.available_qty || 0),
+            in_stock: Boolean(it.in_stock),
+            primary_image_file_id: it.primary_image_file_id ? String(it.primary_image_file_id) : null,
+          };
+        });
+
+      const pageBySlug = new Map(safePages.map((p) => [p.slug, p]));
+      const suggestedPages = Array.from(
+        new Set(
+          (Array.isArray(aiResult.data.suggested_page_slugs)
+            ? aiResult.data.suggested_page_slugs
+            : []
+          ).map((s) => String(s || '').trim())
+        )
+      )
+        .map((slug) => pageBySlug.get(slug))
+        .filter((p): p is { slug: string; title: string } => Boolean(p))
+        .slice(0, 2)
+        .map((p) => ({ slug: p.slug, title: p.title }));
+
+      try {
+        const { data: ownerProf } = await admin
+          .from('profiles')
+          .select('id')
+          .eq('role', 'owner')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        if (ownerProf?.id) {
+          await admin.from('ai_usage_logs').insert({
+            user_id: ownerProf.id,
+            provider: cred.provider,
+            model: cred.model,
+            action_type: 'chat',
+            tokens_in: Math.round(aiResult.tokensUsed * 0.6),
+            tokens_out: Math.round(aiResult.tokensUsed * 0.4),
+            status: 'ok',
+          });
+        }
+      } catch {
+        // Best-effort token tracking
+      }
+
+      res.json({
+        reply: redactSecretsFromText(String(aiResult.data.reply || '').trim()),
+        suggestedItems,
+        suggestedPages,
+        boxEstimateNote: aiResult.data.box_estimate_note
+          ? redactSecretsFromText(String(aiResult.data.box_estimate_note).trim())
+          : null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to answer right now.';
+      const status = msg.toLowerCase().includes('budget') ? 429 : 400;
+      res.status(status).json({ error: redactSecretsFromText(msg) });
+    }
   });
 }

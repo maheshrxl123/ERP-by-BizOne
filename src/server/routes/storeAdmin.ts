@@ -1,5 +1,6 @@
 import type { Express, Response } from 'express';
 import { z } from 'zod';
+import { createUserScopedClient } from '../config.ts';
 import { sendSmtpOrWebhookEmail } from '../mailer.ts';
 import {
   isModuleEnabledServer,
@@ -9,6 +10,11 @@ import {
   writeAudit,
   type AuthenticatedRequest,
 } from '../middleware.ts';
+import {
+  createEmptyServiceSpecs,
+  validateServiceSpecs,
+} from '../../core/productSpecs.ts';
+import { isValidProductLine, type ProductLineKey } from '../../core/productLines.ts';
 import type { StoreOrderStatus } from '../../types/decorbiz.ts';
 
 function slugifyText(raw: string): string {
@@ -139,6 +145,9 @@ export function registerStoreAdminRoutes(app: Express): void {
         { data: banners },
         { data: pages },
         { data: reviews },
+        { data: categories },
+        { data: brands },
+        { data: units },
         razorpaySlot,
       ] = await Promise.all([
         admin.from('item_catalog_view').select('*').eq('is_active', true).order('name'),
@@ -149,6 +158,9 @@ export function registerStoreAdminRoutes(app: Express): void {
         admin.from('store_banners').select('*').order('sort_order', { ascending: true }),
         admin.from('store_pages').select('*').order('title'),
         admin.from('product_reviews').select('*').order('created_at', { ascending: false }).limit(200),
+        admin.from('item_categories').select('*').eq('is_active', true).order('name'),
+        admin.from('brands').select('*').eq('is_active', true).order('name'),
+        admin.from('item_units').select('*').eq('is_active', true).order('is_system', { ascending: false }).order('code'),
         admin
           .from('integration_settings')
           .select('enabled, config_public, has_secret')
@@ -186,11 +198,175 @@ export function registerStoreAdminRoutes(app: Express): void {
         banners: banners || [],
         pages: pages || [],
         reviews: mappedReviews,
+        categories: categories || [],
+        brands: brands || [],
+        units: units || [],
         razorpayConfigured: Boolean(razorpaySlot.data?.enabled && razorpaySlot.data?.has_secret),
       });
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unable to load store admin overview.',
+      });
+    }
+  });
+
+  // Create new Goods or Service item directly from Store Admin & publish online
+  app.post('/api/store-admin/items', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+    if (!['owner', 'manager', 'storekeeper'].includes(req.staffUser!.role)) {
+      res.status(403).json({ error: 'Only Owner, Manager, or Storekeeper can add online items.' });
+      return;
+    }
+
+    const createOnlineItemSchema = z.object({
+      name: z.string().trim().min(1).max(160),
+      item_type: z.enum(['goods', 'service']).default('goods'),
+      product_line: z.string().trim().optional().default('tiles_slabs'),
+      category_id: UUID_SCHEMA.nullable().optional(),
+      brand_id: UUID_SCHEMA.nullable().optional(),
+      base_unit_id: UUID_SCHEMA,
+      sku: z.string().trim().max(64).nullable().optional(),
+      selling_price: z.number().min(0),
+      mrp: z.number().min(0).nullable().optional(),
+      gst_rate: z.number().min(0).max(28).default(18),
+      hsn_code: z.string().trim().max(32).nullable().optional(),
+      tax_inclusive: z.boolean().default(true),
+      opening_stock: z.number().min(0).default(0),
+      image_file_ids: z.array(UUID_SCHEMA).max(8).default([]),
+      video_url: z.string().trim().max(500).nullable().optional(),
+      description: z.string().trim().max(4000).nullable().optional(),
+      service_specs: z
+        .object({
+          service_category: z.string().trim().default('Other Service'),
+          billing_basis: z.string().trim().default('Per Job / Visit'),
+          est_duration: z.string().trim().default(''),
+          service_area: z.string().trim().default(''),
+          scope_deliverables: z.string().trim().default(''),
+          sac_code: z.string().trim().default(''),
+          service_terms: z.string().trim().default(''),
+        })
+        .optional(),
+      sqft_per_box: z.number().positive().nullable().optional(),
+      is_published_online: z.boolean().default(true),
+      online_price: z.number().min(0).nullable().optional(),
+      online_slug: z.string().trim().max(120).nullable().optional(),
+      online_description: z.string().trim().max(4000).nullable().optional(),
+    });
+
+    const parsed = createOnlineItemSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid online item payload.' });
+      return;
+    }
+
+    const input = parsed.data;
+    const isService = input.item_type === 'service';
+    const effectiveLine: ProductLineKey = isService
+      ? 'other_general'
+      : isValidProductLine(input.product_line)
+        ? input.product_line
+        : 'other_general';
+
+    const packMeta: Record<string, unknown> = {};
+    let effectiveHsn = input.hsn_code || null;
+
+    if (isService) {
+      const mergedSrv = {
+        ...createEmptyServiceSpecs({ sacCode: input.hsn_code || '' }),
+        ...(input.service_specs || {}),
+      };
+      const checkSrv = validateServiceSpecs(mergedSrv);
+      if (!checkSrv.valid) {
+        res.status(400).json({ error: Object.values(checkSrv.errors)[0] || 'Invalid service specs.' });
+        return;
+      }
+      packMeta.service_specs = checkSrv.cleaned;
+      if (checkSrv.cleaned.sac_code) {
+        packMeta.sac_code = checkSrv.cleaned.sac_code;
+        if (!effectiveHsn) effectiveHsn = checkSrv.cleaned.sac_code;
+      }
+    } else if (input.sqft_per_box) {
+      packMeta.sqft_per_box = String(input.sqft_per_box);
+    }
+
+    try {
+      const userClient = createUserScopedClient(req.headers.authorization!);
+      const { data: rpcData, error: rpcErr } = await userClient.rpc('save_item', {
+        p_id: null,
+        p_name: input.name,
+        p_sku: input.sku || null,
+        p_barcode: null,
+        p_category_id: input.category_id || null,
+        p_brand_id: input.brand_id || null,
+        p_base_unit_id: input.base_unit_id,
+        p_selling_price: input.selling_price,
+        p_mrp: input.mrp ?? null,
+        p_purchase_price: null,
+        p_gst_rate: input.gst_rate,
+        p_hsn_code: effectiveHsn,
+        p_tax_inclusive: input.tax_inclusive,
+        p_low_stock_alert: 0,
+        p_allow_negative_stock: isService,
+        p_opening_stock: isService ? 0 : input.opening_stock,
+        p_opening_unit_id: isService ? null : input.base_unit_id,
+        p_pack_metadata: packMeta,
+        p_notes: null,
+        p_conversions: [],
+        p_images: input.image_file_ids.map((fid, idx) => ({
+          file_id: fid,
+          sort_order: idx,
+          is_primary: idx === 0,
+        })),
+        p_expected_version: null,
+        p_item_type: input.item_type,
+        p_product_line: effectiveLine,
+        p_supplier_id: null,
+        p_country_of_origin: isService ? null : 'India',
+        p_warranty_months: null,
+        p_video_url: input.video_url || null,
+        p_description: input.description || input.online_description || null,
+        p_specs: null,
+      });
+
+      if (rpcErr || !rpcData?.id) {
+        res.status(400).json({ error: rpcErr?.message || 'Unable to create item.' });
+        return;
+      }
+
+      const itemId = String(rpcData.id);
+      const slug = input.online_slug?.trim()
+        ? slugifyText(input.online_slug)
+        : input.is_published_online
+          ? `${slugifyText(input.name)}-${itemId.slice(0, 6)}`
+          : null;
+
+      const admin = req.supabaseAdmin!;
+      const { data: updated, error: updErr } = await admin
+        .from('items')
+        .update({
+          is_published_online: input.is_published_online,
+          online_price: input.online_price ?? null,
+          online_slug: slug,
+          online_description: input.online_description || input.description || null,
+        })
+        .eq('id', itemId)
+        .select('id, name, is_published_online, online_price, online_slug, online_description')
+        .single();
+
+      if (updErr) {
+        res.status(400).json({ error: updErr.message });
+        return;
+      }
+
+      await writeAudit(req.staffUser!.id, req.staffUser!.email, 'store.item_created', 'item', itemId, {
+        name: input.name,
+        item_type: input.item_type,
+        is_published_online: input.is_published_online,
+      });
+
+      res.status(201).json({ item: updated });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Unable to create online store item.',
       });
     }
   });

@@ -117,10 +117,14 @@ SELECT
   max(sl.movement_date) AS last_movement_at
 FROM public.stock_ledger sl
 LEFT JOIN public.item_variants iv ON iv.id = sl.variant_id
+WHERE public.is_module_enabled('inventory')
+  AND public.has_any_role(ARRAY['owner', 'manager', 'storekeeper', 'cashier', 'accountant'])
 GROUP BY sl.item_id, sl.variant_id, iv.variant_name, COALESCE(NULLIF(trim(sl.shade), ''), 'Default'), COALESCE(NULLIF(trim(sl.batch_lot), ''), 'Default')
 HAVING round(sum(sl.signed_base_qty), 3) <> 0;
 
 ALTER VIEW public.item_lot_balances SET (security_invoker = false);
+REVOKE ALL ON public.item_lot_balances FROM anon;
+GRANT SELECT ON public.item_lot_balances TO authenticated;
 
 -- Update stock balance trigger to also maintain item_variants.qty_on_hand when variant_id is present
 CREATE OR REPLACE FUNCTION public.apply_stock_ledger_to_balance()

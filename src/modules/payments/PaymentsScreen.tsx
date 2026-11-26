@@ -2,6 +2,7 @@ import {
   IconArrowBackUp,
   IconArrowDownLeft,
   IconArrowUpRight,
+  IconCash,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -67,11 +68,30 @@ export function PaymentsScreen({
           .limit(200),
       ]);
 
-      if (sumRes.error) throw sumRes.error;
       if (payRes.error) throw payRes.error;
+      const payRows = (payRes.data as PaymentRecord[] | null) ?? [];
 
-      setSummary((sumRes.data as KhataTotalsSummary | null) ?? null);
-      setPayments((payRes.data as PaymentRecord[] | null) ?? []);
+      if (sumRes.error) {
+        const today = new Date().toISOString().slice(0, 10);
+        const postedToday = payRows.filter(
+          (p) => p.status === 'posted' && p.payment_date === today
+        );
+        setSummary({
+          total_to_receive: 0,
+          total_to_give: 0,
+          active_parties_count: 0,
+          overdue_parties_count: 0,
+          today_received: postedToday
+            .filter((p) => p.direction === 'receive')
+            .reduce((acc, p) => acc + Number(p.amount || 0), 0),
+          today_given: postedToday
+            .filter((p) => p.direction === 'give')
+            .reduce((acc, p) => acc + Number(p.amount || 0), 0),
+        });
+      } else {
+        setSummary((sumRes.data as KhataTotalsSummary | null) ?? null);
+      }
+      setPayments(payRows);
     } catch (err) {
       setLoadError(
         err instanceof Error ? err.message : 'Unable to load payments.'
@@ -154,8 +174,9 @@ export function PaymentsScreen({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {t('payments.title')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconCash size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>{t('payments.title')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {t('payments.subtitle')}

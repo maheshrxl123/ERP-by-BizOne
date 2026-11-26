@@ -44,9 +44,10 @@ interface DuePartyOption {
 }
 
 export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
-  const { session, profile, language, showToast } = useApp();
+  const { session, profile, isModuleEnabled, language, showToast } = useApp();
   const isOwner = profile?.role === 'owner';
   const canSeeProfit = hasCapability(profile?.role, 'view_profit');
+  const onlineStoreEnabled = isModuleEnabled('online_store');
 
   const [tab, setTab] = useState<AiTab>('chat');
   const [chatLang, setChatLang] = useState<'en' | 'hi' | 'hinglish'>(
@@ -493,6 +494,13 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
                   'What are today’s sales & cash collected?',
                   'Which customers have overdue Khata balances?',
                   'Aaj ka low stock aur reorder list dikhao',
+                  ...(onlineStoreEnabled
+                    ? [
+                        'Summarize Online Store orders & published items',
+                        'Draft a hero banner for our tile & bathware offers',
+                        'Create an Online Store promo coupon for tile orders',
+                      ]
+                    : []),
                 ].map((q) => (
                   <button
                     key={q}

@@ -29,7 +29,7 @@ import {
   type AuthenticatedRequest,
 } from '../middleware.ts';
 
-async function resolveActiveAiCredential(
+export async function resolveActiveAiCredential(
   admin: SupabaseClient,
   routingRole: 'default' | 'chat' | 'analytics' | 'automation' = 'default'
 ): Promise<{
@@ -98,7 +98,7 @@ async function resolveActiveAiCredential(
   );
 }
 
-async function enforceDailyAiBudget(
+export async function enforceDailyAiBudget(
   admin: SupabaseClient,
   dailyTokenLimit: number
 ): Promise<void> {
@@ -217,6 +217,68 @@ async function buildAuthorizedBusinessContext(
         .order('last_movement_at', { ascending: true, nullsFirst: true })
         .limit(15);
       contextData.slow_stock = maskRecordForRole(role, slow || []);
+    } else if (toolName === 'get_store_catalogue_summary') {
+      const { data: storeItems } = await admin
+        .from('item_catalog_view')
+        .select(
+          'id, name, sku, item_type, product_line, category_name, selling_price, online_price, online_slug, is_published_online, available_qty, qty_on_hand, base_unit_code'
+        )
+        .eq('is_active', true)
+        .order('is_published_online', { ascending: false })
+        .limit(40);
+      const list = storeItems || [];
+      contextData.store_catalogue = maskRecordForRole(role, {
+        total_active: list.length,
+        published_count: list.filter((x) => x.is_published_online).length,
+        unpublished_sample: list.filter((x) => !x.is_published_online).slice(0, 10).map((it) => ({
+          id: it.id,
+          name: sanitizeUntrustedText(String(it.name || '')),
+          item_type: it.item_type,
+          product_line: it.product_line,
+          selling_price: it.selling_price,
+        })),
+        published_sample: list.filter((x) => x.is_published_online).slice(0, 15).map((it) => ({
+          id: it.id,
+          name: sanitizeUntrustedText(String(it.name || '')),
+          online_price: it.online_price ?? it.selling_price,
+          online_slug: it.online_slug,
+          available_qty: it.available_qty ?? it.qty_on_hand,
+          unit: it.base_unit_code,
+        })),
+      });
+    } else if (toolName === 'get_store_orders_summary') {
+      const [{ data: storeOrders }, { data: pendingReviews }] = await Promise.all([
+        admin
+          .from('store_orders')
+          .select('order_number, customer_name, status, fulfillment_type, payment_method, payment_status, grand_total, created_at')
+          .order('created_at', { ascending: false })
+          .limit(20),
+        admin
+          .from('product_reviews')
+          .select('id, item_id, rating, status')
+          .eq('status', 'pending')
+          .limit(20),
+      ]);
+      contextData.store_orders = maskRecordForRole(role, {
+        recent_orders: (storeOrders || []).map((o) => ({
+          ...o,
+          customer_name: sanitizeUntrustedText(String(o.customer_name || '')),
+        })),
+        pending_reviews_count: (pendingReviews || []).length,
+      });
+    } else if (toolName === 'get_store_content_summary') {
+      const [{ data: banners }, { data: pages }, { data: zones }, { data: coupons }] = await Promise.all([
+        admin.from('store_banners').select('id, title, subtitle, is_active').order('sort_order').limit(15),
+        admin.from('store_pages').select('id, slug, title, is_published').order('title').limit(20),
+        admin.from('store_delivery_zones').select('id, zone_name, delivery_charge, estimated_days, is_active').limit(15),
+        admin.from('store_coupons').select('id, code, discount_type, discount_value, is_active, used_count').limit(15),
+      ]);
+      contextData.store_content = maskRecordForRole(role, {
+        banners: banners || [],
+        pages: pages || [],
+        zones: zones || [],
+        coupons: coupons || [],
+      });
     }
   }
 
@@ -614,6 +676,9 @@ export function registerAiRoutes(app: Express): void {
             'get_near_expiry_items',
             'get_profit_summary',
             'get_accounting_summary',
+            'get_store_catalogue_summary',
+            'get_store_orders_summary',
+            'get_store_content_summary',
           ]
         );
 
@@ -706,6 +771,188 @@ export function registerAiRoutes(app: Express): void {
             proposedByRole: role,
           });
           createdProposals.push(prop);
+        } else if (
+          enabledModules.has('online_store') &&
+          (lowerMsg.includes('banner') || lowerMsg.includes('hero') || lowerMsg.includes('offer')) &&
+          isToolAllowedForContext('propose_store_banner', role, enabledModules).allowed
+        ) {
+          const bannerDraftOut = await callAiStructuredJson<{
+            title: string;
+            subtitle: string;
+            cta_label: string;
+            cta_link: string;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                title: { type: GeminiSchemaType.STRING },
+                subtitle: { type: GeminiSchemaType.STRING },
+                cta_label: { type: GeminiSchemaType.STRING },
+                cta_link: { type: GeminiSchemaType.STRING },
+              },
+              required: ['title', 'subtitle', 'cta_label', 'cta_link'],
+            },
+            systemPrompt: 'Create a high-converting retail showroom hero banner for a Tiles, Sanitaryware & Bath Fittings online store. cta_link should be /catalogue or /catalogue?line=tiles_slabs.',
+            userPrompt: `Owner/staff request: ${message}`,
+          });
+          const b = bannerDraftOut.data;
+          const prop = await createActionProposalRecord(supabaseAdmin, {
+            conversationId,
+            toolName: 'propose_store_banner',
+            actionSummary: `Publish Store Hero Banner: "${b.title}"`,
+            beforeSnapshot: { existing_banners: (contextData.store_content as { banners?: unknown[] } | undefined)?.banners?.length ?? 0 },
+            proposedPayload: {
+              title: b.title.slice(0, 140),
+              subtitle: b.subtitle.slice(0, 260),
+              cta_label: b.cta_label.slice(0, 40),
+              cta_link: b.cta_link.startsWith('/') ? b.cta_link : '/catalogue',
+              is_active: true,
+              sort_order: 0,
+            },
+            consequences: [
+              'Creates an active storefront hero banner in Online Store → Banners & Pages.',
+              'Requires Owner approval before appearing on the live storefront.',
+            ],
+            proposedByUserId: req.staffUser!.id,
+            proposedByRole: role,
+          });
+          createdProposals.push(prop);
+        } else if (
+          enabledModules.has('online_store') &&
+          (lowerMsg.includes('page') || lowerMsg.includes('faq') || lowerMsg.includes('about') || lowerMsg.includes('policy')) &&
+          isToolAllowedForContext('propose_store_page', role, enabledModules).allowed
+        ) {
+          const pageDraftOut = await callAiStructuredJson<{
+            slug: string;
+            title: string;
+            content: string;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                slug: { type: GeminiSchemaType.STRING },
+                title: { type: GeminiSchemaType.STRING },
+                content: { type: GeminiSchemaType.STRING },
+              },
+              required: ['slug', 'title', 'content'],
+            },
+            systemPrompt: 'Write a clear, helpful Online Store CMS page for an Indian Tiles, Bathware & Decor showroom.',
+            userPrompt: `Request: ${message}`,
+          });
+          const p = pageDraftOut.data;
+          const cleanSlug = p.slug.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'store-info';
+          const prop = await createActionProposalRecord(supabaseAdmin, {
+            conversationId,
+            toolName: 'propose_store_page',
+            actionSummary: `Publish Store CMS Page: "${p.title}" (/page/${cleanSlug})`,
+            beforeSnapshot: {},
+            proposedPayload: {
+              slug: cleanSlug,
+              title: p.title.slice(0, 160),
+              content: p.content.slice(0, 15000),
+              is_published: true,
+            },
+            consequences: [
+              `Creates or updates storefront page /page/${cleanSlug} in Online Store → Banners & Pages.`,
+              'Requires Owner approval before publishing publicly.',
+            ],
+            proposedByUserId: req.staffUser!.id,
+            proposedByRole: role,
+          });
+          createdProposals.push(prop);
+        } else if (
+          enabledModules.has('online_store') &&
+          (lowerMsg.includes('coupon') || lowerMsg.includes('promo') || lowerMsg.includes('discount code')) &&
+          isToolAllowedForContext('propose_store_coupon', role, enabledModules).allowed
+        ) {
+          const couponOut = await callAiStructuredJson<{
+            code: string;
+            description: string;
+            discount_type: 'pct' | 'flat';
+            discount_value: number;
+            min_order_amount: number;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                code: { type: GeminiSchemaType.STRING },
+                description: { type: GeminiSchemaType.STRING },
+                discount_type: { type: GeminiSchemaType.STRING, enum: ['pct', 'flat'] },
+                discount_value: { type: GeminiSchemaType.NUMBER },
+                min_order_amount: { type: GeminiSchemaType.NUMBER },
+              },
+              required: ['code', 'description', 'discount_type', 'discount_value', 'min_order_amount'],
+            },
+            systemPrompt: 'Design a sensible online store promo coupon (e.g. 5-15% off or Rs 500-2000 flat off above a minimum order).',
+            userPrompt: `Request: ${message}`,
+          });
+          const cp = couponOut.data;
+          const prop = await createActionProposalRecord(supabaseAdmin, {
+            conversationId,
+            toolName: 'propose_store_coupon',
+            actionSummary: `Create Store Promo Coupon: ${cp.code.toUpperCase()}`,
+            beforeSnapshot: {},
+            proposedPayload: {
+              code: cp.code.toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24) || 'DECOR10',
+              description: cp.description.slice(0, 180),
+              discount_type: cp.discount_type === 'flat' ? 'flat' : 'pct',
+              discount_value: Math.max(1, Number(cp.discount_value || 10)),
+              min_order_amount: Math.max(0, Number(cp.min_order_amount || 0)),
+              is_active: true,
+            },
+            consequences: [
+              'Creates an active discount coupon in Online Store → Coupons.',
+              'Requires Owner approval before customers can apply it at checkout.',
+            ],
+            proposedByUserId: req.staffUser!.id,
+            proposedByRole: role,
+          });
+          createdProposals.push(prop);
+        } else if (
+          enabledModules.has('online_store') &&
+          (lowerMsg.includes('publish') || lowerMsg.includes('catalogue') || lowerMsg.includes('catalog') || lowerMsg.includes('online item')) &&
+          isToolAllowedForContext('propose_store_item_listing', role, enabledModules).allowed
+        ) {
+          const storeCat = contextData.store_catalogue as {
+            unpublished_sample?: Array<{ id: string; name: string; selling_price: number }>;
+          } | undefined;
+          const candidate = storeCat?.unpublished_sample?.[0];
+          if (candidate) {
+            const slugBase = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+            const prop = await createActionProposalRecord(supabaseAdmin, {
+              conversationId,
+              toolName: 'propose_store_item_listing',
+              actionSummary: `Publish "${candidate.name}" to Online Store`,
+              beforeSnapshot: { item_id: candidate.id, is_published_online: false },
+              proposedPayload: {
+                item_id: candidate.id,
+                item_name: candidate.name,
+                is_published_online: true,
+                online_price: candidate.selling_price,
+                online_slug: `${slugBase}-${candidate.id.slice(0, 6)}`,
+                online_description: `Showroom-quality ${candidate.name} available for local vehicle delivery or store pickup.`,
+              },
+              consequences: [
+                `Publishes "${candidate.name}" to the storefront catalogue at /.`,
+                'Requires Owner approval before making it public.',
+              ],
+              proposedByUserId: req.staffUser!.id,
+              proposedByRole: role,
+            });
+            createdProposals.push(prop);
+          }
         }
 
         const { data: savedMsg } = await supabaseAdmin
@@ -1046,6 +1293,71 @@ export function registerAiRoutes(app: Express): void {
             order_id: poRow?.id ?? null,
             order_number: poRow?.order_number ?? orderNum,
           };
+        } else if (prop.tool_name === 'propose_store_banner') {
+          const { data: bannerRow, error: bErr } = await supabaseAdmin
+            .from('store_banners')
+            .insert({
+              title: String(payload.title || 'New Collection'),
+              subtitle: payload.subtitle ? String(payload.subtitle) : null,
+              cta_label: payload.cta_label ? String(payload.cta_label) : 'Browse Catalogue',
+              cta_link: payload.cta_link ? String(payload.cta_link) : '/catalogue',
+              sort_order: Number(payload.sort_order || 0),
+              is_active: payload.is_active !== false,
+            })
+            .select('id, title')
+            .single();
+          if (bErr) throw new Error(bErr.message);
+          execResult = { banner_id: bannerRow?.id ?? null, title: bannerRow?.title };
+        } else if (prop.tool_name === 'propose_store_page') {
+          const slug = String(payload.slug || 'store-info')
+            .toLowerCase()
+            .replace(/[^a-z0-9-]+/g, '-')
+            .replace(/^-+|-+$/g, '');
+          const { data: pageRow, error: pErr } = await supabaseAdmin
+            .from('store_pages')
+            .upsert(
+              {
+                slug,
+                title: String(payload.title || 'Store Page'),
+                content: String(payload.content || ''),
+                is_published: payload.is_published !== false,
+              },
+              { onConflict: 'slug' }
+            )
+            .select('id, slug, title')
+            .single();
+          if (pErr) throw new Error(pErr.message);
+          execResult = { page_id: pageRow?.id ?? null, slug: pageRow?.slug };
+        } else if (prop.tool_name === 'propose_store_coupon') {
+          const { data: couponRow, error: cErr } = await supabaseAdmin
+            .from('store_coupons')
+            .insert({
+              code: String(payload.code || 'DECOR10').toUpperCase(),
+              description: payload.description ? String(payload.description) : null,
+              discount_type: payload.discount_type === 'flat' ? 'flat' : 'pct',
+              discount_value: Math.max(1, Number(payload.discount_value || 10)),
+              min_order_amount: Math.max(0, Number(payload.min_order_amount || 0)),
+              is_active: payload.is_active !== false,
+            })
+            .select('id, code')
+            .single();
+          if (cErr) throw new Error(cErr.message);
+          execResult = { coupon_id: couponRow?.id ?? null, code: couponRow?.code };
+        } else if (prop.tool_name === 'propose_store_item_listing') {
+          const itemId = String(payload.item_id || '');
+          const { data: itemRow, error: iErr } = await supabaseAdmin
+            .from('items')
+            .update({
+              is_published_online: payload.is_published_online !== false,
+              online_price: payload.online_price != null ? Number(payload.online_price) : null,
+              online_slug: payload.online_slug ? String(payload.online_slug) : null,
+              online_description: payload.online_description ? String(payload.online_description) : null,
+            })
+            .eq('id', itemId)
+            .select('id, online_slug, is_published_online')
+            .single();
+          if (iErr) throw new Error(iErr.message);
+          execResult = { item_id: itemRow?.id ?? itemId, online_slug: itemRow?.online_slug };
         }
 
         const { data: updated, error: updErr } = await supabaseAdmin
@@ -1748,4 +2060,161 @@ export function registerAiRoutes(app: Express): void {
       }
     }
   );
+
+  app.post(
+    '/api/ai/store-assist',
+    requireActiveStaff,
+    requireModuleEnabled('ai', 'online_store'),
+    async (req: AuthenticatedRequest, res: Response) => {
+      const supabaseAdmin = req.supabaseAdmin!;
+      try {
+        if (!['owner', 'manager', 'storekeeper'].includes(req.staffUser!.role)) {
+          res.status(403).json({
+            error: 'Owner, Manager, or Storekeeper permission required for Online Store AI assist.',
+          });
+          return;
+        }
+        const kind = ['item_listing', 'banner', 'page'].includes(String(req.body?.kind))
+          ? (String(req.body.kind) as 'item_listing' | 'banner' | 'page')
+          : 'item_listing';
+
+        const cred = await resolveActiveAiCredential(supabaseAdmin, 'automation');
+        await enforceDailyAiBudget(supabaseAdmin, cred.dailyTokenLimit);
+
+        let draft: Record<string, unknown> = {};
+        let tokensUsed = 0;
+
+        if (kind === 'item_listing') {
+          const itemName = sanitizeUntrustedText(String(req.body?.itemName || 'Product'));
+          const categoryName = sanitizeUntrustedText(String(req.body?.categoryName || ''));
+          const brandName = sanitizeUntrustedText(String(req.body?.brandName || ''));
+          const itemType = req.body?.itemType === 'service' ? 'service' : 'goods';
+          const productLine = sanitizeUntrustedText(String(req.body?.productLine || ''));
+          const specsSummary = sanitizeUntrustedText(String(req.body?.specsSummary || ''));
+          const sellingPrice = req.body?.sellingPrice ? Number(req.body.sellingPrice) : null;
+
+          const out = await callAiStructuredJson<{
+            online_slug: string;
+            online_description: string;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                online_slug: { type: GeminiSchemaType.STRING },
+                online_description: { type: GeminiSchemaType.STRING },
+              },
+              required: ['online_slug', 'online_description'],
+            },
+            systemPrompt: [
+              'You write clean, conversion-ready Indian tile, bathware, hardware & home-improvement storefront listings.',
+              'Generate a lowercase hyphenated SEO URL slug (online_slug) and a concise 2-3 sentence customer-facing description highlighting finish, dimensions/usage, and showroom pickup/delivery value.',
+            ].join('\n'),
+            userPrompt: JSON.stringify({
+              itemName,
+              itemType,
+              productLine,
+              categoryName,
+              brandName,
+              specsSummary,
+              sellingPrice,
+            }),
+          });
+          draft = {
+            online_slug: String(out.data.online_slug || '')
+              .toLowerCase()
+              .replace(/[^a-z0-9-]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 80),
+            online_description: String(out.data.online_description || '').trim(),
+          };
+          tokensUsed = out.tokensUsed;
+        } else if (kind === 'banner') {
+          const prompt = sanitizeUntrustedText(String(req.body?.prompt || 'Festive tile & bathware showcase'));
+          const out = await callAiStructuredJson<{
+            title: string;
+            subtitle: string;
+            cta_label: string;
+            cta_link: string;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                title: { type: GeminiSchemaType.STRING },
+                subtitle: { type: GeminiSchemaType.STRING },
+                cta_label: { type: GeminiSchemaType.STRING },
+                cta_link: { type: GeminiSchemaType.STRING },
+              },
+              required: ['title', 'subtitle', 'cta_label', 'cta_link'],
+            },
+            systemPrompt:
+              'Generate a short, crisp hero banner headline, subtitle, CTA button label, and link (/catalogue or /catalogue?line=tiles_slabs) for an Indian Decor & Building Materials storefront.',
+            userPrompt: `Brief: ${prompt}`,
+          });
+          draft = out.data;
+          tokensUsed = out.tokensUsed;
+        } else {
+          const topic = sanitizeUntrustedText(String(req.body?.prompt || req.body?.title || 'About Our Showroom & Delivery'));
+          const out = await callAiStructuredJson<{
+            slug: string;
+            title: string;
+            content: string;
+          }>({
+            provider: cred.provider,
+            apiKey: cred.apiKey,
+            model: cred.model,
+            baseUrl: cred.baseUrl,
+            responseSchema: {
+              type: GeminiSchemaType.OBJECT,
+              properties: {
+                slug: { type: GeminiSchemaType.STRING },
+                title: { type: GeminiSchemaType.STRING },
+                content: { type: GeminiSchemaType.STRING },
+              },
+              required: ['slug', 'title', 'content'],
+            },
+            systemPrompt:
+              'Write a clear, trustworthy CMS page (About Us, Delivery & Return Policy, Tile Care Guide, or FAQs) for a Tiles & Bathware showroom storefront.',
+            userPrompt: `Topic: ${topic}`,
+          });
+          draft = {
+            ...out.data,
+            slug: String(out.data.slug || 'store-info')
+              .toLowerCase()
+              .replace(/[^a-z0-9-]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 80),
+          };
+          tokensUsed = out.tokensUsed;
+        }
+
+        await supabaseAdmin.from('ai_usage_logs').insert({
+          user_id: req.staffUser!.id,
+          provider: cred.provider,
+          model: cred.model,
+          action_type: `store_assist_${kind}`,
+          tokens_in: Math.round(tokensUsed * 0.6),
+          tokens_out: Math.round(tokensUsed * 0.4),
+          status: 'ok',
+        });
+
+        res.json({ draft });
+      } catch (err) {
+        res.status(400).json({
+          error:
+            err instanceof Error
+              ? redactSecretsFromText(err.message)
+              : 'Unable to draft storefront content.',
+        });
+      }
+    }
+  );
 }
+

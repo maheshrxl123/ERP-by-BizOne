@@ -67,18 +67,25 @@ export async function requireActiveStaff(
     return;
   }
 
-  const reqPath = (req.originalUrl || req.url || '').split('?')[0].toLowerCase();
+  const reqPath = (req.originalUrl || req.url || '').split('?')[0].toLowerCase().replace(/\/+$/, '') || '/';
   const isTotpChallengeEndpoint =
     reqPath === '/api/erp/auth/totp-status' ||
     reqPath === '/api/erp/auth/totp-validate' ||
     reqPath === '/api/erp/auth/totp-verify';
 
   if (!isTotpChallengeEndpoint) {
-    const { data: totpRow } = await admin
+    const { data: totpRow, error: totpErr } = await admin
       .from('staff_totp')
       .select('enabled')
       .eq('user_id', profile.id)
       .maybeSingle();
+
+    if (totpErr) {
+      res.status(503).json({
+        error: 'Unable to verify two-factor authentication status. Please retry.',
+      });
+      return;
+    }
 
     if (totpRow?.enabled) {
       const proofToken =

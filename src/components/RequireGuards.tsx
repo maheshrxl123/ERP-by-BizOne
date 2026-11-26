@@ -28,8 +28,9 @@ export function RequireModule({
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">
-              {def ? (language === 'hi' ? def.nameHi : def.nameEn) : moduleKey}
+            <h1 className="text-xl font-semibold inline-flex items-center gap-2">
+              <IconLock size={20} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+              <span>{def ? (language === 'hi' ? def.nameHi : def.nameEn) : moduleKey}</span>
             </h1>
             <p className="text-sm text-[var(--text-muted)] mt-1">
               {language === 'hi'
@@ -84,8 +85,9 @@ export function RequireRole({ roles, onNavigate, children }: RequireRoleProps) {
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">
-              {language === 'hi' ? 'पहुंच प्रतिबंधित' : 'Access Restricted'}
+            <h1 className="text-xl font-semibold inline-flex items-center gap-2">
+              <IconLock size={20} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+              <span>{language === 'hi' ? 'पहुंच प्रतिबंधित' : 'Access Restricted'}</span>
             </h1>
             <p className="text-sm text-[var(--text-muted)] mt-1">
               {language === 'hi'

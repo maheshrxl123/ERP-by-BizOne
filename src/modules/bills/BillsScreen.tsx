@@ -183,8 +183,9 @@ export function BillsScreen({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-            {t('bills.title')}
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconFileInvoice size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>{t('bills.title')}</span>
           </h1>
           <p className="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
             {t('bills.subtitle')}

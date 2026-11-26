@@ -293,6 +293,7 @@ WHERE public.is_module_enabled('inventory')
   AND public.has_any_role(ARRAY['owner', 'manager', 'storekeeper', 'cashier', 'accountant']);
 
 ALTER VIEW public.item_variants_view SET (security_invoker = false);
+GRANT SELECT ON public.item_variants_view TO authenticated;
 
 -- Safe Public Storefront View (strictly only active + published items, zero cost/internal notes)
 CREATE OR REPLACE VIEW public.published_store_items_view AS

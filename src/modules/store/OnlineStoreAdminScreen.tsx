@@ -3,6 +3,7 @@ import {
   IconCheck,
   IconEdit,
   IconFileText,
+  IconLoader2,
   IconMessageCheck,
   IconPackage,
   IconPhoto,
@@ -10,17 +11,24 @@ import {
   IconPrinter,
   IconRefresh,
   IconSettings,
+  IconSparkles,
   IconTag,
   IconTrash,
   IconTruck,
+  IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { ImageUpload, type UploadedImageItem } from '../../components/upload/ImageUpload';
 import { erpFetch } from '../../core/erpFetch';
 import { formatINR } from '../../core/format';
+import { PRODUCT_LINES, type ProductLineKey } from '../../core/productLines';
+import { SERVICE_BILLING_BASES, SERVICE_CATEGORIES } from '../../core/productSpecs';
 import type {
+  BrandRecord,
   ItemCatalogRecord,
+  ItemCategoryRecord,
+  ItemUnitRecord,
   ProductReviewRecord,
   StoreBannerRecord,
   StoreCouponRecord,
@@ -56,12 +64,17 @@ interface OnlineStoreAdminScreenProps {
 }
 
 export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminScreenProps) {
-  const { session, profile, business, showToast } = useApp();
+  const { session, profile, business, isModuleEnabled, showToast } = useApp();
   const isOwner = profile?.role === 'owner';
+  const canManageCatalog = ['owner', 'manager', 'storekeeper'].includes(profile?.role || '');
+  const aiEnabled = isModuleEnabled('ai');
 
   const [tab, setTab] = useState<StoreAdminTab>('orders');
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<ItemCatalogRecord[]>([]);
+  const [categories, setCategories] = useState<ItemCategoryRecord[]>([]);
+  const [brands, setBrands] = useState<BrandRecord[]>([]);
+  const [units, setUnits] = useState<ItemUnitRecord[]>([]);
   const [orders, setOrders] = useState<StoreOrderRecord[]>([]);
   const [trips, setTrips] = useState<StoreDeliveryTripRecord[]>([]);
   const [zones, setZones] = useState<StoreDeliveryZoneRecord[]>([]);
@@ -83,6 +96,37 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
   const [editDesc, setEditDesc] = useState('');
   const [editPublished, setEditPublished] = useState(false);
   const [savingAction, setSavingAction] = useState(false);
+  const [aiDraftingKind, setAiDraftingKind] = useState<string | null>(null);
+
+  // Add Online Item modal (Publish existing ERP item OR Create new Goods/Service item)
+  const [addOnlineOpen, setAddOnlineOpen] = useState(false);
+  const [addMode, setAddMode] = useState<'existing' | 'new'>('existing');
+  const [existingPickId, setExistingPickId] = useState('');
+  const [existingOnlinePrice, setExistingOnlinePrice] = useState('');
+  const [existingSlug, setExistingSlug] = useState('');
+  const [existingDesc, setExistingDesc] = useState('');
+
+  const [newName, setNewName] = useState('');
+  const [newItemType, setNewItemType] = useState<'goods' | 'service'>('goods');
+  const [newProductLine, setNewProductLine] = useState<ProductLineKey>('tiles_slabs');
+  const [newCatId, setNewCatId] = useState('');
+  const [newBrandId, setNewBrandId] = useState('');
+  const [newUnitId, setNewUnitId] = useState('');
+  const [newSku, setNewSku] = useState('');
+  const [newPrice, setNewPrice] = useState('');
+  const [newMrp, setNewMrp] = useState('');
+  const [newOnlinePrice, setNewOnlinePrice] = useState('');
+  const [newGst, setNewGst] = useState('18');
+  const [newHsn, setNewHsn] = useState('6907');
+  const [newOpeningStock, setNewOpeningStock] = useState('0');
+  const [newSqftPerBox, setNewSqftPerBox] = useState('');
+  const [newSlug, setNewSlug] = useState('');
+  const [newOnlineDesc, setNewOnlineDesc] = useState('');
+  const [newPublishOnline, setNewPublishOnline] = useState(true);
+  const [newImages, setNewImages] = useState<UploadedImageItem[]>([]);
+  const [newSrvCat, setNewSrvCat] = useState<string>(SERVICE_CATEGORIES[0]);
+  const [newSrvBasis, setNewSrvBasis] = useState<string>(SERVICE_BILLING_BASES[1]);
+  const [newSrvDuration, setNewSrvDuration] = useState('');
 
   // Printable sheet
   const [printOrder, setPrintOrder] = useState<StoreOrderRecord | null>(null);
@@ -128,6 +172,9 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || 'Failed to load store data.');
       setItems(data.items || []);
+      setCategories(data.categories || []);
+      setBrands(data.brands || []);
+      setUnits(data.units || []);
       setOrders(data.orders || []);
       setTrips(data.trips || []);
       setZones(data.zones || []);
@@ -146,6 +193,140 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
   useEffect(() => {
     void loadOverview();
   }, [loadOverview]);
+
+  const handleAiStoreAssist = async (
+    kind: 'item_listing' | 'banner' | 'page',
+    contextPayload: Record<string, unknown>,
+    onApplied: (draft: Record<string, unknown>) => void
+  ) => {
+    if (!session?.access_token) return;
+    setAiDraftingKind(kind);
+    try {
+      const res = await erpFetch('/api/erp/ai/store-assist', session.access_token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, ...contextPayload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'AI assist failed.');
+      onApplied(data.draft || {});
+      showToast('AI draft populated.', 'success');
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'AI assist failed.', 'error');
+    } finally {
+      setAiDraftingKind(null);
+    }
+  };
+
+  const openAddOnlineItemModal = () => {
+    const drafts = items.filter((i) => !i.is_published_online);
+    const firstDraft = drafts[0] || items[0] || null;
+    setAddMode(drafts.length > 0 ? 'existing' : 'new');
+    setExistingPickId(firstDraft?.id || '');
+    setExistingOnlinePrice(
+      firstDraft?.online_price != null ? String(firstDraft.online_price) : ''
+    );
+    setExistingSlug(firstDraft?.online_slug || '');
+    setExistingDesc(firstDraft?.online_description || firstDraft?.description || '');
+
+    const defUnit =
+      units.find((u) => u.code === 'BOX') || units.find((u) => u.code === 'PCS') || units[0];
+    setNewName('');
+    setNewItemType('goods');
+    setNewProductLine('tiles_slabs');
+    setNewCatId('');
+    setNewBrandId('');
+    setNewUnitId(defUnit?.id || '');
+    setNewSku('');
+    setNewPrice('');
+    setNewMrp('');
+    setNewOnlinePrice('');
+    setNewGst('18');
+    setNewHsn('6907');
+    setNewOpeningStock('0');
+    setNewSqftPerBox('');
+    setNewSlug('');
+    setNewOnlineDesc('');
+    setNewPublishOnline(true);
+    setNewImages([]);
+    setAddOnlineOpen(true);
+  };
+
+  const handleSubmitAddOnlineItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session?.access_token) return;
+    setSavingAction(true);
+    try {
+      if (addMode === 'existing') {
+        if (!existingPickId) {
+          showToast('Select an ERP item to publish.', 'error');
+          setSavingAction(false);
+          return;
+        }
+        const res = await erpFetch(`/api/erp/store-admin/items/${existingPickId}`, session.access_token, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            is_published_online: true,
+            online_price: existingOnlinePrice.trim() ? Number(existingOnlinePrice) : null,
+            online_slug: existingSlug.trim() || null,
+            online_description: existingDesc.trim() || null,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Could not publish item.');
+        showToast('Item published to Online Store.', 'success');
+      } else {
+        if (!newName.trim() || !newUnitId) {
+          showToast('Item name and unit are required.', 'error');
+          setSavingAction(false);
+          return;
+        }
+        const res = await erpFetch('/api/erp/store-admin/items', session.access_token, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: newName.trim(),
+            item_type: newItemType,
+            product_line: newItemType === 'service' ? 'other_general' : newProductLine,
+            category_id: newCatId || null,
+            brand_id: newBrandId || null,
+            base_unit_id: newUnitId,
+            sku: newSku.trim() || null,
+            selling_price: Math.max(0, Number(newPrice || 0)),
+            mrp: newMrp.trim() ? Math.max(0, Number(newMrp)) : null,
+            gst_rate: Number(newGst || 0),
+            hsn_code: newHsn.trim() || null,
+            opening_stock: newItemType === 'service' ? 0 : Math.max(0, Number(newOpeningStock || 0)),
+            image_file_ids: newImages.map((img) => img.fileId),
+            sqft_per_box: newItemType === 'goods' && newSqftPerBox.trim() ? Number(newSqftPerBox) : null,
+            service_specs:
+              newItemType === 'service'
+                ? {
+                    service_category: newSrvCat,
+                    billing_basis: newSrvBasis,
+                    est_duration: newSrvDuration.trim(),
+                    sac_code: newHsn.trim(),
+                  }
+                : undefined,
+            is_published_online: newPublishOnline,
+            online_price: newOnlinePrice.trim() ? Math.max(0, Number(newOnlinePrice)) : null,
+            online_slug: newSlug.trim() || null,
+            online_description: newOnlineDesc.trim() || null,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || 'Could not create online store item.');
+        showToast('Online Store item created.', 'success');
+      }
+      setAddOnlineOpen(false);
+      await loadOverview();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Unable to save online item.', 'error');
+    } finally {
+      setSavingAction(false);
+    }
+  };
 
   const handleToggleItemPublish = async (item: ItemCatalogRecord, nextPub: boolean) => {
     if (!session?.access_token) return;
@@ -493,6 +674,16 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {canManageCatalog && (
+            <button
+              type="button"
+              onClick={openAddOnlineItemModal}
+              className="h-9 px-3.5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
+            >
+              <IconPlus size={14} stroke={2.5} />
+              <span>Add Online Item</span>
+            </button>
+          )}
           {isOwner && onOpenIntegrations && (
             <button
               type="button"
@@ -700,23 +891,35 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
       {/* 2. Catalog Publishing */}
       {tab === 'catalog' && (
         <section className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="search"
-              value={catalogSearch}
-              onChange={(e) => setCatalogSearch(e.target.value)}
-              placeholder="Search items by name or SKU..."
-              className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs w-64"
-            />
-            <select
-              value={catalogPubFilter}
-              onChange={(e) => setCatalogPubFilter(e.target.value as typeof catalogPubFilter)}
-              className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
-            >
-              <option value="all">All Active Items</option>
-              <option value="published">Published Online</option>
-              <option value="draft">Unpublished</option>
-            </select>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                type="search"
+                value={catalogSearch}
+                onChange={(e) => setCatalogSearch(e.target.value)}
+                placeholder="Search items by name or SKU..."
+                className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs w-64"
+              />
+              <select
+                value={catalogPubFilter}
+                onChange={(e) => setCatalogPubFilter(e.target.value as typeof catalogPubFilter)}
+                className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+              >
+                <option value="all">All Active Items</option>
+                <option value="published">Published Online</option>
+                <option value="draft">Unpublished</option>
+              </select>
+            </div>
+            {canManageCatalog && (
+              <button
+                type="button"
+                onClick={openAddOnlineItemModal}
+                className="h-9 px-3.5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <IconPlus size={14} stroke={2.5} />
+                <span>Add Online Item</span>
+              </button>
+            )}
           </div>
 
           <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
@@ -1026,25 +1229,53 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
           <div className="space-y-4">
             <form onSubmit={handleSaveBanner} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{editingBannerId ? 'Edit Hero Banner' : 'Hero Banners'}</h3>
-                {editingBannerId && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingBannerId(null);
-                      setNewBannerTitle('');
-                      setNewBannerSub('');
-                      setNewBannerCtaLabel('');
-                      setNewBannerCtaLink('/catalogue');
-                      setNewBannerSortOrder('0');
-                      setNewBannerImages([]);
-                    }}
-                    className="text-[var(--text-muted)] underline"
-                  >
-                    Cancel
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {aiEnabled && (
+                    <button
+                      type="button"
+                      disabled={aiDraftingKind === 'banner'}
+                      onClick={() =>
+                        void handleAiStoreAssist(
+                          'banner',
+                          { prompt: newBannerTitle || 'Tiles and sanitaryware showroom seasonal showcase' },
+                          (d) => {
+                            if (d.title) setNewBannerTitle(String(d.title));
+                            if (d.subtitle) setNewBannerSub(String(d.subtitle));
+                            if (d.cta_label) setNewBannerCtaLabel(String(d.cta_label));
+                            if (d.cta_link) setNewBannerCtaLink(String(d.cta_link));
+                          }
+                        )
+                      }
+                      className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                    >
+                      {aiDraftingKind === 'banner' ? (
+                        <IconLoader2 size={12} className="animate-spin" />
+                      ) : (
+                        <IconSparkles size={12} stroke={2} />
+                      )}
+                      <span>AI Draft Banner</span>
+                    </button>
+                  )}
+                  {editingBannerId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingBannerId(null);
+                        setNewBannerTitle('');
+                        setNewBannerSub('');
+                        setNewBannerCtaLabel('');
+                        setNewBannerCtaLink('/catalogue');
+                        setNewBannerSortOrder('0');
+                        setNewBannerImages([]);
+                      }}
+                      className="text-[var(--text-muted)] underline"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </div>
               <input type="text" required value={newBannerTitle} onChange={(e) => setNewBannerTitle(e.target.value)} placeholder="Banner Headline" className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]" />
               <input type="text" value={newBannerSub} onChange={(e) => setNewBannerSub(e.target.value)} placeholder="Subtitle" className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]" />
@@ -1125,7 +1356,34 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
 
           <div className="space-y-4">
             <form onSubmit={handleSavePage} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4 space-y-3">
-              <h3 className="text-sm font-semibold inline-flex items-center gap-1.5"><IconFileText size={15} /><span>Storefront CMS Pages</span></h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold inline-flex items-center gap-1.5"><IconFileText size={15} /><span>Storefront CMS Pages</span></h3>
+                {aiEnabled && (
+                  <button
+                    type="button"
+                    disabled={aiDraftingKind === 'page'}
+                    onClick={() =>
+                      void handleAiStoreAssist(
+                        'page',
+                        { prompt: newPageTitle || newPageSlug || 'Showroom About Us, Delivery & Return Policy' },
+                        (d) => {
+                          if (d.slug && !newPageSlug.trim()) setNewPageSlug(String(d.slug));
+                          if (d.title) setNewPageTitle(String(d.title));
+                          if (d.content) setNewPageContent(String(d.content));
+                        }
+                      )
+                    }
+                    className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                  >
+                    {aiDraftingKind === 'page' ? (
+                      <IconLoader2 size={12} className="animate-spin" />
+                    ) : (
+                      <IconSparkles size={12} stroke={2} />
+                    )}
+                    <span>AI Draft Page</span>
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-2">
                 <input type="text" required value={newPageSlug} onChange={(e) => setNewPageSlug(e.target.value)} placeholder="Slug (about-us)" className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono" />
                 <input type="text" required value={newPageTitle} onChange={(e) => setNewPageTitle(e.target.value)} placeholder="Page Title" className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]" />
@@ -1208,6 +1466,489 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
         </div>
       )}
 
+      {/* Add Online Item Modal (Publish Existing OR Create New Goods/Service) */}
+      {addOnlineOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4"
+          onClick={() => setAddOnlineOpen(false)}
+        >
+          <form
+            onSubmit={handleSubmitAddOnlineItem}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-2xl max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4 text-xs"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] pb-3">
+              <h3 className="text-base font-semibold">Add Item to Online Store</h3>
+              <button
+                type="button"
+                onClick={() => setAddOnlineOpen(false)}
+                className="p-1.5 rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+              >
+                <IconX size={18} />
+              </button>
+            </div>
+
+            <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAddMode('existing')}
+                className={`h-9 px-3.5 font-semibold ${
+                  addMode === 'existing'
+                    ? 'bg-[var(--primary)] text-[var(--on-primary)]'
+                    : 'bg-[var(--surface)] text-[var(--text-muted)]'
+                }`}
+              >
+                Publish Existing ERP Item
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddMode('new')}
+                className={`h-9 px-3.5 font-semibold ${
+                  addMode === 'new'
+                    ? 'bg-[var(--primary)] text-[var(--on-primary)]'
+                    : 'bg-[var(--surface)] text-[var(--text-muted)]'
+                }`}
+              >
+                Create New Online Item
+              </button>
+            </div>
+
+            {addMode === 'existing' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="block font-medium mb-1">Select ERP Item *</label>
+                  <select
+                    required
+                    value={existingPickId}
+                    onChange={(e) => {
+                      const picked = items.find((i) => i.id === e.target.value);
+                      setExistingPickId(e.target.value);
+                      setExistingOnlinePrice(
+                        picked?.online_price != null ? String(picked.online_price) : ''
+                      );
+                      setExistingSlug(picked?.online_slug || '');
+                      setExistingDesc(picked?.online_description || picked?.description || '');
+                    }}
+                    className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                  >
+                    <option value="">Choose item...</option>
+                    {items.map((it) => (
+                      <option key={it.id} value={it.id}>
+                        {it.name} · {formatINR(it.selling_price)} {it.is_published_online ? '(Already Published)' : '(Unpublished)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium mb-1">Online Price (₹ optional override)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={existingOnlinePrice}
+                      onChange={(e) => setExistingOnlinePrice(e.target.value)}
+                      placeholder="Same as ERP selling price"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="font-medium">SEO URL Slug</label>
+                      {aiEnabled && existingPickId && (
+                        <button
+                          type="button"
+                          disabled={aiDraftingKind === 'item_listing'}
+                          onClick={() => {
+                            const picked = items.find((i) => i.id === existingPickId);
+                            if (!picked) return;
+                            void handleAiStoreAssist(
+                              'item_listing',
+                              {
+                                itemName: picked.name,
+                                categoryName: picked.category_name,
+                                brandName: picked.brand_name,
+                                itemType: picked.item_type,
+                                productLine: picked.product_line,
+                                sellingPrice: picked.selling_price,
+                              },
+                              (d) => {
+                                if (d.online_slug) setExistingSlug(String(d.online_slug));
+                                if (d.online_description) setExistingDesc(String(d.online_description));
+                              }
+                            );
+                          }}
+                          className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                        >
+                          <IconSparkles size={12} />
+                          <span>AI Draft Slug & Copy</span>
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      value={existingSlug}
+                      onChange={(e) => setExistingSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-'))}
+                      placeholder="auto-generated-slug"
+                      className="w-full h-10 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block font-medium mb-1">Online Store Description</label>
+                  <textarea
+                    rows={3}
+                    value={existingDesc}
+                    onChange={(e) => setExistingDesc(e.target.value)}
+                    placeholder="Customer-facing storefront highlights..."
+                    className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="inline-flex rounded-lg border border-[var(--border)] overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewItemType('goods');
+                        setNewHsn('6907');
+                      }}
+                      className={`h-8 px-3 font-semibold ${
+                        newItemType === 'goods'
+                          ? 'bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                          : 'bg-[var(--surface)] text-[var(--text-muted)]'
+                      }`}
+                    >
+                      Goods (Physical Product)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewItemType('service');
+                        setNewHsn('9954');
+                      }}
+                      className={`h-8 px-3 font-semibold ${
+                        newItemType === 'service'
+                          ? 'bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                          : 'bg-[var(--surface)] text-[var(--text-muted)]'
+                      }`}
+                    >
+                      Service (Non-Stock)
+                    </button>
+                  </div>
+
+                  <label className="inline-flex items-center gap-1.5 font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={newPublishOnline}
+                      onChange={(e) => setNewPublishOnline(e.target.checked)}
+                    />
+                    <span>Publish immediately</span>
+                  </label>
+                </div>
+
+                {newItemType === 'goods' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                    {PRODUCT_LINES.map((pl) => (
+                      <button
+                        key={pl.key}
+                        type="button"
+                        onClick={() => {
+                          setNewProductLine(pl.key);
+                          setNewHsn(pl.defaultHsn);
+                          setNewGst(String(pl.defaultGst));
+                        }}
+                        className={`px-2 py-1.5 rounded-lg border text-left font-medium ${
+                          newProductLine === pl.key
+                            ? 'border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                            : 'border-[var(--border)] text-[var(--text-muted)]'
+                        }`}
+                      >
+                        {pl.shortLabelEn}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl border border-[var(--border)] bg-[var(--surface-muted)]/40">
+                    <div>
+                      <label className="block font-medium mb-1">Service Category *</label>
+                      <select
+                        value={newSrvCat}
+                        onChange={(e) => setNewSrvCat(e.target.value)}
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                      >
+                        {SERVICE_CATEGORIES.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">Billing Basis *</label>
+                      <select
+                        value={newSrvBasis}
+                        onChange={(e) => setNewSrvBasis(e.target.value)}
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                      >
+                        {SERVICE_BILLING_BASES.map((b) => (
+                          <option key={b} value={b}>{b}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block font-medium mb-1">Est. Duration</label>
+                      <input
+                        type="text"
+                        value={newSrvDuration}
+                        onChange={(e) => setNewSrvDuration(e.target.value)}
+                        placeholder="e.g., 2 hours"
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-medium mb-1">Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={newName}
+                      onChange={(e) => setNewName(e.target.value)}
+                      placeholder={newItemType === 'service' ? 'e.g., Bathroom Tile Fitting Service' : 'e.g., Statuario Glossy GVT 600x1200mm'}
+                      className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">SKU / Code</label>
+                    <input
+                      type="text"
+                      value={newSku}
+                      onChange={(e) => setNewSku(e.target.value.toUpperCase())}
+                      placeholder="Optional"
+                      className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono uppercase"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="block font-medium mb-1">Category</label>
+                    <select
+                      value={newCatId}
+                      onChange={(e) => setNewCatId(e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                    >
+                      <option value="">Uncategorized</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">Brand</label>
+                    <select
+                      value={newBrandId}
+                      onChange={(e) => setNewBrandId(e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                    >
+                      <option value="">No Brand</option>
+                      {brands.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">Unit *</label>
+                    <select
+                      required
+                      value={newUnitId}
+                      onChange={(e) => setNewUnitId(e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                    >
+                      {units.map((u) => (
+                        <option key={u.id} value={u.id}>{u.code}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">{newItemType === 'service' ? 'SAC Code' : 'HSN Code'}</label>
+                    <input
+                      type="text"
+                      value={newHsn}
+                      onChange={(e) => setNewHsn(e.target.value)}
+                      className="w-full h-9 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="block font-medium mb-1">Selling Price (₹) *</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      required
+                      value={newPrice}
+                      onChange={(e) => setNewPrice(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">Online Price (₹)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={newOnlinePrice}
+                      onChange={(e) => setNewOnlinePrice(e.target.value)}
+                      placeholder="Same as ERP"
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium mb-1">MRP (₹)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={newMrp}
+                      onChange={(e) => setNewMrp(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                    />
+                  </div>
+                  {newItemType === 'goods' ? (
+                    <div>
+                      <label className="block font-medium mb-1">Opening Stock</label>
+                      <input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={newOpeningStock}
+                        onChange={(e) => setNewOpeningStock(e.target.value)}
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block font-medium mb-1">GST %</label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={28}
+                        value={newGst}
+                        onChange={(e) => setNewGst(e.target.value)}
+                        className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {newItemType === 'goods' && newProductLine === 'tiles_slabs' && (
+                  <div>
+                    <label className="block font-medium mb-1">Sq.Ft per Box (for customer tile calculator)</label>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step="any"
+                      value={newSqftPerBox}
+                      onChange={(e) => setNewSqftPerBox(e.target.value)}
+                      placeholder="e.g., 15.5"
+                      className="w-48 h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] tabular-nums"
+                    />
+                  </div>
+                )}
+
+                <ImageUpload
+                  label="Product Photos"
+                  purpose="item_image"
+                  multiple
+                  maxFiles={6}
+                  deferDelete
+                  value={newImages}
+                  onChange={setNewImages}
+                />
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-medium">SEO URL Slug</label>
+                    {aiEnabled && (
+                      <button
+                        type="button"
+                        disabled={aiDraftingKind === 'item_listing'}
+                        onClick={() =>
+                          void handleAiStoreAssist(
+                            'item_listing',
+                            {
+                              itemName: newName || 'Showroom Item',
+                              itemType: newItemType,
+                              productLine: newProductLine,
+                              sellingPrice: newPrice ? Number(newPrice) : undefined,
+                            },
+                            (d) => {
+                              if (d.online_slug) setNewSlug(String(d.online_slug));
+                              if (d.online_description) setNewOnlineDesc(String(d.online_description));
+                            }
+                          )
+                        }
+                        className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline"
+                      >
+                        <IconSparkles size={12} />
+                        <span>AI Draft Slug & Copy</span>
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={newSlug}
+                    onChange={(e) => setNewSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]+/g, '-'))}
+                    placeholder="auto-generated-from-name"
+                    className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium mb-1">Online Store Description</label>
+                  <textarea
+                    rows={2}
+                    value={newOnlineDesc}
+                    onChange={(e) => setNewOnlineDesc(e.target.value)}
+                    placeholder="Customer-facing product/service highlights..."
+                    className="w-full p-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
+              <button
+                type="button"
+                onClick={() => setAddOnlineOpen(false)}
+                className="h-9 px-4 rounded-lg border border-[var(--border)]"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={savingAction}
+                className="h-9 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] font-semibold"
+              >
+                {savingAction
+                  ? 'Saving...'
+                  : addMode === 'existing'
+                    ? 'Publish Online'
+                    : 'Create & Publish'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {/* Edit Item Online Listing Modal */}
       {editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1215,7 +1956,36 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
             onSubmit={handleSaveItemDetails}
             className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5 space-y-4 text-xs"
           >
-            <h3 className="text-base font-semibold">Online Listing: {editingItem.name}</h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base font-semibold">Online Listing: {editingItem.name}</h3>
+              {aiEnabled && (
+                <button
+                  type="button"
+                  disabled={aiDraftingKind === 'item_listing'}
+                  onClick={() =>
+                    void handleAiStoreAssist(
+                      'item_listing',
+                      {
+                        itemName: editingItem.name,
+                        categoryName: editingItem.category_name,
+                        brandName: editingItem.brand_name,
+                        itemType: editingItem.item_type,
+                        productLine: editingItem.product_line,
+                        sellingPrice: editingItem.selling_price,
+                      },
+                      (d) => {
+                        if (d.online_slug) setEditSlug(String(d.online_slug));
+                        if (d.online_description) setEditDesc(String(d.online_description));
+                      }
+                    )
+                  }
+                  className="text-[11px] font-semibold text-[var(--primary-dark)] inline-flex items-center gap-1 hover:underline shrink-0"
+                >
+                  <IconSparkles size={12} />
+                  <span>AI Draft Copy</span>
+                </button>
+              )}
+            </div>
             <label className="flex items-center gap-2 cursor-pointer font-medium">
               <input
                 type="checkbox"

@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconCheck, IconLoader2, IconPrinter } from '@tabler/icons-react';
+import { IconAlertCircle, IconCheck, IconFileInvoice, IconLoader2, IconPrinter } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { buildUpiDeepLink, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
@@ -159,8 +159,9 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
               />
             )}
             <div>
-              <h1 className="text-lg font-bold">
-                {bill.business_snapshot?.name || 'Business'}
+              <h1 className="text-lg font-bold inline-flex items-center gap-1.5">
+                <IconFileInvoice size={20} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+                <span>{bill.business_snapshot?.name || 'Business'}</span>
               </h1>
               {bill.business_snapshot?.address && (
                 <p className="text-xs text-neutral-600 whitespace-pre-line">

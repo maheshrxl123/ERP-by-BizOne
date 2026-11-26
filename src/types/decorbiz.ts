@@ -429,7 +429,7 @@ export interface ItemCatalogRecord {
   video_url?: string | null;
   description?: string | null;
   specs?: AnySpecsMap | null;
-  pack_metadata: Record<string, string | number | boolean | null>;
+  pack_metadata: Record<string, unknown>;
   notes: string | null;
   is_active: boolean;
   is_demo: boolean;

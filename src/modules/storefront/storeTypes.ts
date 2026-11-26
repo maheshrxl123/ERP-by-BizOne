@@ -32,6 +32,7 @@ export const STORE_PRODUCT_LINE_LABELS: Record<string, string> = {
 
 export interface StoreConfigPayload {
   onlineStoreEnabled: boolean;
+  aiAssistantEnabled?: boolean;
   storeName: string;
   phone: string | null;
   email: string | null;

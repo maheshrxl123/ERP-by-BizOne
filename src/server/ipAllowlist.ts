@@ -136,11 +136,18 @@ export async function requireIpAllowlist(req: Request, res: Response, next: Next
   }
 
   try {
-    const { data: biz } = await admin
+    const { data: biz, error: bizErr } = await admin
       .from('business')
       .select('allowed_ips')
       .eq('id', 1)
       .maybeSingle();
+
+    if (bizErr) {
+      res.status(503).json({
+        error: 'Unable to verify IP allowlist policy. Please retry shortly or use break-glass recovery.',
+      });
+      return;
+    }
 
     const allowedIps: string[] = Array.isArray(biz?.allowed_ips) ? biz.allowed_ips : [];
     const evaluation = evaluateIpAccess({
@@ -166,6 +173,8 @@ export async function requireIpAllowlist(req: Request, res: Response, next: Next
       clientIp,
     });
   } catch {
-    next();
+    res.status(503).json({
+      error: 'Unable to verify IP allowlist policy. Please retry shortly or use break-glass recovery.',
+    });
   }
 }

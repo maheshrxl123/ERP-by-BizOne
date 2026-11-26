@@ -16,6 +16,7 @@ import {
   IconRefresh,
   IconRestore,
   IconShare,
+  IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -433,8 +434,9 @@ export function PartyDetailView({
           </button>
 
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
-              {party.name}
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+              <IconUsers size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+              <span>{party.name}</span>
             </h1>
             {!party.is_active && (
               <span className="text-xs font-medium text-[var(--warning-text)]">

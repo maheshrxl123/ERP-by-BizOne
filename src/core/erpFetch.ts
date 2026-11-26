@@ -3,6 +3,7 @@ const STORAGE_PREFIX = 'decorbiz_totp_proof_';
 let activeUserId: string | null = null;
 const memoryProofs = new Map<string, string>();
 const totpRequiredListeners = new Set<() => void>();
+const ipBlockedListeners = new Set<(message: string) => void>();
 
 export function setActiveStaffUserId(userId: string | null) {
   activeUserId = userId;
@@ -78,6 +79,13 @@ export function onTotpRequired(listener: () => void): () => void {
   };
 }
 
+export function onIpBlocked(listener: (message: string) => void): () => void {
+  ipBlockedListeners.add(listener);
+  return () => {
+    ipBlockedListeners.delete(listener);
+  };
+}
+
 export function toErpApiUrl(input: string): string {
   if (
     input.startsWith('/api/erp/') ||
@@ -120,15 +128,23 @@ export async function erpFetch(
   if (response.status === 403) {
     try {
       const cloned = response.clone();
-      const body = (await cloned.json()) as { code?: string };
+      const body = (await cloned.json()) as { code?: string; error?: string; clientIp?: string };
       if (body?.code === 'TOTP_REQUIRED') {
         clearTotpProof(activeUserId);
         for (const listener of totpRequiredListeners) {
           listener();
         }
+      } else if (
+        body?.clientIp ||
+        (typeof body?.error === 'string' && body.error.toLowerCase().includes('not allowed in settings'))
+      ) {
+        const msg = body?.error || 'Access denied from this IP address.';
+        for (const listener of ipBlockedListeners) {
+          listener(msg);
+        }
       }
     } catch {
-      // Non-JSON 403 (e.g. IP allowlist HTML/JSON); leave untouched
+      // Non-JSON 403; leave untouched
     }
   }
 

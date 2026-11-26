@@ -786,6 +786,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON public.erp_delivery_trips TO authenticat
 -- ============================================================================
 -- 6. Variant, Shade & Batch Lot Support in Purchase RPCs
 -- ============================================================================
+DROP FUNCTION IF EXISTS public._prepare_purchase_payload(uuid, text, boolean, numeric, boolean, jsonb);
+
 CREATE OR REPLACE FUNCTION public._prepare_purchase_payload(
   p_party_id uuid,
   p_place_of_supply text,
@@ -1294,3 +1296,10 @@ BEGIN
 END;
 $$;
 
+GRANT EXECUTE ON FUNCTION public.save_purchase_draft(
+  uuid, uuid, text, date, date, date, text, boolean, numeric, boolean, boolean, text, uuid, jsonb
+) TO authenticated;
+
+GRANT EXECUTE ON FUNCTION public.issue_purchase(
+  uuid, uuid, text, date, date, date, text, boolean, numeric, boolean, boolean, text, uuid, jsonb, numeric, text, text, text
+) TO authenticated;

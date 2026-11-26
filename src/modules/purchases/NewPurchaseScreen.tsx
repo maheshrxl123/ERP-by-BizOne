@@ -1048,16 +1048,16 @@ export function NewPurchaseScreen({
             <IconArrowLeft size={16} stroke={2} />
             <span>{t('purchases.title')}</span>
           </button>
-          <div className="flex items-center gap-2.5">
-            <IconShoppingBag size={22} stroke={2} className="text-[var(--primary-dark)]" />
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
+            <IconShoppingBag size={24} stroke={2} className="text-[var(--primary-dark)] shrink-0" />
+            <span>
               {editingDraft
                 ? language === 'hi'
                   ? 'खरीद ड्राफ्ट संपादित करें'
                   : 'Edit Purchase Draft'
                 : t('purchases.newPurchase')}
-            </h1>
-          </div>
+            </span>
+          </h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">

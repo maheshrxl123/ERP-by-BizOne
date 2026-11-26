@@ -1,5 +1,6 @@
+import crypto from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
-import type { Express, Request, Response } from 'express';
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { z } from 'zod';
 import { computeTileOrderQty, computeStoreOrderTotals, matchDeliveryZone } from '../../core/storeCatalog.ts';
 import { roundHalfUp } from '../../core/money.ts';
@@ -87,6 +88,31 @@ const storeAiChatLimiter = createRateLimiter({
 });
 
 const PUBLIC_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function asyncHandler<TReq extends Request = Request>(
+  fn: (req: TReq, res: Response, next: NextFunction) => Promise<void> | void
+): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req as TReq, res, next)).catch(next);
+  };
+}
+
+function sendWithEtag(
+  req: Request,
+  res: Response,
+  body: unknown,
+  cacheControl: string
+): void {
+  const json = JSON.stringify(body);
+  const etag = `"${crypto.createHash('sha1').update(json).digest('hex')}"`;
+  res.setHeader('Cache-Control', cacheControl);
+  res.setHeader('ETag', etag);
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
+  res.type('application/json').send(json);
+}
 
 function getAnonSupabase() {
   const url = process.env.VITE_SUPABASE_URL?.trim() || '';
@@ -184,13 +210,44 @@ const checkoutSchema = z.object({
 });
 
 export function registerStorefrontRoutes(app: Express): void {
+  app.get('/api/store/health', asyncHandler(async (_req: Request, res: Response) => {
+    const admin = getSupabaseAdmin();
+    if (!admin) {
+      res.status(200).json({
+        ok: true,
+        service: 'storefront',
+        supabaseConfigured: false,
+        onlineStoreEnabled: false,
+      });
+      return;
+    }
+
+    try {
+      const onlineStoreEnabled = await isModuleEnabledServer('online_store');
+      res.status(200).json({
+        ok: true,
+        service: 'storefront',
+        supabaseConfigured: true,
+        onlineStoreEnabled,
+      });
+    } catch {
+      res.status(200).json({
+        ok: false,
+        service: 'storefront',
+        supabaseConfigured: true,
+        onlineStoreEnabled: false,
+      });
+    }
+  }));
+
   // --------------------------------------------------------------------------
   // 1. Public Storefront Config & Media Streaming (Published Assets ONLY)
   // --------------------------------------------------------------------------
-  app.get('/api/store/config', async (req: Request, res: Response) => {
+  app.get('/api/store/config', asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
+    const cacheControl = 'public, max-age=30, stale-while-revalidate=60';
     if (!admin) {
-      res.json({
+      sendWithEtag(req, res, {
         onlineStoreEnabled: false,
         aiAssistantEnabled: false,
         storeName: 'DecorBiz Showroom',
@@ -202,26 +259,26 @@ export function registerStorefrontRoutes(app: Express): void {
         pages: [],
         zones: [],
         coupons: [],
-      });
+      }, cacheControl);
       return;
     }
 
     try {
       const onlineStoreEnabled = await isModuleEnabledServer('online_store');
-      let aiAssistantEnabled = false;
-      if (onlineStoreEnabled) {
+      const aiAssistantPromise = (async () => {
+        if (!onlineStoreEnabled) return false;
         const aiModEnabled = await isModuleEnabledServer('ai');
-        if (aiModEnabled) {
-          try {
-            await resolveActiveAiCredential(admin, 'chat');
-            aiAssistantEnabled = true;
-          } catch {
-            aiAssistantEnabled = false;
-          }
+        if (!aiModEnabled) return false;
+        try {
+          await resolveActiveAiCredential(admin, 'chat');
+          return true;
+        } catch {
+          return false;
         }
-      }
+      })();
 
       const [
+        aiAssistantEnabled,
         { data: biz },
         { data: storeInt },
         razorpayCfg,
@@ -230,6 +287,7 @@ export function registerStorefrontRoutes(app: Express): void {
         { data: zones },
         { data: coupons },
       ] = await Promise.all([
+        aiAssistantPromise,
         admin.from('business').select('name, phone, email, address, logo_file_id').eq('id', 1).maybeSingle(),
         admin.from('integration_settings').select('enabled, config_public').eq('integration_key', 'online_store').maybeSingle(),
         getStoreRazorpayConfig(admin),
@@ -245,37 +303,57 @@ export function registerStorefrontRoutes(app: Express): void {
         onlineStoreEnabled
           ? admin
               .from('store_coupons')
-              .select('id, code, description, discount_type, discount_value, min_order_amount, max_discount, valid_until')
+              .select('id, code, description, discount_type, discount_value, min_order_amount, max_discount, valid_until, usage_limit, used_count')
               .eq('is_active', true)
           : Promise.resolve({ data: [] }),
       ]);
 
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const activeCoupons = (coupons || [])
+        .filter((c) => {
+          if (c.valid_until && String(c.valid_until) < todayStr) return false;
+          if (
+            c.usage_limit !== null &&
+            c.usage_limit !== undefined &&
+            Number(c.used_count || 0) >= Number(c.usage_limit)
+          ) {
+            return false;
+          }
+          return true;
+        })
+        .map(({ usage_limit: _ul, used_count: _uc, ...rest }) => rest);
+
       const storePub = (storeInt?.config_public || {}) as Record<string, unknown>;
-      res.json({
-        onlineStoreEnabled,
-        aiAssistantEnabled,
-        storeName: biz?.name || 'DecorBiz Showroom',
-        phone: biz?.phone || null,
-        email: biz?.email || null,
-        address: biz?.address || null,
-        logoUrl: biz?.logo_file_id ? `/api/store/files/${biz.logo_file_id}` : null,
-        pickupEnabled: storePub.pickup_enabled !== false && storePub.pickup_enabled !== 'false',
-        codEnabled: storePub.cod_enabled !== false && storePub.cod_enabled !== 'false',
-        razorpayEnabled: onlineStoreEnabled && razorpayCfg.enabled,
-        razorpayKeyId: onlineStoreEnabled && razorpayCfg.enabled ? razorpayCfg.keyId : null,
-        banners: banners || [],
-        pages: pages || [],
-        zones: zones || [],
-        coupons: coupons || [],
-      });
+      sendWithEtag(
+        req,
+        res,
+        {
+          onlineStoreEnabled,
+          aiAssistantEnabled,
+          storeName: biz?.name || 'DecorBiz Showroom',
+          phone: biz?.phone || null,
+          email: biz?.email || null,
+          address: biz?.address || null,
+          logoUrl: biz?.logo_file_id ? `/api/store/files/${biz.logo_file_id}` : null,
+          pickupEnabled: storePub.pickup_enabled !== false && storePub.pickup_enabled !== 'false',
+          codEnabled: storePub.cod_enabled !== false && storePub.cod_enabled !== 'false',
+          razorpayEnabled: onlineStoreEnabled && razorpayCfg.enabled,
+          razorpayKeyId: onlineStoreEnabled && razorpayCfg.enabled ? razorpayCfg.keyId : null,
+          banners: banners || [],
+          pages: pages || [],
+          zones: zones || [],
+          coupons: activeCoupons,
+        },
+        cacheControl
+      );
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unable to load storefront configuration.',
       });
     }
-  });
+  }));
 
-  app.get('/api/store/files/:id', async (req: Request, res: Response) => {
+  app.get('/api/store/files/:id', requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) {
       res.status(503).json({ error: 'Storage unavailable.' });
@@ -342,20 +420,26 @@ export function registerStorefrontRoutes(app: Express): void {
       }
 
       const buf = Buffer.from(await blobData.arrayBuffer());
+      const etag = `"${crypto.createHash('sha1').update(buf).digest('hex')}"`;
       res.setHeader('Content-Type', fileRow.mime_type);
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Disposition', 'inline');
-      res.setHeader('Cache-Control', 'public, max-age=300');
+      res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+      res.setHeader('ETag', etag);
+      if (req.headers['if-none-match'] === etag) {
+        res.status(304).end();
+        return;
+      }
       res.send(buf);
     } catch {
       res.status(404).json({ error: 'File unavailable.' });
     }
-  });
+  }));
 
   // --------------------------------------------------------------------------
   // 2. Catalogue & Product Detail Pages (Strictly Published + Active Items Only)
   // --------------------------------------------------------------------------
-  app.get('/api/store/catalogue', async (_req: Request, res: Response) => {
+  app.get('/api/store/catalogue', asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) {
       res.status(503).json({ error: 'Store database not configured.' });
@@ -364,20 +448,51 @@ export function registerStorefrontRoutes(app: Express): void {
 
     const enabled = await isModuleEnabledServer('online_store');
     if (!enabled) {
-      res.json({ enabled: false, items: [] });
+      res.status(403).json({
+        error: 'Online Store is disabled.',
+        moduleKey: 'online_store',
+        enabled: false,
+        items: [],
+      });
       return;
     }
 
     try {
-      const [{ data: items, error }, { data: reviewRows }] = await Promise.all([
-        admin.from('published_store_items_view').select('*').order('name', { ascending: true }),
-        admin.from('product_reviews').select('item_id, rating').eq('status', 'approved'),
-      ]);
+      const hasLimit = req.query.limit !== undefined;
+      const hasOffset = req.query.offset !== undefined;
+      const limit = hasLimit
+        ? Math.min(200, Math.max(1, Number.parseInt(String(req.query.limit), 10) || 50))
+        : null;
+      const offset = hasOffset || hasLimit
+        ? Math.max(0, Number.parseInt(String(req.query.offset ?? '0'), 10) || 0)
+        : 0;
+
+      let itemsQuery = admin
+        .from('published_store_items_view')
+        .select('*', limit !== null ? { count: 'exact' } : undefined)
+        .order('name', { ascending: true });
+
+      if (limit !== null) {
+        itemsQuery = itemsQuery.range(offset, offset + limit - 1);
+      }
+
+      const { data: items, error, count } = await itemsQuery;
 
       if (error) {
         res.status(500).json({ error: error.message });
         return;
       }
+
+      const itemList = (items || []) as PublishedStoreItemRecord[];
+      const itemIds = itemList.map((it) => it.id);
+      const { data: reviewRows } =
+        itemIds.length > 0
+          ? await admin
+              .from('product_reviews')
+              .select('item_id, rating')
+              .eq('status', 'approved')
+              .in('item_id', itemIds)
+          : { data: [] };
 
       const ratingStats = new Map<string, { sum: number; count: number }>();
       for (const r of reviewRows || []) {
@@ -387,7 +502,7 @@ export function registerStorefrontRoutes(app: Express): void {
         ratingStats.set(r.item_id, cur);
       }
 
-      const enriched = ((items || []) as PublishedStoreItemRecord[]).map((it) => {
+      const enriched = itemList.map((it) => {
         const st = ratingStats.get(it.id);
         return {
           ...it,
@@ -396,15 +511,26 @@ export function registerStorefrontRoutes(app: Express): void {
         };
       });
 
-      res.json({ enabled: true, items: enriched });
+      const total = typeof count === 'number' ? count : enriched.length;
+      sendWithEtag(
+        req,
+        res,
+        {
+          enabled: true,
+          items: enriched,
+          total,
+          ...(limit !== null ? { limit, offset } : {}),
+        },
+        'public, max-age=30, stale-while-revalidate=60'
+      );
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unable to load storefront catalogue.',
       });
     }
-  });
+  }));
 
-  app.get('/api/store/products/:slugOrId', async (req: Request, res: Response) => {
+  app.get('/api/store/products/:slugOrId', asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) {
       res.status(503).json({ error: 'Store database not configured.' });
@@ -447,12 +573,12 @@ export function registerStorefrontRoutes(app: Express): void {
         error: err instanceof Error ? err.message : 'Unable to load product.',
       });
     }
-  });
+  }));
 
   // --------------------------------------------------------------------------
   // 3. Separate Customer Auth (Registration, Verification, Login, Reset)
   // --------------------------------------------------------------------------
-  app.post('/api/store/auth/register', storeAuthRegisterLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/auth/register', storeAuthRegisterLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     const anon = getAnonSupabase();
     if (!admin || !anon) {
@@ -537,9 +663,9 @@ export function registerStorefrontRoutes(app: Express): void {
         ? 'Account created and signed in.'
         : 'Account created. Please check your email to verify your address before signing in.',
     });
-  });
+  }));
 
-  app.post('/api/store/auth/login', storeAuthLoginLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/auth/login', storeAuthLoginLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     const anon = getAnonSupabase();
     if (!admin || !anon) {
@@ -616,9 +742,9 @@ export function registerStorefrontRoutes(app: Express): void {
     }
 
     res.json({ session: authData.session, customer });
-  });
+  }));
 
-  app.post('/api/store/auth/resend-verification', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/auth/resend-verification', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const anon = getAnonSupabase();
     if (!anon) {
       res.status(503).json({ error: 'Authentication service is not configured.' });
@@ -635,9 +761,9 @@ export function registerStorefrontRoutes(app: Express): void {
       options: { emailRedirectTo: resolveRequestOrigin(req) },
     });
     res.json({ ok: true, message: 'Verification email sent if an unverified account exists.' });
-  });
+  }));
 
-  app.post('/api/store/auth/forgot-password', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/auth/forgot-password', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const anon = getAnonSupabase();
     if (!anon) {
       res.status(503).json({ error: 'Authentication service is not configured.' });
@@ -655,9 +781,9 @@ export function registerStorefrontRoutes(app: Express): void {
       ok: true,
       message: 'If a matching customer account exists, a password reset link has been emailed.',
     });
-  });
+  }));
 
-  app.post('/api/store/auth/update-password', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/auth/update-password', storeAuthRecoveryLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) {
       res.status(503).json({ error: 'Authentication service is not configured.' });
@@ -697,13 +823,13 @@ export function registerStorefrontRoutes(app: Express): void {
       return;
     }
     res.json({ ok: true, message: 'Password updated successfully. You can now sign in.' });
-  });
+  }));
 
-  app.get('/api/store/auth/me', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.get('/api/store/auth/me', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     res.json({ customer: req.customer });
-  });
+  }));
 
-  app.patch('/api/store/auth/me', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.patch('/api/store/auth/me', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const admin = req.supabaseAdmin!;
     const fullName = typeof req.body?.full_name === 'string' ? req.body.full_name.trim() : req.customer!.full_name;
     if (!fullName) {
@@ -732,12 +858,12 @@ export function registerStorefrontRoutes(app: Express): void {
       return;
     }
     res.json({ customer: data });
-  });
+  }));
 
   // --------------------------------------------------------------------------
   // 4. Customer Wishlist & Reviews
   // --------------------------------------------------------------------------
-  app.get('/api/store/wishlist', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.get('/api/store/wishlist', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const { data, error } = await req.supabaseAdmin!
       .from('customer_wishlists')
       .select('id, item_id, created_at')
@@ -748,9 +874,9 @@ export function registerStorefrontRoutes(app: Express): void {
       return;
     }
     res.json({ wishlist: data || [] });
-  });
+  }));
 
-  app.post('/api/store/wishlist', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.post('/api/store/wishlist', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.body?.itemId);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid itemId required.' });
@@ -775,9 +901,9 @@ export function registerStorefrontRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ ok: true });
-  });
+  }));
 
-  app.delete('/api/store/wishlist/:itemId', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.delete('/api/store/wishlist/:itemId', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.itemId);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid itemId required.' });
@@ -789,9 +915,9 @@ export function registerStorefrontRoutes(app: Express): void {
       .eq('customer_id', req.customer!.id)
       .eq('item_id', parsedId.data);
     res.json({ ok: true });
-  });
+  }));
 
-  app.post('/api/store/products/:itemId/reviews', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.post('/api/store/products/:itemId/reviews', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.itemId);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid itemId required.' });
@@ -845,12 +971,12 @@ export function registerStorefrontRoutes(app: Express): void {
       review,
       message: 'Review submitted for store moderation.',
     });
-  });
+  }));
 
   // --------------------------------------------------------------------------
   // 5. Checkout, Delivery Zones, Coupons, Orders & Razorpay Verification
   // --------------------------------------------------------------------------
-  app.post('/api/store/orders', storeCheckoutLimiter, requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.post('/api/store/orders', storeCheckoutLimiter, requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsed = checkoutSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid checkout payload.' });
@@ -1114,9 +1240,9 @@ export function registerStorefrontRoutes(app: Express): void {
         error: err instanceof Error ? err.message : 'Unable to place order.',
       });
     }
-  });
+  }));
 
-  app.post('/api/store/orders/:id/verify-razorpay', storePaymentVerifyLimiter, requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.post('/api/store/orders/:id/verify-razorpay', storePaymentVerifyLimiter, requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid order ID is required.' });
@@ -1198,14 +1324,22 @@ export function registerStorefrontRoutes(app: Express): void {
       if (!wasAlreadyPaid && order.coupon_code) {
         const { data: couponRow } = await admin
           .from('store_coupons')
-          .select('id, used_count')
+          .select('id, used_count, usage_limit')
           .ilike('code', String(order.coupon_code))
           .maybeSingle();
         if (couponRow) {
-          await admin
-            .from('store_coupons')
-            .update({ used_count: Number(couponRow.used_count || 0) + 1 })
-            .eq('id', couponRow.id);
+          const currentCount = Number(couponRow.used_count || 0);
+          const usageLimit =
+            couponRow.usage_limit !== null && couponRow.usage_limit !== undefined
+              ? Number(couponRow.usage_limit)
+              : null;
+          if (usageLimit === null || currentCount < usageLimit) {
+            await admin
+              .from('store_coupons')
+              .update({ used_count: currentCount + 1 })
+              .eq('id', couponRow.id)
+              .eq('used_count', currentCount);
+          }
         }
       }
 
@@ -1256,9 +1390,9 @@ export function registerStorefrontRoutes(app: Express): void {
         error: err instanceof Error ? err.message : 'Payment verification failed.',
       });
     }
-  });
+  }));
 
-  app.get('/api/store/orders', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.get('/api/store/orders', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const admin = req.supabaseAdmin!;
     const { data: orders, error } = await admin
       .from('store_orders')
@@ -1277,9 +1411,9 @@ export function registerStorefrontRoutes(app: Express): void {
     });
 
     res.json({ orders: mapped });
-  });
+  }));
 
-  app.get('/api/store/orders/:id', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.get('/api/store/orders/:id', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid order ID required.' });
@@ -1299,9 +1433,9 @@ export function registerStorefrontRoutes(app: Express): void {
     }
     const { store_order_lines, ...rest } = order as Record<string, unknown>;
     res.json({ order: { ...rest, lines: store_order_lines || [] } });
-  });
+  }));
 
-  app.post('/api/store/orders/:id/cancel', requireOnlineStoreEnabled, requireCustomerAuth, async (req: CustomerAuthenticatedRequest, res: Response) => {
+  app.post('/api/store/orders/:id/cancel', requireOnlineStoreEnabled, requireCustomerAuth, asyncHandler<CustomerAuthenticatedRequest>(async (req, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid order ID required.' });
@@ -1345,7 +1479,7 @@ export function registerStorefrontRoutes(app: Express): void {
     );
 
     res.json({ order: updated });
-  });
+  }));
 
   // --------------------------------------------------------------------------
   // 8. Customer-Facing Online Store AI Shopping Assistant (Public Safe Read)
@@ -1364,7 +1498,7 @@ export function registerStorefrontRoutes(app: Express): void {
       .default([]),
   });
 
-  app.post('/api/store/ai/chat', storeAiChatLimiter, requireOnlineStoreEnabled, async (req: Request, res: Response) => {
+  app.post('/api/store/ai/chat', storeAiChatLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
     const admin = getSupabaseAdmin();
     if (!admin) {
       res.status(503).json({ error: 'Store database not configured.' });
@@ -1641,5 +1775,5 @@ export function registerStorefrontRoutes(app: Express): void {
       const status = msg.toLowerCase().includes('budget') ? 429 : 400;
       res.status(status).json({ error: redactSecretsFromText(msg) });
     }
-  });
+  }));
 }

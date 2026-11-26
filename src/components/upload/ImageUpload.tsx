@@ -250,7 +250,9 @@ export function ImageUpload({
       ) {
         await erpFetch(`/api/erp/files/${encodeURIComponent(previousFileId)}`, session.access_token, {
           method: 'DELETE',
-        }).catch(() => undefined);
+        }).catch((err) => {
+          console.warn('Failed to delete replaced image file:', err);
+        });
       }
 
       showToast('Image uploaded securely.', 'success');
@@ -280,7 +282,9 @@ export function ImageUpload({
       if (!deferDelete && target?.fileId && session?.access_token) {
         await erpFetch(`/api/erp/files/${encodeURIComponent(target.fileId)}`, session.access_token, {
           method: 'DELETE',
-        }).catch(() => undefined);
+        }).catch((err) => {
+          console.warn('Failed to delete removed image file:', err);
+        });
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to remove image.';

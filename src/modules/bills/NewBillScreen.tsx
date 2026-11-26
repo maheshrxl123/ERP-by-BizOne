@@ -1167,6 +1167,7 @@ export function NewBillScreen({
                   {t('bills.partyLabel')}
                 </label>
                 <select
+                  aria-label={t('bills.partyLabel')}
                   value={partyId}
                   onChange={(e) => handlePartyChange(e.target.value)}
                   disabled={!partiesEnabled}
@@ -1238,6 +1239,7 @@ export function NewBillScreen({
                     Contractor Delivery Site
                   </label>
                   <select
+                    aria-label="Contractor Delivery Site"
                     value={siteId}
                     onChange={(e) => setSiteId(e.target.value)}
                     className="w-full h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
@@ -1265,7 +1267,7 @@ export function NewBillScreen({
                 <button
                   type="button"
                   onClick={() => setAiOrderOpen((v) => !v)}
-                  className={`h-8 px-2.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 ${
+                  className={`min-h-11 sm:min-h-0 sm:h-9 px-3 rounded-lg border text-xs font-medium inline-flex items-center gap-1.5 ${
                     aiOrderOpen
                       ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
                       : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text)] hover:bg-[var(--surface-muted)]'
@@ -1381,7 +1383,248 @@ export function NewBillScreen({
                   : 'Click an item chip, tap Camera Scan, or scan with your USB/Bluetooth barcode scanner to add lines instantly.'}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                {/* Mobile Card-per-Line Layout (< md) */}
+                <div className="md:hidden divide-y divide-[var(--border)]">
+                  {lines.map((row, idx) => {
+                    const lineCalc = calc.lines[idx];
+                    const stepQty = row.item.base_unit_allow_decimal ? 0.5 : 1;
+                    const currentQty = Number(row.enteredQty || 0);
+                    const isHighlighted = lastHighlightedId === row.localId;
+
+                    return (
+                      <div
+                        key={row.localId}
+                        className={`p-3.5 space-y-3 ${
+                          isHighlighted
+                            ? 'bg-[var(--primary-soft)]/55 transition-colors'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold leading-snug">{row.item.name}</p>
+                            <p className="text-xs text-[var(--text-muted)] tabular-nums mt-0.5">
+                              Stock: {row.item.qty_on_hand} {row.item.base_unit_code}
+                              {row.item.hsn_code ? ` · HSN ${row.item.hsn_code}` : ''}
+                              {row.contractorRateApplied ? ' · Contractor Rate' : ''}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label="Remove line"
+                            onClick={() =>
+                              setLines((prev) =>
+                                prev.filter((x) => x.localId !== row.localId)
+                              )
+                            }
+                            className="min-w-11 min-h-11 flex items-center justify-center rounded-lg hover:bg-[var(--give-soft)] text-[var(--give)] shrink-0"
+                          >
+                            <IconTrash size={18} stroke={2} />
+                          </button>
+                        </div>
+
+                        {((variantsByItem[row.item.id] ?? []).length > 0 ||
+                          row.item.product_line === 'tiles_slabs') && (
+                          <div className="space-y-2">
+                            {(variantsByItem[row.item.id] ?? []).length > 0 && (
+                              <select
+                                aria-label="Item variant"
+                                value={row.variantId || ''}
+                                onChange={(e) =>
+                                  updateLine(row.localId, { variantId: e.target.value || undefined })
+                                }
+                                className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                              >
+                                <option value="">Standard / Base Item</option>
+                                {(variantsByItem[row.item.id] ?? []).map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {v.variant_name} ({v.qty_on_hand} {row.item.base_unit_code})
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <div className="grid grid-cols-2 gap-2">
+                              <input
+                                type="text"
+                                list={`bill-shades-${row.localId}`}
+                                value={row.shade || ''}
+                                onChange={(e) =>
+                                  updateLine(row.localId, { shade: e.target.value })
+                                }
+                                placeholder="Shade"
+                                aria-label="Shade"
+                                className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                              />
+                              <input
+                                type="text"
+                                list={`bill-lots-${row.localId}`}
+                                value={row.batchLot || ''}
+                                onChange={(e) =>
+                                  updateLine(row.localId, { batchLot: e.target.value })
+                                }
+                                placeholder="Batch / Lot"
+                                aria-label="Batch / Lot"
+                                className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-mono"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                              {t('bills.qty')}
+                            </label>
+                            <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+                              <button
+                                type="button"
+                                aria-label="Decrease quantity"
+                                onClick={() => {
+                                  const next = Math.max(
+                                    row.item.base_unit_allow_decimal ? 0.001 : 1,
+                                    roundHalfUp(currentQty - stepQty, 3)
+                                  );
+                                  updateLine(row.localId, { enteredQty: String(next) });
+                                }}
+                                className="w-11 h-11 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)] shrink-0"
+                              >
+                                <IconMinus size={15} stroke={2.5} />
+                              </button>
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                min="0.001"
+                                step={row.item.base_unit_allow_decimal ? '0.001' : '1'}
+                                aria-label={t('bills.qty')}
+                                value={row.enteredQty}
+                                onChange={(e) =>
+                                  updateLine(row.localId, { enteredQty: e.target.value })
+                                }
+                                className="w-full min-w-0 h-11 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-dark)]"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Increase quantity"
+                                onClick={() => {
+                                  const next = roundHalfUp(currentQty + stepQty, 3);
+                                  updateLine(row.localId, { enteredQty: String(next) });
+                                }}
+                                className="w-11 h-11 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)] shrink-0"
+                              >
+                                <IconPlus size={15} stroke={2.5} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                              {t('bills.unit')}
+                            </label>
+                            <select
+                              aria-label={t('bills.unit')}
+                              value={row.enteredUnitId}
+                              onChange={(e) =>
+                                updateLine(row.localId, { enteredUnitId: e.target.value })
+                              }
+                              className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs"
+                            >
+                              {row.unitOptions.map((u) => (
+                                <option key={u.unitId} value={u.unitId}>
+                                  {u.code}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                              {t('bills.rate')}
+                            </label>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min="0"
+                              step="0.01"
+                              aria-label={t('bills.rate')}
+                              value={row.unitPrice}
+                              onChange={(e) =>
+                                updateLine(row.localId, { unitPrice: e.target.value })
+                              }
+                              className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium tabular-nums text-right"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-xs font-medium text-[var(--text-muted)] mb-1">
+                              {t('bills.discPct')}
+                            </label>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              aria-label={t('bills.discPct')}
+                              value={row.discountPct}
+                              onChange={(e) =>
+                                updateLine(row.localId, { discountPct: e.target.value })
+                              }
+                              className="w-full min-h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums text-right"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                          {gstActiveForBiz && docType !== 'bill_of_supply' ? (
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => toggleLineTaxModeAndOptionallyConvert(row, false)}
+                                title="Toggle whether entered rate includes GST"
+                                className={`min-h-11 px-3 rounded-lg border text-xs font-semibold ${
+                                  row.taxInclusive
+                                    ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
+                                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
+                                }`}
+                              >
+                                {row.taxInclusive ? t('bills.taxInclBadge') : t('bills.taxExclBadge')}
+                              </button>
+                              {Number(row.item.gst_rate || 0) > 0 && (
+                                <button
+                                  type="button"
+                                  aria-label="Switch tax mode and recalculate rate"
+                                  onClick={() => toggleLineTaxModeAndOptionallyConvert(row, true)}
+                                  className="min-w-11 min-h-11 flex items-center justify-center rounded-lg border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--primary-dark)]"
+                                >
+                                  <IconArrowsExchange size={16} stroke={2} />
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <span />
+                          )}
+
+                          <div className="text-right tabular-nums">
+                            <div className="text-sm font-semibold">
+                              {formatINR(lineCalc?.lineTotal ?? 0)}
+                            </div>
+                            {calc.gstApplied && (
+                              <div className="text-xs text-[var(--text-muted)]">
+                                {lineCalc?.effectiveGstRate ?? 0}% GST ({formatINR(lineCalc?.taxAmount ?? 0)}) · Base {formatINR(lineCalc?.taxableAmount ?? 0)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop Table Layout (md+) */}
+                <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs sm:text-sm">
                   <thead>
                     <tr className="border-b border-[var(--border)] bg-[var(--surface-muted)] text-[11px] uppercase tracking-wider text-[var(--text-muted)]">
@@ -1425,6 +1668,7 @@ export function NewBillScreen({
                               <div className="space-y-1">
                                 {(variantsByItem[row.item.id] ?? []).length > 0 && (
                                   <select
+                                    aria-label="Item variant"
                                     value={row.variantId || ''}
                                     onChange={(e) =>
                                       updateLine(row.localId, { variantId: e.target.value || undefined })
@@ -1513,7 +1757,7 @@ export function NewBillScreen({
                                 onChange={(e) =>
                                   updateLine(row.localId, { enteredQty: e.target.value })
                                 }
-                                className="w-14 h-9 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none"
+                                className="w-14 h-9 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-dark)]"
                               />
                               <button
                                 type="button"
@@ -1531,6 +1775,7 @@ export function NewBillScreen({
 
                           <td className="py-2.5 px-2 align-top">
                             <select
+                              aria-label={t('bills.unit')}
                               value={row.enteredUnitId}
                               onChange={(e) =>
                                 updateLine(row.localId, { enteredUnitId: e.target.value })
@@ -1564,7 +1809,7 @@ export function NewBillScreen({
                                   type="button"
                                   onClick={() => toggleLineTaxModeAndOptionallyConvert(row, false)}
                                   title="Toggle whether entered rate includes GST"
-                                  className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold ${
+                                  className={`px-1.5 py-0.5 rounded border text-xs font-semibold ${
                                     row.taxInclusive
                                       ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)] text-[var(--primary-dark)]'
                                       : 'border-[var(--border)] bg-[var(--surface)] text-[var(--text-muted)]'
@@ -1607,7 +1852,7 @@ export function NewBillScreen({
                                 <div className="font-medium text-[var(--text)]">
                                   {lineCalc?.effectiveGstRate ?? 0}% ({formatINR(lineCalc?.taxAmount ?? 0)})
                                 </div>
-                                <div className="text-[10px]">
+                                <div className="text-xs">
                                   Base {formatINR(lineCalc?.taxableAmount ?? 0)}
                                 </div>
                               </>
@@ -1640,6 +1885,7 @@ export function NewBillScreen({
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </section>
 
@@ -1733,6 +1979,7 @@ export function NewBillScreen({
                     Referral / Mason Partner (Optional)
                   </label>
                   <select
+                    aria-label="Referral / Mason Partner"
                     value={commissionPartnerId}
                     onChange={(e) => {
                       const id = e.target.value;
@@ -1911,6 +2158,7 @@ export function NewBillScreen({
                       className="h-10 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm font-semibold tabular-nums text-right"
                     />
                     <select
+                      aria-label="Payment mode"
                       value={paymentMode}
                       onChange={(e) => setPaymentMode(e.target.value as PaymentMode)}
                       className="h-10 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium"
@@ -1967,7 +2215,7 @@ export function NewBillScreen({
                   type="button"
                   disabled={submitting}
                   onClick={() => void handleSubmit('draft')}
-                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  className="min-h-11 sm:min-h-0 sm:h-10 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs font-medium inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
                   <IconDeviceFloppy size={15} stroke={2} />
                   <span>{t('bills.saveDraft')}</span>
@@ -1975,7 +2223,7 @@ export function NewBillScreen({
                 <button
                   type="button"
                   onClick={onCancel}
-                  className="h-10 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
+                  className="min-h-11 sm:min-h-0 sm:h-10 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
                 >
                   {t('common.cancel')}
                 </button>

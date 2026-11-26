@@ -989,7 +989,9 @@ export function ItemFormModal({
           toDelete.map((fid) =>
             erpFetch(`/api/erp/files/${encodeURIComponent(fid)}`, session.access_token, {
               method: 'DELETE',
-            }).catch(() => undefined)
+            }).catch((err) => {
+              console.warn('Failed to delete abandoned item file:', err);
+            })
           )
         );
       }

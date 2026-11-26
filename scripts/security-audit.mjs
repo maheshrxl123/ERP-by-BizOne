@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 console.log('=== DecorBiz Security Audit (Secrets Scan + Dependency Audit) ===');
 
@@ -143,7 +144,7 @@ export function runDependencyAudit() {
 }
 
 const isMain =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname);
+  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 
 if (isMain) {
   const secretResult = runSecretsScan();

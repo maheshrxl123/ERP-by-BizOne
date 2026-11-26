@@ -522,14 +522,14 @@ export function HomeScreen({ onNavigate }: HomeScreenProps) {
               stroke={2}
               className={
                 totalStockAlerts > 0
-                  ? 'text-[var(--warning)]'
+                  ? 'text-[var(--warning-text)]'
                   : 'text-[var(--text-muted)]'
               }
             />
           </div>
           <div
             className={`mt-2 text-lg sm:text-2xl font-bold font-mono tabular-nums tracking-tight ${
-              totalStockAlerts > 0 ? 'text-[var(--warning)]' : ''
+              totalStockAlerts > 0 ? 'text-[var(--warning-text)]' : ''
             }`}
           >
             {loadingMetrics ? '—' : String(totalStockAlerts)}

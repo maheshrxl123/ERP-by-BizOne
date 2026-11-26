@@ -64,7 +64,7 @@ interface OnlineStoreAdminScreenProps {
 }
 
 export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminScreenProps) {
-  const { session, profile, business, isModuleEnabled, showToast } = useApp();
+  const { session, profile, business, isModuleEnabled, showToast, t } = useApp();
   const isOwner = profile?.role === 'owner';
   const canManageCatalog = ['owner', 'manager', 'storekeeper'].includes(profile?.role || '');
   const aiEnabled = isModuleEnabled('ai');
@@ -732,22 +732,22 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
       <div className="flex flex-wrap gap-1.5 border-b border-[var(--border)] pb-3 text-xs font-medium">
         {(
           [
-            { id: 'orders', label: `Order Inbox (${orders.length})`, icon: IconPackage },
-            { id: 'catalog', label: `Online Catalogue (${publishedCount})`, icon: IconBuildingStore },
-            { id: 'trips', label: `Delivery Trips (${trips.length})`, icon: IconTruck },
-            { id: 'zones', label: `Zones (${zones.length})`, icon: IconTruck },
-            { id: 'coupons', label: `Coupons (${coupons.length})`, icon: IconTag },
-            { id: 'content', label: `Banners & Pages`, icon: IconPhoto },
-            { id: 'reviews', label: `Reviews (${pendingReviewsCount} pending)`, icon: IconMessageCheck },
+            { id: 'orders', label: `${t('storeAdmin.ordersTab')} (${orders.length})`, icon: IconPackage },
+            { id: 'catalog', label: `${t('storeAdmin.catalogTab')} (${publishedCount})`, icon: IconBuildingStore },
+            { id: 'trips', label: `${t('storeAdmin.tripsTab')} (${trips.length})`, icon: IconTruck },
+            { id: 'zones', label: `${t('storeAdmin.zonesTab')} (${zones.length})`, icon: IconTruck },
+            { id: 'coupons', label: `${t('storeAdmin.couponsTab')} (${coupons.length})`, icon: IconTag },
+            { id: 'content', label: t('storeAdmin.contentTab'), icon: IconPhoto },
+            { id: 'reviews', label: `${t('storeAdmin.reviewsTab')} (${pendingReviewsCount})`, icon: IconMessageCheck },
           ] as const
-        ).map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
+        ).map((tabItem) => {
+          const Icon = tabItem.icon;
+          const active = tab === tabItem.id;
           return (
             <button
-              key={t.id}
+              key={tabItem.id}
               type="button"
-              onClick={() => setTab(t.id)}
+              onClick={() => setTab(tabItem.id)}
               className={`h-9 px-3.5 rounded-lg inline-flex items-center gap-1.5 transition-colors ${
                 active
                   ? 'bg-[var(--primary)] text-[var(--on-primary)] font-semibold'
@@ -755,7 +755,7 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
               }`}
             >
               <Icon size={14} />
-              <span>{t.label}</span>
+              <span>{tabItem.label}</span>
             </button>
           );
         })}
@@ -2040,13 +2040,13 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
       {/* Printable Picking / Delivery Sheet Modal */}
       {printOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-2xl rounded-xl border border-[var(--border)] bg-white text-slate-900 p-6 space-y-4">
-            <div className="flex items-start justify-between border-b border-slate-200 pb-3">
+          <div className="w-full max-w-2xl rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[var(--text)] print-surface p-6 space-y-4">
+            <div className="flex items-start justify-between border-b border-[var(--border)] pb-3">
               <div>
                 <h3 className="text-lg font-bold">
-                  {printOrder.fulfillment_type === 'pickup' ? 'Showroom Picking Slip' : 'Delivery Dispatch Sheet'}
+                  {printOrder.fulfillment_type === 'pickup' ? t('storeAdmin.pickingSlip') : t('storeAdmin.dispatchSheet')}
                 </h3>
-                <p className="text-xs text-slate-600">
+                <p className="text-xs text-[var(--text-muted)]">
                   Order {printOrder.order_number} · {new Date(printOrder.created_at).toLocaleString('en-IN')}
                 </p>
               </div>
@@ -2054,16 +2054,16 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="h-8 px-3 rounded-lg bg-slate-900 text-white text-xs font-semibold inline-flex items-center gap-1"
+                  className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1"
                 >
-                  <IconPrinter size={14} /><span>Print</span>
+                  <IconPrinter size={14} /><span>{t('storeAdmin.print')}</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintOrder(null)}
-                  className="h-8 px-3 rounded-lg border border-slate-300 text-xs"
+                  className="h-9 px-3 rounded-lg border border-[var(--border)] text-xs hover:bg-[var(--surface-muted)]"
                 >
-                  Close
+                  {t('storeAdmin.close')}
                 </button>
               </div>
             </div>
@@ -2086,8 +2086,8 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
               </div>
             </div>
 
-            <table className="w-full text-xs border border-slate-200">
-              <thead className="bg-slate-100">
+            <table className="w-full text-xs border border-[var(--border)]">
+              <thead className="bg-[var(--surface-muted)]">
                 <tr>
                   <th className="p-2 text-left">Item</th>
                   <th className="p-2 text-right">Dispatch Qty</th>
@@ -2097,7 +2097,7 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
               </thead>
               <tbody>
                 {(printOrder.lines || []).map((l) => (
-                  <tr key={l.id} className="border-t border-slate-200">
+                  <tr key={l.id} className="border-t border-[var(--border)]">
                     <td className="p-2">{l.item_name} {l.variant_name ? `(${l.variant_name})` : ''}</td>
                     <td className="p-2 text-right font-semibold tabular-nums">{l.base_qty}</td>
                     <td className="p-2 text-right tabular-nums">{l.ordered_qty} {l.ordered_unit}</td>
@@ -2107,7 +2107,7 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
               </tbody>
             </table>
 
-            <div className="flex justify-between items-center text-xs pt-2 border-t border-slate-200 font-semibold">
+            <div className="flex justify-between items-center text-xs pt-2 border-t border-[var(--border)] font-semibold">
               <span>Payment: {printOrder.payment_method.toUpperCase()} ({printOrder.payment_status})</span>
               <span className="text-sm">Collectable / Total: {formatINR(printOrder.grand_total)}</span>
             </div>

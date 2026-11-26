@@ -26,85 +26,89 @@ export async function requireActiveStaff(
   res: Response,
   next: NextFunction
 ): Promise<void> {
-  const admin = getSupabaseAdmin();
-  if (!admin) {
-    res.status(503).json({
-      error: 'Supabase environment variables are not configured on the server.',
-    });
-    return;
-  }
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Authentication required.' });
-    return;
-  }
-
-  const token = authHeader.slice('Bearer '.length).trim();
-  const { data: userData, error: userErr } = await admin.auth.getUser(token);
-  if (userErr || !userData.user) {
-    res.status(401).json({ error: 'Invalid or expired session.' });
-    return;
-  }
-
-  if (
-    userData.user.app_metadata?.user_type === 'customer' ||
-    userData.user.user_metadata?.user_type === 'customer' ||
-    userData.user.user_metadata?.role === 'customer'
-  ) {
-    res.status(403).json({ error: 'Customer tokens are not permitted on ERP endpoints.' });
-    return;
-  }
-
-  const { data: profile, error: profErr } = await admin
-    .from('profiles')
-    .select('id, email, role, is_active')
-    .eq('id', userData.user.id)
-    .maybeSingle();
-
-  if (profErr || !profile || !profile.is_active) {
-    res.status(403).json({ error: 'Active staff account required.' });
-    return;
-  }
-
-  const reqPath = (req.originalUrl || req.url || '').split('?')[0].toLowerCase().replace(/\/+$/, '') || '/';
-  const isTotpChallengeEndpoint =
-    reqPath === '/api/erp/auth/totp-status' ||
-    reqPath === '/api/erp/auth/totp-validate' ||
-    reqPath === '/api/erp/auth/totp-verify';
-
-  if (!isTotpChallengeEndpoint) {
-    const { data: totpRow, error: totpErr } = await admin
-      .from('staff_totp')
-      .select('enabled')
-      .eq('user_id', profile.id)
-      .maybeSingle();
-
-    if (totpErr) {
+  try {
+    const admin = getSupabaseAdmin();
+    if (!admin) {
       res.status(503).json({
-        error: 'Unable to verify two-factor authentication status. Please retry.',
+        error: 'Supabase environment variables are not configured on the server.',
       });
       return;
     }
 
-    if (totpRow?.enabled) {
-      const proofToken =
-        typeof req.headers['x-erp-totp-token'] === 'string'
-          ? req.headers['x-erp-totp-token']
-          : '';
-      if (!verifyTotpProofToken(profile.id, proofToken)) {
-        res.status(403).json({
-          error: 'Two-factor authentication verification required.',
-          code: 'TOTP_REQUIRED',
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authentication required.' });
+      return;
+    }
+
+    const token = authHeader.slice('Bearer '.length).trim();
+    const { data: userData, error: userErr } = await admin.auth.getUser(token);
+    if (userErr || !userData.user) {
+      res.status(401).json({ error: 'Invalid or expired session.' });
+      return;
+    }
+
+    if (
+      userData.user.app_metadata?.user_type === 'customer' ||
+      userData.user.user_metadata?.user_type === 'customer' ||
+      userData.user.user_metadata?.role === 'customer'
+    ) {
+      res.status(403).json({ error: 'Customer tokens are not permitted on ERP endpoints.' });
+      return;
+    }
+
+    const { data: profile, error: profErr } = await admin
+      .from('profiles')
+      .select('id, email, role, is_active')
+      .eq('id', userData.user.id)
+      .maybeSingle();
+
+    if (profErr || !profile || !profile.is_active) {
+      res.status(403).json({ error: 'Active staff account required.' });
+      return;
+    }
+
+    const reqPath = (req.originalUrl || req.url || '').split('?')[0].toLowerCase().replace(/\/+$/, '') || '/';
+    const isTotpChallengeEndpoint =
+      reqPath === '/api/erp/auth/totp-status' ||
+      reqPath === '/api/erp/auth/totp-validate' ||
+      reqPath === '/api/erp/auth/totp-verify';
+
+    if (!isTotpChallengeEndpoint) {
+      const { data: totpRow, error: totpErr } = await admin
+        .from('staff_totp')
+        .select('enabled')
+        .eq('user_id', profile.id)
+        .maybeSingle();
+
+      if (totpErr) {
+        res.status(503).json({
+          error: 'Unable to verify two-factor authentication status. Please retry.',
         });
         return;
       }
-    }
-  }
 
-  req.supabaseAdmin = admin;
-  req.staffUser = profile;
-  next();
+      if (totpRow?.enabled) {
+        const proofToken =
+          typeof req.headers['x-erp-totp-token'] === 'string'
+            ? req.headers['x-erp-totp-token']
+            : '';
+        if (!verifyTotpProofToken(profile.id, proofToken)) {
+          res.status(403).json({
+            error: 'Two-factor authentication verification required.',
+            code: 'TOTP_REQUIRED',
+          });
+          return;
+        }
+      }
+    }
+
+    req.supabaseAdmin = admin;
+    req.staffUser = profile;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 export function requireOwner(

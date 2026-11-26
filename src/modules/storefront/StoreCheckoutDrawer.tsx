@@ -8,7 +8,7 @@ import {
   IconTruck,
   IconX,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { computeStoreOrderTotals, matchDeliveryZone } from '../../core/storeCatalog';
 import type { StoreOrderRecord } from '../../types/decorbiz';
 import {
@@ -72,6 +72,54 @@ export function StoreCheckoutDrawer({
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deliveryFieldErrors, setDeliveryFieldErrors] = useState<{
+    pincode?: string;
+    area?: string;
+    address?: string;
+  }>({});
+  const drawerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const drawerEl = drawerRef.current;
+    const getFocusable = () =>
+      drawerEl
+        ? Array.from(
+            drawerEl.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )
+          )
+        : [];
+    const focusables = getFocusable();
+    if (focusables.length > 0) focusables[0].focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = getFocusable();
+      if (list.length === 0) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      prevFocus?.focus?.();
+    };
+  }, [open, onClose]);
 
   useEffect(() => {
     if (customerSession?.customer) {
@@ -81,10 +129,14 @@ export function StoreCheckoutDrawer({
   }, [customerSession]);
 
   useEffect(() => {
-    if (fulfillmentType === 'pickup' && paymentMethod === 'cod') {
-      setPaymentMethod(config.pickupEnabled ? 'pay_on_pickup' : 'razorpay');
-    } else if (fulfillmentType === 'delivery' && paymentMethod === 'pay_on_pickup') {
-      setPaymentMethod(config.codEnabled ? 'cod' : 'razorpay');
+    if (fulfillmentType === 'pickup') {
+      if (paymentMethod === 'cod' || (paymentMethod === 'pay_on_pickup' && !config.pickupEnabled)) {
+        setPaymentMethod(config.pickupEnabled ? 'pay_on_pickup' : 'razorpay');
+      }
+    } else if (fulfillmentType === 'delivery') {
+      if (paymentMethod === 'pay_on_pickup' || (paymentMethod === 'cod' && !config.codEnabled)) {
+        setPaymentMethod(config.codEnabled ? 'cod' : 'razorpay');
+      }
     }
   }, [fulfillmentType, paymentMethod, config.codEnabled, config.pickupEnabled]);
 
@@ -114,6 +166,20 @@ export function StoreCheckoutDrawer({
       return;
     }
     if (cart.length === 0) return;
+
+    if (fulfillmentType === 'delivery') {
+      const nextFieldErrors: { pincode?: string; area?: string; address?: string } = {};
+      if (!pincode.trim()) nextFieldErrors.pincode = 'Pincode is required.';
+      if (!area.trim()) nextFieldErrors.area = 'Locality / Area is required.';
+      if (!address.trim()) nextFieldErrors.address = 'Delivery address is required.';
+      setDeliveryFieldErrors(nextFieldErrors);
+      if (Object.keys(nextFieldErrors).length > 0) {
+        setError('Please enter your delivery pincode, area, and full address.');
+        return;
+      }
+    } else {
+      setDeliveryFieldErrors({});
+    }
 
     if (paymentMethod === 'razorpay' && (!config.razorpayEnabled || !config.razorpayKeyId)) {
       setError('Razorpay online payment is not currently configured.');
@@ -220,10 +286,16 @@ export function StoreCheckoutDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-stone-950/50 backdrop-blur-xs">
-      <div className="w-full max-w-lg bg-white h-full flex flex-col shadow-2xl border-l border-stone-200">
+      <div
+        ref={drawerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="store-checkout-title"
+        className="w-full max-w-lg bg-white h-full flex flex-col shadow-2xl border-l border-stone-200"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-200">
           <div>
-            <h2 className="text-lg font-bold text-stone-900">Your Shopping Bag</h2>
+            <h2 id="store-checkout-title" className="text-lg font-bold text-stone-900">Your Shopping Bag</h2>
             <p className="text-xs text-stone-500">{cart.length} line item(s) ready for order</p>
           </div>
           <button
@@ -255,6 +327,10 @@ export function StoreCheckoutDrawer({
                     <img
                       src={getProductImageSrc(c.item)}
                       alt={c.item.name}
+                      width={64}
+                      height={64}
+                      loading="lazy"
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       className="w-16 h-16 rounded-lg object-cover border border-stone-200 shrink-0"
                     />
@@ -281,6 +357,7 @@ export function StoreCheckoutDrawer({
                           <button
                             type="button"
                             onClick={() => onUpdateQty(c.key, Math.max(1, c.baseQty - 1))}
+                            aria-label={`Decrease quantity for ${c.item.name}`}
                             className="w-7 h-7 flex items-center justify-center text-stone-700"
                           >
                             <IconMinus size={12} />
@@ -291,6 +368,7 @@ export function StoreCheckoutDrawer({
                           <button
                             type="button"
                             onClick={() => onUpdateQty(c.key, c.baseQty + 1)}
+                            aria-label={`Increase quantity for ${c.item.name}`}
                             className="w-7 h-7 flex items-center justify-center text-stone-700"
                           >
                             <IconPlus size={12} />
@@ -348,28 +426,67 @@ export function StoreCheckoutDrawer({
                 {fulfillmentType === 'delivery' && (
                   <div className="space-y-2.5 rounded-xl border border-stone-200 bg-stone-50 p-3.5 text-xs">
                     <div className="grid grid-cols-2 gap-2">
-                      <input
-                        type="text"
-                        value={pincode}
-                        onChange={(e) => setPincode(e.target.value)}
-                        placeholder="Pincode (e.g. 302001)"
-                        className="h-9 px-3 rounded-lg border border-stone-300 bg-white"
-                      />
-                      <input
-                        type="text"
-                        value={area}
-                        onChange={(e) => setArea(e.target.value)}
-                        placeholder="Locality / Area"
-                        className="h-9 px-3 rounded-lg border border-stone-300 bg-white"
-                      />
+                      <div>
+                        <input
+                          type="text"
+                          required
+                          value={pincode}
+                          onChange={(e) => {
+                            setPincode(e.target.value);
+                            if (deliveryFieldErrors.pincode) {
+                              setDeliveryFieldErrors((prev) => ({ ...prev, pincode: undefined }));
+                            }
+                          }}
+                          placeholder="Pincode (e.g. 302001)"
+                          aria-label="Delivery pincode"
+                          aria-invalid={Boolean(deliveryFieldErrors.pincode)}
+                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white"
+                        />
+                        {deliveryFieldErrors.pincode && (
+                          <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.pincode}</p>
+                        )}
+                      </div>
+                      <div>
+                        <input
+                          type="text"
+                          required
+                          value={area}
+                          onChange={(e) => {
+                            setArea(e.target.value);
+                            if (deliveryFieldErrors.area) {
+                              setDeliveryFieldErrors((prev) => ({ ...prev, area: undefined }));
+                            }
+                          }}
+                          placeholder="Locality / Area"
+                          aria-label="Delivery locality or area"
+                          aria-invalid={Boolean(deliveryFieldErrors.area)}
+                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white"
+                        />
+                        {deliveryFieldErrors.area && (
+                          <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.area}</p>
+                        )}
+                      </div>
                     </div>
-                    <textarea
-                      rows={2}
-                      value={address}
-                      onChange={(e) => setAddress(e.target.value)}
-                      placeholder="Full delivery address & landmark"
-                      className="w-full p-2.5 rounded-lg border border-stone-300 bg-white"
-                    />
+                    <div>
+                      <textarea
+                        rows={2}
+                        required
+                        value={address}
+                        onChange={(e) => {
+                          setAddress(e.target.value);
+                          if (deliveryFieldErrors.address) {
+                            setDeliveryFieldErrors((prev) => ({ ...prev, address: undefined }));
+                          }
+                        }}
+                        placeholder="Full delivery address & landmark"
+                        aria-label="Full delivery address"
+                        aria-invalid={Boolean(deliveryFieldErrors.address)}
+                        className="w-full p-2.5 rounded-lg border border-stone-300 bg-white"
+                      />
+                      {deliveryFieldErrors.address && (
+                        <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.address}</p>
+                      )}
+                    </div>
                     {matchedZone ? (
                       <p className="text-[11px] font-medium text-emerald-700">
                         Zone matched: {matchedZone.zone_name} · Delivery {formatInr(matchedZone.delivery_charge)} · Est.{' '}
@@ -394,6 +511,7 @@ export function StoreCheckoutDrawer({
                       value={couponInput}
                       onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
                       placeholder="Promo coupon code"
+                      aria-label="Promo coupon code"
                       className="w-full h-10 pl-8 pr-3 rounded-xl border border-stone-300 text-xs font-mono uppercase"
                     />
                   </div>
@@ -478,6 +596,7 @@ export function StoreCheckoutDrawer({
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Order note (gate timing, floor lift availability...)"
+                aria-label="Order note"
                 className="w-full h-10 px-3 rounded-xl border border-stone-300 text-xs"
               />
             </>

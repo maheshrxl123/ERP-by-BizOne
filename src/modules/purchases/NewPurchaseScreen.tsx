@@ -1702,7 +1702,7 @@ export function NewPurchaseScreen({
                                     )
                                   )
                                 }
-                                className="w-14 h-9 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none"
+                                className="w-14 h-9 px-1 bg-transparent text-center text-xs font-semibold tabular-nums focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-dark)]"
                               />
                               <button
                                 type="button"

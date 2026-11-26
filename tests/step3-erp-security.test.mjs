@@ -90,16 +90,18 @@ test('Step 3: vercel.json & dual Vite configs isolate /ERP/ base path from store
   assert.ok(fs.existsSync(vercelPath));
   const vercel = JSON.parse(fs.readFileSync(vercelPath, 'utf8'));
   const hasErpRewrite = (vercel.rewrites || []).some(
-    (r) => r.source && r.source.includes('ERP') && r.destination === '/ERP/erp.html'
+    (r) => r.source && r.source.includes('ERP') && r.destination === '/api/index.ts'
   );
-  assert.ok(hasErpRewrite, 'vercel.json must rewrite /ERP to /ERP/erp.html');
+  assert.ok(hasErpRewrite, 'vercel.json must route /ERP through /api/index.ts for IP allowlist enforcement');
 
   const erpVite = fs.readFileSync(path.resolve(process.cwd(), 'vite.erp.config.ts'), 'utf8');
   assert.match(erpVite, /base:\s*['"]\/ERP\/['"]/);
   assert.match(erpVite, /outDir:\s*['"]dist\/ERP['"]/);
+  assert.match(erpVite, /scope:\s*['"]\/ERP\/['"]/);
+  assert.match(erpVite, /start_url:\s*['"]\/ERP\/['"]/);
 
   const storeVite = fs.readFileSync(path.resolve(process.cwd(), 'vite.config.ts'), 'utf8');
-  assert.match(storeVite, /navigateFallbackDenylist:.*ERP/);
+  assert.match(storeVite, /navigateFallbackDenylist:.*ERP/i);
 });
 
 test('Step 3: Vite dev client stub provides full hot context (including prune) and CSS injectors', async () => {
@@ -168,4 +170,44 @@ test('Step 3: middleware enforces customer token rejection & TOTP proof token, a
   const profileSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/modules/profile/UserProfileScreen.tsx'), 'utf8');
   assert.match(profileSrc, /\/api\/erp\/auth\/totp-setup/);
   assert.match(profileSrc, /\/api\/erp\/auth\/totp-verify/);
+});
+
+test('Step 3 (SEC-02, SEC-04, PERF-02): spoofed X-Forwarded-For ignored without trust proxy, TOTP fails closed in prod, and aistudio moved out of public', async () => {
+  const { extractRequestIp } = await import('../src/server/rateLimit.ts');
+  const testApp = express();
+  testApp.set('trust proxy', false);
+  testApp.get('/ip', (req, res) => res.json({ ip: extractRequestIp(req) }));
+
+  const srv = await new Promise((resolve) => {
+    const s = testApp.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    const addr = srv.address();
+    const res = await fetch(`http://127.0.0.1:${addr.port}/ip`, {
+      headers: { 'x-forwarded-for': '198.51.100.99' },
+    });
+    const body = await res.json();
+    assert.equal(body.ip, '127.0.0.1', 'Untrusted x-forwarded-for must not override socket IP');
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+  }
+
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevEncKey = process.env.APP_ENCRYPTION_KEY;
+  try {
+    process.env.NODE_ENV = 'production';
+    delete process.env.APP_ENCRYPTION_KEY;
+    assert.throws(() => createTotpProofToken('user-prod', 60), /APP_ENCRYPTION_KEY/);
+  } finally {
+    if (prevNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = prevNodeEnv;
+    if (prevEncKey === undefined) delete process.env.APP_ENCRYPTION_KEY;
+    else process.env.APP_ENCRYPTION_KEY = prevEncKey;
+  }
+
+  assert.equal(
+    fs.existsSync(path.resolve(process.cwd(), 'public/assets/aistudio')),
+    false,
+    'public/assets/aistudio must not exist in public/'
+  );
 });

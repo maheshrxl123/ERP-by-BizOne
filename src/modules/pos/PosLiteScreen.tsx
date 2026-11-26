@@ -3,6 +3,7 @@ import {
   IconCamera,
   IconCheck,
   IconClock,
+  IconMinus,
   IconPlus,
   IconReceipt,
   IconRefresh,
@@ -62,7 +63,7 @@ interface HeldBillRow {
 }
 
 export function PosLiteScreen() {
-  const { business, profile, isModuleEnabled, showToast } = useApp();
+  const { business, profile, isModuleEnabled, showToast, t } = useApp();
   const taxEnabled = isModuleEnabled('tax') && Boolean(business?.gst_registered);
 
   const [items, setItems] = useState<ItemCatalogRecord[]>([]);
@@ -454,10 +455,10 @@ export function PosLiteScreen() {
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <IconReceipt size={24} stroke={2} className="text-[var(--primary-dark)]" />
-            <span>POS-Lite & Offline Counter</span>
+            <span>{t('pos.title')}</span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
-            Fast counter billing, hold/park bills, split cash+UPI tender, register shift reconciliation, and idempotent offline queue.
+            {t('pos.subtitle')}
           </p>
         </div>
 
@@ -468,7 +469,7 @@ export function PosLiteScreen() {
             }`}
           >
             {isOnline ? <IconWifi size={15} stroke={2} /> : <IconWifiOff size={15} stroke={2} />}
-            <span>{isOnline ? 'Online' : 'Offline'}</span>
+            <span>{isOnline ? t('pos.online') : t('pos.offline')}</span>
           </span>
           <label className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium inline-flex items-center gap-1.5 cursor-pointer">
             <input
@@ -477,7 +478,7 @@ export function PosLiteScreen() {
               onChange={(e) => setQueueOfflineMode(e.target.checked)}
               className="w-3.5 h-3.5 accent-[var(--primary-dark)]"
             />
-            <span>Queue Offline Mode</span>
+            <span>{t('pos.queueOfflineMode')}</span>
           </label>
           <button
             type="button"
@@ -485,7 +486,7 @@ export function PosLiteScreen() {
             className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium inline-flex items-center gap-1"
           >
             <IconRefresh size={14} stroke={2} />
-            <span>Refresh</span>
+            <span>{t('pos.refresh')}</span>
           </button>
         </div>
       </div>
@@ -622,7 +623,7 @@ export function PosLiteScreen() {
                               )
                             )
                           }
-                          className="text-[11px] font-medium px-1.5 py-0.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:border-[var(--primary-dark)]"
+                          className="min-h-11 md:min-h-0 text-xs md:text-[11px] font-medium px-2.5 py-1 md:px-1.5 md:py-0.5 rounded border border-[var(--border)] bg-[var(--surface-muted)] text-[var(--text)] hover:border-[var(--primary-dark)]"
                           title="Toggle rate tax basis between Inclusive and Exclusive GST"
                         >
                           {c.taxInclusive ? 'Incl. GST' : `+ ${c.item.gst_rate}% GST`}
@@ -630,34 +631,73 @@ export function PosLiteScreen() {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="number"
-                      min={c.item.base_unit_allow_decimal ? 0.001 : 1}
-                      step={c.item.base_unit_allow_decimal ? 'any' : '1'}
-                      value={c.qty}
-                      onChange={(e) => {
-                        const rawVal = Number(e.target.value);
-                        const nextQty = c.item.base_unit_allow_decimal
-                          ? Math.max(0.001, roundQty(rawVal || 0.001))
-                          : Math.max(1, Math.round(rawVal || 1));
-                        setCart((prev) =>
-                          prev.map((x) =>
-                            x.item.id === c.item.id ? { ...x, qty: nextQty } : x
-                          )
-                        );
-                      }}
-                      className="w-16 h-8 px-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs text-right tabular-nums"
-                    />
+                  <div className="flex items-center gap-1">
+                    <div className="inline-flex items-center rounded-lg border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
+                      <button
+                        type="button"
+                        aria-label="Decrease quantity"
+                        onClick={() => {
+                          const step = c.item.base_unit_allow_decimal ? 0.5 : 1;
+                          const nextQty = c.item.base_unit_allow_decimal
+                            ? Math.max(0.001, roundQty(c.qty - step))
+                            : Math.max(1, Math.round(c.qty - step));
+                          setCart((prev) =>
+                            prev.map((x) =>
+                              x.item.id === c.item.id ? { ...x, qty: nextQty } : x
+                            )
+                          );
+                        }}
+                        className="w-11 h-11 md:w-8 md:h-8 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                      >
+                        <IconMinus size={14} stroke={2.5} />
+                      </button>
+                      <input
+                        type="number"
+                        aria-label="Quantity"
+                        min={c.item.base_unit_allow_decimal ? 0.001 : 1}
+                        step={c.item.base_unit_allow_decimal ? 'any' : '1'}
+                        value={c.qty}
+                        onChange={(e) => {
+                          const rawVal = Number(e.target.value);
+                          const nextQty = c.item.base_unit_allow_decimal
+                            ? Math.max(0.001, roundQty(rawVal || 0.001))
+                            : Math.max(1, Math.round(rawVal || 1));
+                          setCart((prev) =>
+                            prev.map((x) =>
+                              x.item.id === c.item.id ? { ...x, qty: nextQty } : x
+                            )
+                          );
+                        }}
+                        className="w-14 h-11 md:h-8 px-1.5 bg-transparent text-xs text-center font-semibold tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        aria-label="Increase quantity"
+                        onClick={() => {
+                          const step = c.item.base_unit_allow_decimal ? 0.5 : 1;
+                          const nextQty = c.item.base_unit_allow_decimal
+                            ? roundQty(c.qty + step)
+                            : Math.round(c.qty + step);
+                          setCart((prev) =>
+                            prev.map((x) =>
+                              x.item.id === c.item.id ? { ...x, qty: nextQty } : x
+                            )
+                          );
+                        }}
+                        className="w-11 h-11 md:w-8 md:h-8 flex items-center justify-center text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
+                      >
+                        <IconPlus size={14} stroke={2.5} />
+                      </button>
+                    </div>
                     <button
                       type="button"
                       onClick={() =>
                         setCart((prev) => prev.filter((x) => x.item.id !== c.item.id))
                       }
                       aria-label="Remove item"
-                      className="p-1 text-[var(--text-muted)] hover:text-[var(--give)]"
+                      className="min-w-11 min-h-11 flex items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--give)] hover:bg-[var(--give-soft)]"
                     >
-                      <IconTrash size={14} stroke={2} />
+                      <IconTrash size={16} stroke={2} />
                     </button>
                   </div>
                 </div>
@@ -776,9 +816,9 @@ export function PosLiteScreen() {
                   <button
                     type="button"
                     onClick={() => void handleResumeHeld(h)}
-                    className="h-8 px-2.5 rounded-lg border border-[var(--border)] font-medium hover:bg-[var(--surface-muted)]"
+                    className="min-h-11 md:min-h-0 md:h-8 px-3 rounded-lg border border-[var(--border)] font-medium hover:bg-[var(--surface-muted)]"
                   >
-                    Resume
+                    {t('pos.resume')}
                   </button>
                 </div>
               ))}
@@ -798,9 +838,9 @@ export function PosLiteScreen() {
                 type="button"
                 disabled={syncing || !isOnline}
                 onClick={() => void handleSyncOffline()}
-                className="h-8 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold disabled:opacity-50"
+                className="min-h-11 md:min-h-0 md:h-8 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold disabled:opacity-50"
               >
-                {syncing ? 'Syncing...' : 'Sync Now'}
+                {syncing ? t('pos.syncing') : t('pos.syncNow')}
               </button>
             )}
           </div>
@@ -823,7 +863,7 @@ export function PosLiteScreen() {
                     type="button"
                     onClick={() => setOfflineQueue(removeOfflineBill(q.local_id))}
                     aria-label="Discard queued bill"
-                    className="p-1 text-[var(--text-muted)] hover:text-[var(--give)]"
+                    className="min-w-11 min-h-11 md:min-w-0 md:min-h-0 flex items-center justify-center p-1 text-[var(--text-muted)] hover:text-[var(--give)]"
                   >
                     <IconTrash size={14} stroke={2} />
                   </button>
@@ -853,15 +893,15 @@ export function PosLiteScreen() {
                   value={countedCashInput}
                   onChange={(e) => setCountedCashInput(e.target.value)}
                   placeholder="Counted cash ₹"
-                  className="flex-1 h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                  className="flex-1 min-h-11 md:min-h-0 md:h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
                 />
                 <button
                   type="button"
                   disabled={registerBusy}
                   onClick={() => void handleCloseRegister(openRegister)}
-                  className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold"
+                  className="min-h-11 md:min-h-0 md:h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold"
                 >
-                  Close Shift
+                  {t('pos.closeShift')}
                 </button>
               </div>
             </div>
@@ -875,15 +915,15 @@ export function PosLiteScreen() {
                   value={openingCashInput}
                   onChange={(e) => setOpeningCashInput(e.target.value)}
                   placeholder="Opening cash ₹"
-                  className="flex-1 h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
+                  className="flex-1 min-h-11 md:min-h-0 md:h-9 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs tabular-nums"
                 />
                 <button
                   type="submit"
                   disabled={registerBusy}
-                  className="h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1"
+                  className="min-h-11 md:min-h-0 md:h-9 px-3 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1"
                 >
                   <IconPlus size={13} stroke={2} />
-                  <span>Open Shift</span>
+                  <span>{t('pos.openShift')}</span>
                 </button>
               </div>
             </form>

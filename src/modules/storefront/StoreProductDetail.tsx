@@ -292,6 +292,9 @@ export function StoreProductDetail({
             <img
               src={gallerySources[activeImageIdx] || gallerySources[0]}
               alt={item.name}
+              width={800}
+              height={600}
+              decoding="async"
               referrerPolicy="no-referrer"
               className="w-full h-full object-cover"
             />
@@ -304,6 +307,7 @@ export function StoreProductDetail({
                   key={`${src}-${idx}`}
                   type="button"
                   onClick={() => setActiveImageIdx(idx)}
+                  aria-label={`View image ${idx + 1} of ${item.name}`}
                   className={`aspect-square rounded-xl overflow-hidden border-2 transition-all ${
                     idx === activeImageIdx
                       ? 'border-stone-900 ring-2 ring-stone-900/10'
@@ -313,6 +317,10 @@ export function StoreProductDetail({
                   <img
                     src={src}
                     alt={`${item.name} view ${idx + 1}`}
+                    width={160}
+                    height={160}
+                    loading="lazy"
+                    decoding="async"
                     referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
@@ -409,7 +417,7 @@ export function StoreProductDetail({
               </span>
               <span className="text-xs text-stone-500">per {item.base_unit_name_en || item.base_unit_code}</span>
               {activeMrp && activeMrp > activePrice && (
-                <span className="text-sm text-stone-400 line-through tabular-nums">
+                <span className="text-sm text-stone-600 line-through tabular-nums">
                   {formatInr(activeMrp)}
                 </span>
               )}
@@ -499,10 +507,11 @@ export function StoreProductDetail({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
               <div>
-                <label className="block text-[11px] font-medium text-stone-600 mb-1">
+                <label htmlFor="store-product-qty-input" className="block text-[11px] font-medium text-stone-600 mb-1">
                   {qtyMode === 'sqft' ? 'Required Area (sq.ft)' : `Quantity (${item.base_unit_name_en})`}
                 </label>
                 <input
+                  id="store-product-qty-input"
                   type="number"
                   min={qtyMode === 'sqft' ? 1 : 1}
                   step={qtyMode === 'sqft' ? 'any' : '1'}
@@ -619,6 +628,7 @@ export function StoreProductDetail({
                   key={star}
                   type="button"
                   onClick={() => setRevRating(star)}
+                  aria-label={`Rate ${star} out of 5 stars`}
                   className="p-1 text-amber-500"
                 >
                   {star <= revRating ? <IconStarFilled size={20} /> : <IconStar size={20} />}
@@ -630,6 +640,7 @@ export function StoreProductDetail({
               value={revTitle}
               onChange={(e) => setRevTitle(e.target.value)}
               placeholder="Headline (optional)"
+              aria-label="Review headline"
               className="w-full h-10 px-3 rounded-lg border border-stone-300 text-xs"
             />
             <textarea
@@ -639,6 +650,7 @@ export function StoreProductDetail({
               value={revComment}
               onChange={(e) => setRevComment(e.target.value)}
               placeholder="Share finish quality, tile sizing consistency, or packaging feedback..."
+              aria-label="Review comment"
               className="w-full p-3 rounded-lg border border-stone-300 text-xs"
             />
             <button
@@ -665,7 +677,7 @@ export function StoreProductDetail({
                       <IconStarFilled key={idx} size={14} />
                     ))}
                   </div>
-                  <span className="text-[11px] text-stone-400">
+                  <span className="text-[11px] text-stone-600">
                     {new Date(rev.created_at).toLocaleDateString('en-IN')}
                   </span>
                 </div>

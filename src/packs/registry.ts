@@ -46,30 +46,18 @@ export const DECORBIZ_WORKSPACE_META: DecorBizWorkspaceMeta = {
   ],
 };
 
-export function getWorkspaceMeta(): DecorBizWorkspaceMeta {
-  return DECORBIZ_WORKSPACE_META;
-}
-
 export function getPackWorkspaceTitle(_pack: string | null | undefined, lang: 'en' | 'hi'): string {
   return lang === 'hi'
     ? DECORBIZ_WORKSPACE_META.workspaceLabelHi
     : DECORBIZ_WORKSPACE_META.workspaceLabelEn;
 }
 
-export function getRecommendedModulesForPack(): string[] {
-  return DECORBIZ_WORKSPACE_META.recommendedModules;
-}
-
 export function round2(n: number): number {
   return Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 }
 
-export function round3(n: number): number {
-  return Math.round((Number(n || 0) + Number.EPSILON) * 1000) / 1000;
-}
-
 // ----------------------------------------------------------------------------
-// Tiles, Paint & Wire Material Estimators
+// Tiles Material Estimator
 // ----------------------------------------------------------------------------
 export function calculateTileBoxes(
   areaSqFt: number,
@@ -84,39 +72,4 @@ export function calculateTileBoxes(
   const boxesNeeded = Math.ceil(totalSqFtWithWastage / sqftPerBox);
   const actualCoveredSqFt = round2(boxesNeeded * sqftPerBox);
   return { totalSqFtWithWastage, boxesNeeded, actualCoveredSqFt };
-}
-
-export function calculatePaintLitres(
-  wallAreaSqFt: number,
-  coats = 2,
-  coverageSqFtPerLitre = 110
-): { totalSqFtToCoat: number; litresNeeded: number } {
-  if (wallAreaSqFt <= 0 || coats <= 0 || coverageSqFtPerLitre <= 0) {
-    return { totalSqFtToCoat: 0, litresNeeded: 0 };
-  }
-  const totalSqFtToCoat = round2(wallAreaSqFt * coats);
-  const litresNeeded = Math.ceil(totalSqFtToCoat / coverageSqFtPerLitre);
-  return { totalSqFtToCoat, litresNeeded };
-}
-
-export function calculateWireCoils(
-  requiredMeters: number,
-  metersPerCoil = 90
-): { coilsNeeded: number; surplusMeters: number } {
-  if (requiredMeters <= 0 || metersPerCoil <= 0) {
-    return { coilsNeeded: 0, surplusMeters: 0 };
-  }
-  const coilsNeeded = Math.ceil(requiredMeters / metersPerCoil);
-  const surplusMeters = round2(coilsNeeded * metersPerCoil - requiredMeters);
-  return { coilsNeeded, surplusMeters };
-}
-
-export function applyDiscountPreset(basePrice: number, discountPct: number): number {
-  const pct = Math.max(0, Math.min(100, Number(discountPct || 0)));
-  return round2(basePrice * (1 - pct / 100));
-}
-
-export function calculateMarginPct(sellingPrice: number, purchasePrice: number | null | undefined): number {
-  if (!sellingPrice || sellingPrice <= 0 || purchasePrice == null || purchasePrice <= 0) return 0;
-  return round2(((sellingPrice - purchasePrice) / sellingPrice) * 100);
 }

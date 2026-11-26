@@ -31,42 +31,123 @@ import {
   IconUsers,
   IconX,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { GlobalSearchModal } from '../components/GlobalSearchModal';
 import { RequireModule, RequireRole } from '../components/RequireGuards';
 import { PWAInstallButton } from '../components/pwa/PWAInstallButton';
 import { getInitials } from '../core/format';
 import { hasCapability, ROLE_LABELS } from '../core/permissions';
-import { AccountingScreen } from '../modules/accounting/AccountingScreen';
-import { AiAssistantScreen } from '../modules/ai/AiAssistantScreen';
-import { BillsScreen } from '../modules/bills/BillsScreen';
-import {
-  HomeScreen,
-  type AppDestination,
-  type NavigationAction,
-} from '../modules/dashboard/HomeScreen';
-import { ImportExportPanel } from '../modules/data/ImportExportPanel';
-import { ExpensesScreen } from '../modules/expenses/ExpensesScreen';
-import { AdvancedGstScreen } from '../modules/gst/AdvancedGstScreen';
-import { HelpScreen } from '../modules/help/HelpScreen';
-import { ItemsScreen, type ItemFilterTab } from '../modules/items/ItemsScreen';
-import { MessagingScreen } from '../modules/messaging/MessagingScreen';
-import { NotificationsScreen } from '../modules/notifications/NotificationsScreen';
-import { OperationsScreen } from '../modules/operations/OperationsScreen';
-import { PackWorkspaceScreen } from '../modules/packs/PackWorkspaceScreen';
-import { PartiesScreen } from '../modules/parties/PartiesScreen';
-import { PaymentsScreen } from '../modules/payments/PaymentsScreen';
-import { PosLiteScreen } from '../modules/pos/PosLiteScreen';
-import { UserProfileScreen } from '../modules/profile/UserProfileScreen';
-import { PurchasesScreen } from '../modules/purchases/PurchasesScreen';
-import { ReportsScreen } from '../modules/reports/ReportsScreen';
-import {
-  SettingsScreen,
-  type SettingsTabKey,
-} from '../modules/settings/SettingsScreen';
-import { OnlineStoreAdminScreen } from '../modules/store/OnlineStoreAdminScreen';
+import type { AppDestination, NavigationAction } from '../modules/dashboard/HomeScreen';
+import type { ItemFilterTab } from '../modules/items/ItemsScreen';
+import type { SettingsTabKey } from '../modules/settings/SettingsScreen';
 import { getPackWorkspaceTitle } from '../packs/registry';
 import { useApp } from './AppProvider';
+
+const AccountingScreen = lazy(() =>
+  import('../modules/accounting/AccountingScreen').then((m) => ({
+    default: m.AccountingScreen,
+  }))
+);
+const AiAssistantScreen = lazy(() =>
+  import('../modules/ai/AiAssistantScreen').then((m) => ({
+    default: m.AiAssistantScreen,
+  }))
+);
+const BillsScreen = lazy(() =>
+  import('../modules/bills/BillsScreen').then((m) => ({
+    default: m.BillsScreen,
+  }))
+);
+const HomeScreen = lazy(() =>
+  import('../modules/dashboard/HomeScreen').then((m) => ({
+    default: m.HomeScreen,
+  }))
+);
+const ImportExportPanel = lazy(() =>
+  import('../modules/data/ImportExportPanel').then((m) => ({
+    default: m.ImportExportPanel,
+  }))
+);
+const ExpensesScreen = lazy(() =>
+  import('../modules/expenses/ExpensesScreen').then((m) => ({
+    default: m.ExpensesScreen,
+  }))
+);
+const AdvancedGstScreen = lazy(() =>
+  import('../modules/gst/AdvancedGstScreen').then((m) => ({
+    default: m.AdvancedGstScreen,
+  }))
+);
+const HelpScreen = lazy(() =>
+  import('../modules/help/HelpScreen').then((m) => ({
+    default: m.HelpScreen,
+  }))
+);
+const ItemsScreen = lazy(() =>
+  import('../modules/items/ItemsScreen').then((m) => ({
+    default: m.ItemsScreen,
+  }))
+);
+const MessagingScreen = lazy(() =>
+  import('../modules/messaging/MessagingScreen').then((m) => ({
+    default: m.MessagingScreen,
+  }))
+);
+const NotificationsScreen = lazy(() =>
+  import('../modules/notifications/NotificationsScreen').then((m) => ({
+    default: m.NotificationsScreen,
+  }))
+);
+const OperationsScreen = lazy(() =>
+  import('../modules/operations/OperationsScreen').then((m) => ({
+    default: m.OperationsScreen,
+  }))
+);
+const PackWorkspaceScreen = lazy(() =>
+  import('../modules/packs/PackWorkspaceScreen').then((m) => ({
+    default: m.PackWorkspaceScreen,
+  }))
+);
+const PartiesScreen = lazy(() =>
+  import('../modules/parties/PartiesScreen').then((m) => ({
+    default: m.PartiesScreen,
+  }))
+);
+const PaymentsScreen = lazy(() =>
+  import('../modules/payments/PaymentsScreen').then((m) => ({
+    default: m.PaymentsScreen,
+  }))
+);
+const PosLiteScreen = lazy(() =>
+  import('../modules/pos/PosLiteScreen').then((m) => ({
+    default: m.PosLiteScreen,
+  }))
+);
+const UserProfileScreen = lazy(() =>
+  import('../modules/profile/UserProfileScreen').then((m) => ({
+    default: m.UserProfileScreen,
+  }))
+);
+const PurchasesScreen = lazy(() =>
+  import('../modules/purchases/PurchasesScreen').then((m) => ({
+    default: m.PurchasesScreen,
+  }))
+);
+const ReportsScreen = lazy(() =>
+  import('../modules/reports/ReportsScreen').then((m) => ({
+    default: m.ReportsScreen,
+  }))
+);
+const SettingsScreen = lazy(() =>
+  import('../modules/settings/SettingsScreen').then((m) => ({
+    default: m.SettingsScreen,
+  }))
+);
+const OnlineStoreAdminScreen = lazy(() =>
+  import('../modules/store/OnlineStoreAdminScreen').then((m) => ({
+    default: m.OnlineStoreAdminScreen,
+  }))
+);
 
 export function AppShell() {
   const {
@@ -94,6 +175,9 @@ export function AppShell() {
   const [quickOpen, setQuickOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const quickDialogRef = useRef<HTMLDivElement | null>(null);
+  const moreDialogRef = useRef<HTMLDivElement | null>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
 
   const isOwner = profile?.role === 'owner';
   const avatarUrl = profile?.avatar_file_id
@@ -118,6 +202,74 @@ export function AppShell() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    const activeDialog = quickOpen
+      ? quickDialogRef.current
+      : moreOpen
+        ? moreDialogRef.current
+        : null;
+    if (!activeDialog) {
+      if (lastFocusedRef.current && typeof lastFocusedRef.current.focus === 'function') {
+        lastFocusedRef.current.focus();
+        lastFocusedRef.current = null;
+      }
+      return;
+    }
+    if (!lastFocusedRef.current && document.activeElement instanceof HTMLElement) {
+      lastFocusedRef.current = document.activeElement;
+    }
+    const focusableSelector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusables = Array.from(
+      activeDialog.querySelectorAll<HTMLElement>(focusableSelector)
+    );
+    (focusables[0] ?? activeDialog).focus();
+
+    const handleTrap = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', handleTrap);
+    return () => window.removeEventListener('keydown', handleTrap);
+  }, [quickOpen, moreOpen]);
+
+  useEffect(() => {
+    const labelMap: Record<AppDestination, string> = {
+      home: t('nav.home'),
+      bills: t('nav.bills'),
+      parties: t('nav.parties'),
+      items: t('nav.items'),
+      purchases: t('nav.purchases'),
+      payments: t('nav.payments'),
+      expenses: t('nav.expenses'),
+      reports: t('nav.reports'),
+      pos: t('nav.pos'),
+      accounting: t('nav.accounting'),
+      gst: t('nav.gst'),
+      operations: t('nav.operations'),
+      messaging: t('nav.messaging'),
+      ai: t('nav.ai'),
+      online_store: t('nav.onlineStore'),
+      pack: getPackWorkspaceTitle(business?.pack, language),
+      data: t('nav.data'),
+      notifications: t('nav.notifications'),
+      settings: t('nav.settings'),
+      profile: t('nav.profile'),
+      help: t('nav.help'),
+    };
+    const sectionTitle = labelMap[dest] || t('app.name');
+    const bizTitle = business?.name || 'DecorBiz ERP';
+    document.title = `${sectionTitle} — ${bizTitle}`;
+  }, [dest, business?.name, business?.pack, language, t]);
 
   const navigate = useCallback(
     (
@@ -408,6 +560,8 @@ export function AppShell() {
                 <img
                   src={logoUrl}
                   alt={business?.name || 'Business logo'}
+                  width={32}
+                  height={32}
                   className="w-8 h-8 rounded-lg object-cover border border-[var(--border)] shrink-0"
                 />
               ) : (
@@ -443,6 +597,7 @@ export function AppShell() {
                 key={item.id}
                 type="button"
                 onClick={() => navigate(item.id)}
+                aria-current={active ? 'page' : undefined}
                 title={sidebarCollapsed ? item.label : undefined}
                 className={`w-full min-h-[44px] px-3 rounded-lg flex items-center gap-3 text-sm font-medium transition-colors ${
                   active
@@ -470,6 +625,8 @@ export function AppShell() {
               <img
                 src={logoUrl}
                 alt={business?.name || 'Business logo'}
+                width={28}
+                height={28}
                 className="w-7 h-7 rounded-lg object-cover border border-[var(--border)] shrink-0"
               />
             ) : (
@@ -563,6 +720,8 @@ export function AppShell() {
                   <img
                     src={avatarUrl}
                     alt={profile?.full_name || 'User'}
+                    width={32}
+                    height={32}
                     className="w-8 h-8 rounded-full object-cover border border-[var(--border)]"
                   />
                 ) : (
@@ -626,6 +785,13 @@ export function AppShell() {
 
         {/* Scrollable Content Viewport (bottom padded on mobile for 5-control nav) */}
         <main className="flex-1 pb-20 md:pb-8">
+          <Suspense
+            fallback={
+              <div className="p-6 text-sm text-[var(--text-muted)]">
+                {t('common.loading')}
+              </div>
+            }
+          >
           {dest === 'home' && <HomeScreen onNavigate={navigate} />}
           {dest === 'profile' && <UserProfileScreen />}
           {dest === 'settings' && <SettingsScreen initialTab={settingsTab} />}
@@ -853,6 +1019,7 @@ export function AppShell() {
               </div>
             </RequireRole>
           )}
+          </Suspense>
         </main>
       </div>
 
@@ -864,6 +1031,7 @@ export function AppShell() {
         <button
           type="button"
           onClick={() => navigate('home')}
+          aria-current={dest === 'home' ? 'page' : undefined}
           className={`h-full flex flex-col items-center justify-center gap-0.5 ${
             dest === 'home'
               ? 'text-[var(--primary-dark)]'
@@ -877,6 +1045,7 @@ export function AppShell() {
         <button
           type="button"
           onClick={() => navigate('bills')}
+          aria-current={dest === 'bills' ? 'page' : undefined}
           className={`h-full flex flex-col items-center justify-center gap-0.5 ${
             dest === 'bills'
               ? 'text-[var(--primary-dark)]'
@@ -901,6 +1070,7 @@ export function AppShell() {
         <button
           type="button"
           onClick={() => navigate('parties')}
+          aria-current={dest === 'parties' ? 'page' : undefined}
           className={`h-full flex flex-col items-center justify-center gap-0.5 ${
             dest === 'parties'
               ? 'text-[var(--primary-dark)]'
@@ -952,6 +1122,8 @@ export function AppShell() {
           onClick={() => setQuickOpen(false)}
         >
           <div
+            ref={quickDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label={t('quick.title')}
@@ -963,8 +1135,9 @@ export function AppShell() {
               <h2 className="text-base font-semibold">{t('quick.title')}</h2>
               <button
                 type="button"
+                aria-label="Close"
                 onClick={() => setQuickOpen(false)}
-                className="p-1 text-[var(--text-muted)]"
+                className="min-w-11 min-h-11 flex items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
               >
                 <IconX size={18} stroke={2} />
               </button>
@@ -1010,6 +1183,8 @@ export function AppShell() {
           onClick={() => setMoreOpen(false)}
         >
           <div
+            ref={moreDialogRef}
+            tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label={t('nav.more')}
@@ -1021,8 +1196,9 @@ export function AppShell() {
               <h2 className="text-base font-semibold">{t('nav.more')}</h2>
               <button
                 type="button"
+                aria-label="Close"
                 onClick={() => setMoreOpen(false)}
-                className="p-1 text-[var(--text-muted)]"
+                className="min-w-11 min-h-11 flex items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--surface-muted)]"
               >
                 <IconX size={18} stroke={2} />
               </button>

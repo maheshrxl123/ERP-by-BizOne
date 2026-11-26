@@ -6,12 +6,14 @@ import {
   IconHeartFilled,
   IconMail,
   IconMapPin,
+  IconMenu2,
   IconPackage,
   IconPhone,
   IconSearch,
   IconShoppingBag,
   IconStarFilled,
   IconUser,
+  IconX,
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -67,6 +69,8 @@ export default function StorefrontApp() {
   const [config, setConfig] = useState<StoreConfigPayload>(DEFAULT_CONFIG);
   const [items, setItems] = useState<PublishedStoreItemRecord[]>([]);
   const [loadingCatalogue, setLoadingCatalogue] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Filters & search
   const [lineFilter, setLineFilter] = useState<string>('all');
@@ -124,6 +128,7 @@ export default function StorefrontApp() {
 
   const navigate = useCallback(
     (path: string) => {
+      setMobileMenuOpen(false);
       if (typeof window !== 'undefined') {
         window.history.pushState({}, '', path);
         applyQueryFiltersFromLocation(path);
@@ -183,6 +188,7 @@ export default function StorefrontApp() {
 
   const loadStoreData = useCallback(async () => {
     setLoadingCatalogue(true);
+    setLoadError(null);
     try {
       const [cfgRes, catRes] = await Promise.all([
         fetch('/api/store/config'),
@@ -195,13 +201,17 @@ export default function StorefrontApp() {
           document.title = `${cfgData.storeName} — Tiles, Sanitaryware & Bath Fittings`;
         }
       }
-      if (catRes.ok) {
-        const catData = (await catRes.json()) as {
-          enabled: boolean;
-          items: PublishedStoreItemRecord[];
-        };
-        setItems(catData.items || []);
+      if (!catRes.ok) {
+        throw new Error(`Catalogue request failed (${catRes.status})`);
       }
+      const catData = (await catRes.json()) as {
+        enabled: boolean;
+        items: PublishedStoreItemRecord[];
+      };
+      setItems(catData.items || []);
+    } catch (err) {
+      console.warn('Failed to load storefront data:', err);
+      setLoadError('Unable to load the showroom catalogue right now. Please try again.');
     } finally {
       setLoadingCatalogue(false);
     }
@@ -249,7 +259,8 @@ export default function StorefrontApp() {
       .then((data: { wishlist?: Array<{ item_id: string }> }) => {
         setWishlistIds((data.wishlist || []).map((w) => w.item_id));
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn('Failed to load wishlist:', err);
         setWishlistIds([]);
       });
   }, [customerSession?.access_token]);
@@ -277,25 +288,39 @@ export default function StorefrontApp() {
       return;
     }
     const exists = wishlistIds.includes(itemId);
+    const revert = () =>
+      setWishlistIds((prev) =>
+        exists ? (prev.includes(itemId) ? prev : [...prev, itemId]) : prev.filter((id) => id !== itemId)
+      );
     setWishlistIds((prev) => (exists ? prev.filter((id) => id !== itemId) : [...prev, itemId]));
     try {
-      if (exists) {
-        await fetch(`/api/store/wishlist/${itemId}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${customerSession.access_token}` },
-        });
-      } else {
-        await fetch('/api/store/wishlist', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${customerSession.access_token}`,
-          },
-          body: JSON.stringify({ itemId }),
-        });
+      const res = exists
+        ? await fetch(`/api/store/wishlist/${itemId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${customerSession.access_token}` },
+          })
+        : await fetch('/api/store/wishlist', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${customerSession.access_token}`,
+            },
+            body: JSON.stringify({ itemId }),
+          });
+      if (res.status === 401 || res.status === 403) {
+        revert();
+        setCustomerSession(null);
+        setAuthModalOpen(true);
+        setBannerMessage('Please sign in again to update your wishlist.');
+        return;
       }
-    } catch {
-      // revert silently if offline
+      if (!res.ok) {
+        revert();
+        console.warn('Wishlist update failed:', res.status);
+      }
+    } catch (err) {
+      revert();
+      console.warn('Wishlist update failed:', err);
     }
   };
 
@@ -331,18 +356,31 @@ export default function StorefrontApp() {
   return (
     <div className="min-h-screen bg-[#FAF9F6] text-stone-900 flex flex-col">
       {/* 3-Zone Top Header Bar (Clean single-line navigation; zero ERP references) */}
-      <header className="sticky top-0 z-40 h-16 border-b border-stone-200/80 bg-[#FAF9F6]/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-6">
+      <header className="sticky top-0 z-40 border-b border-stone-200/80 bg-[#FAF9F6]/90 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto h-16 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={mobileMenuOpen}
+              className="md:hidden min-h-11 min-w-11 rounded-lg border border-stone-200 bg-white text-stone-800 inline-flex items-center justify-center shrink-0"
+            >
+              {mobileMenuOpen ? <IconX size={18} /> : <IconMenu2 size={18} />}
+            </button>
+
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="flex items-center gap-2.5 text-left shrink-0"
+              className="flex items-center gap-2.5 text-left shrink-0 min-h-11 py-1.5"
             >
               {config.logoUrl ? (
                 <img
                   src={config.logoUrl}
                   alt={config.storeName}
+                  width={32}
+                  height={32}
+                  decoding="async"
                   referrerPolicy="no-referrer"
                   className="h-8 w-8 rounded-lg object-cover border border-stone-200"
                 />
@@ -351,16 +389,17 @@ export default function StorefrontApp() {
                   <IconBuildingStore size={18} />
                 </div>
               )}
-              <span className="text-sm sm:text-base font-bold tracking-tight text-stone-900">
+              <span className="text-sm sm:text-base font-bold tracking-tight text-stone-900 truncate max-w-[140px] sm:max-w-none">
                 {config.storeName}
               </span>
             </button>
 
-            <nav className="hidden md:flex items-center gap-5 text-xs font-medium text-stone-600">
+            <nav aria-label="Primary navigation" className="hidden md:flex items-center gap-4 text-xs font-medium text-stone-600">
               <button
                 type="button"
                 onClick={() => navigate('/catalogue')}
-                className={`hover:text-stone-900 transition-colors ${
+                aria-current={route.view === 'catalogue' ? 'page' : undefined}
+                className={`min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors ${
                   route.view === 'catalogue' ? 'text-stone-900 font-semibold' : ''
                 }`}
               >
@@ -372,7 +411,7 @@ export default function StorefrontApp() {
                   setLineFilter('tiles_slabs');
                   navigate('/catalogue');
                 }}
-                className="hover:text-stone-900 transition-colors"
+                className="min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors"
               >
                 Tiles & Slabs
               </button>
@@ -382,14 +421,15 @@ export default function StorefrontApp() {
                   setLineFilter('sanitaryware');
                   navigate('/catalogue');
                 }}
-                className="hover:text-stone-900 transition-colors"
+                className="min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors"
               >
                 Bathware
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/orders')}
-                className={`hover:text-stone-900 transition-colors ${
+                aria-current={route.view === 'orders' ? 'page' : undefined}
+                className={`min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors ${
                   route.view === 'orders' ? 'text-stone-900 font-semibold' : ''
                 }`}
               >
@@ -398,9 +438,9 @@ export default function StorefrontApp() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <div className="hidden sm:block relative w-52">
-              <IconSearch size={14} className="absolute left-3 top-2.5 text-stone-400" />
+              <IconSearch size={14} className="absolute left-3 top-3.5 lg:top-2.5 text-stone-400" />
               <input
                 type="search"
                 value={searchQuery}
@@ -409,7 +449,8 @@ export default function StorefrontApp() {
                   if (route.view !== 'home' && route.view !== 'catalogue') navigate('/catalogue');
                 }}
                 placeholder="Search tiles, finishes..."
-                className="w-full h-9 pl-8 pr-3 rounded-lg border border-stone-300 bg-white text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-800"
+                aria-label="Search products"
+                className="w-full h-11 lg:h-9 pl-8 pr-3 rounded-lg border border-stone-300 bg-white text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-800"
               />
             </div>
 
@@ -417,7 +458,8 @@ export default function StorefrontApp() {
               type="button"
               onClick={() => navigate('/wishlist')}
               aria-label="Wishlist"
-              className="h-9 px-2.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-700 inline-flex items-center gap-1 text-xs font-medium"
+              aria-current={route.view === 'wishlist' ? 'page' : undefined}
+              className="min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 lg:h-9 px-2.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-700 inline-flex items-center justify-center gap-1 text-xs font-medium"
             >
               <IconHeart size={16} />
               <span className="hidden lg:inline">{wishlistIds.length}</span>
@@ -426,7 +468,8 @@ export default function StorefrontApp() {
             <button
               type="button"
               onClick={() => (customerSession ? navigate('/orders') : setAuthModalOpen(true))}
-              className="h-9 px-3 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-800 inline-flex items-center gap-1.5 text-xs font-medium"
+              aria-label={customerSession ? 'Customer account and orders' : 'Sign In'}
+              className="min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 lg:h-9 px-3 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-800 inline-flex items-center justify-center gap-1.5 text-xs font-medium"
             >
               {customerSession ? <IconPackage size={15} /> : <IconUser size={15} />}
               <span className="hidden sm:inline">
@@ -437,13 +480,79 @@ export default function StorefrontApp() {
             <button
               type="button"
               onClick={() => setCartOpen(true)}
-              className="h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white inline-flex items-center gap-2 text-xs font-semibold"
+              className="min-h-11 lg:min-h-0 lg:h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white inline-flex items-center gap-2 text-xs font-semibold"
             >
               <IconShoppingBag size={15} />
               <span className="tabular-nums">Bag ({bagCount})</span>
             </button>
           </div>
         </div>
+
+        {/* Mobile Navigation & Search Drawer (< md) */}
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-stone-200 bg-[#FAF9F6] px-4 py-3 space-y-3">
+            <div className="sm:hidden relative">
+              <IconSearch size={14} className="absolute left-3 top-3.5 text-stone-400" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  if (route.view !== 'home' && route.view !== 'catalogue') navigate('/catalogue');
+                }}
+                placeholder="Search tiles, finishes..."
+                aria-label="Search products"
+                className="w-full h-11 pl-8 pr-3 rounded-lg border border-stone-300 bg-white text-xs text-stone-900 focus:outline-none focus:ring-2 focus:ring-stone-800"
+              />
+            </div>
+            <nav aria-label="Mobile navigation" className="grid grid-cols-2 gap-2 text-xs font-medium text-stone-700">
+              <button
+                type="button"
+                onClick={() => navigate('/catalogue')}
+                aria-current={route.view === 'catalogue' ? 'page' : undefined}
+                className={`min-h-11 px-3 rounded-lg border text-left ${
+                  route.view === 'catalogue'
+                    ? 'border-stone-900 bg-stone-900 text-white font-semibold'
+                    : 'border-stone-200 bg-white'
+                }`}
+              >
+                Catalogue
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLineFilter('tiles_slabs');
+                  navigate('/catalogue');
+                }}
+                className="min-h-11 px-3 rounded-lg border border-stone-200 bg-white text-left"
+              >
+                Tiles & Slabs
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLineFilter('sanitaryware');
+                  navigate('/catalogue');
+                }}
+                className="min-h-11 px-3 rounded-lg border border-stone-200 bg-white text-left"
+              >
+                Bathware
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/orders')}
+                aria-current={route.view === 'orders' ? 'page' : undefined}
+                className={`min-h-11 px-3 rounded-lg border text-left ${
+                  route.view === 'orders'
+                    ? 'border-stone-900 bg-stone-900 text-white font-semibold'
+                    : 'border-stone-200 bg-white'
+                }`}
+              >
+                My Orders
+              </button>
+            </nav>
+          </div>
+        )}
       </header>
 
       {bannerMessage && (
@@ -517,6 +626,9 @@ export default function StorefrontApp() {
                     <img
                       src={heroImageUrl}
                       alt={primaryBanner?.title || 'Architectural Tiles & Bathware Showroom'}
+                      width={1600}
+                      height={640}
+                      decoding="async"
                       referrerPolicy="no-referrer"
                       className="w-full h-[380px] sm:h-[480px] object-cover opacity-75"
                     />
@@ -589,6 +701,10 @@ export default function StorefrontApp() {
                           <img
                             src={LINE_FALLBACK_IMAGES[cat.key]}
                             alt={cat.title}
+                            width={600}
+                            height={450}
+                            loading="lazy"
+                            decoding="async"
                             referrerPolicy="no-referrer"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                           />
@@ -607,9 +723,15 @@ export default function StorefrontApp() {
               <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-200 pb-4">
                   <div>
-                    <h2 className="text-2xl font-bold text-stone-900">
-                      {STORE_PRODUCT_LINE_LABELS[lineFilter] || 'Showroom Catalogue'}
-                    </h2>
+                    {route.view === 'catalogue' ? (
+                      <h1 className="text-2xl font-bold text-stone-900">
+                        {STORE_PRODUCT_LINE_LABELS[lineFilter] || 'Showroom Catalogue'}
+                      </h1>
+                    ) : (
+                      <h2 className="text-2xl font-bold text-stone-900">
+                        {STORE_PRODUCT_LINE_LABELS[lineFilter] || 'Showroom Catalogue'}
+                      </h2>
+                    )}
                     <p className="text-xs text-stone-500 mt-0.5 tabular-nums">
                       {filteredItems.length} published product(s) available
                     </p>
@@ -619,7 +741,7 @@ export default function StorefrontApp() {
                     <button
                       type="button"
                       onClick={() => setShowFiltersMobile((v) => !v)}
-                      className="lg:hidden h-9 px-3 rounded-lg border border-stone-300 bg-white text-xs font-medium inline-flex items-center gap-1.5"
+                      className="lg:hidden min-h-11 min-w-11 px-3 rounded-lg border border-stone-300 bg-white text-xs font-medium inline-flex items-center gap-1.5"
                     >
                       <IconFilter size={14} />
                       <span>Filters</span>
@@ -628,7 +750,8 @@ export default function StorefrontApp() {
                     <select
                       value={sortBy}
                       onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-                      className="h-9 px-3 rounded-lg border border-stone-300 bg-white text-xs font-medium text-stone-800"
+                      aria-label="Sort products"
+                      className="h-11 lg:h-9 px-3 rounded-lg border border-stone-300 bg-white text-xs font-medium text-stone-800"
                     >
                       <option value="featured">Featured Collection</option>
                       <option value="price_asc">Price: Low to High</option>
@@ -669,11 +792,12 @@ export default function StorefrontApp() {
                       </div>
 
                       <div>
-                        <label className="block font-medium text-stone-600 mb-1">Product Line</label>
+                        <label htmlFor="filter-product-line" className="block font-medium text-stone-600 mb-1">Product Line</label>
                         <select
+                          id="filter-product-line"
                           value={lineFilter}
                           onChange={(e) => setLineFilter(e.target.value)}
-                          className="w-full h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
                         >
                           {Object.entries(STORE_PRODUCT_LINE_LABELS).map(([k, lbl]) => (
                             <option key={k} value={k}>
@@ -684,11 +808,12 @@ export default function StorefrontApp() {
                       </div>
 
                       <div>
-                        <label className="block font-medium text-stone-600 mb-1">Size / Dimensions</label>
+                        <label htmlFor="filter-size" className="block font-medium text-stone-600 mb-1">Size / Dimensions</label>
                         <select
+                          id="filter-size"
                           value={sizeFilter}
                           onChange={(e) => setSizeFilter(e.target.value)}
-                          className="w-full h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
                         >
                           <option value="all">All Sizes</option>
                           {facets.sizes.map((s) => (
@@ -700,11 +825,12 @@ export default function StorefrontApp() {
                       </div>
 
                       <div>
-                        <label className="block font-medium text-stone-600 mb-1">Finish</label>
+                        <label htmlFor="filter-finish" className="block font-medium text-stone-600 mb-1">Finish</label>
                         <select
+                          id="filter-finish"
                           value={finishFilter}
                           onChange={(e) => setFinishFilter(e.target.value)}
-                          className="w-full h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
                         >
                           <option value="all">All Finishes</option>
                           {facets.finishes.map((f) => (
@@ -716,11 +842,12 @@ export default function StorefrontApp() {
                       </div>
 
                       <div>
-                        <label className="block font-medium text-stone-600 mb-1">Shade / Colour</label>
+                        <label htmlFor="filter-shade" className="block font-medium text-stone-600 mb-1">Shade / Colour</label>
                         <select
+                          id="filter-shade"
                           value={shadeFilter}
                           onChange={(e) => setShadeFilter(e.target.value)}
-                          className="w-full h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 bg-white"
                         >
                           <option value="all">All Shades</option>
                           {facets.shades.map((sh) => (
@@ -732,23 +859,27 @@ export default function StorefrontApp() {
                       </div>
 
                       <div>
-                        <label className="block font-medium text-stone-600 mb-1">Price Range (Rs)</label>
+                        <label htmlFor="filter-min-price" className="block font-medium text-stone-600 mb-1">Price Range (Rs)</label>
                         <div className="grid grid-cols-2 gap-2">
                           <input
+                            id="filter-min-price"
                             type="number"
                             min={0}
                             value={minPrice}
                             onChange={(e) => setMinPrice(e.target.value)}
                             placeholder="Min"
-                            className="h-9 px-2.5 rounded-lg border border-stone-300 tabular-nums"
+                            aria-label="Minimum price"
+                            className="h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 tabular-nums"
                           />
                           <input
+                            id="filter-max-price"
                             type="number"
                             min={0}
                             value={maxPrice}
                             onChange={(e) => setMaxPrice(e.target.value)}
                             placeholder="Max"
-                            className="h-9 px-2.5 rounded-lg border border-stone-300 tabular-nums"
+                            aria-label="Maximum price"
+                            className="h-11 lg:h-9 px-2.5 rounded-lg border border-stone-300 tabular-nums"
                           />
                         </div>
                       </div>
@@ -776,11 +907,23 @@ export default function StorefrontApp() {
                           />
                         ))}
                       </div>
+                    ) : loadError ? (
+                      <div className="rounded-2xl border border-red-200 bg-white p-12 text-center space-y-3">
+                        <p className="text-sm font-semibold text-stone-900">Unable to load catalogue</p>
+                        <p className="text-xs text-stone-600">{loadError}</p>
+                        <button
+                          type="button"
+                          onClick={() => void loadStoreData()}
+                          className="min-h-11 px-5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold inline-flex items-center justify-center"
+                        >
+                          Retry
+                        </button>
+                      </div>
                     ) : filteredItems.length === 0 ? (
                       <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center space-y-2">
                         <p className="text-sm font-semibold text-stone-800">No matching products found</p>
                         <p className="text-xs text-stone-500">
-                          Try clearing your size, finish, or price filters or publish items from showroom administration.
+                          Try clearing your size, finish, or price filters to view more showroom pieces.
                         </p>
                       </div>
                     ) : (
@@ -804,6 +947,10 @@ export default function StorefrontApp() {
                                   <img
                                     src={getProductImageSrc(item)}
                                     alt={item.name}
+                                    width={600}
+                                    height={450}
+                                    loading="lazy"
+                                    decoding="async"
                                     referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                   />
@@ -812,7 +959,7 @@ export default function StorefrontApp() {
                                   type="button"
                                   onClick={() => void handleToggleWishlist(item.id)}
                                   aria-label="Save to wishlist"
-                                  className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 border border-stone-200 flex items-center justify-center text-stone-700 hover:bg-white"
+                                  className="absolute top-3 right-3 min-w-11 min-h-11 lg:min-w-0 lg:min-h-0 lg:w-8 lg:h-8 rounded-full bg-white/90 border border-stone-200 flex items-center justify-center text-stone-700 hover:bg-white"
                                 >
                                   {wished ? (
                                     <IconHeartFilled size={15} className="text-rose-600" />
@@ -884,7 +1031,7 @@ export default function StorefrontApp() {
       )}
 
       {/* Clean Customer-Facing Showroom Footer (ZERO links to ERP) */}
-      <footer className="border-t border-stone-200 bg-white mt-12">
+      <footer className="border-t border-stone-200 bg-white mt-12 pb-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 grid grid-cols-1 md:grid-cols-3 gap-8 text-xs text-stone-600">
           <div className="space-y-2">
             <p className="text-sm font-bold text-stone-900">{config.storeName}</p>
@@ -896,16 +1043,22 @@ export default function StorefrontApp() {
             )}
             <div className="flex flex-wrap gap-4 pt-1">
               {config.phone && (
-                <span className="inline-flex items-center gap-1">
+                <a
+                  href={`tel:${config.phone}`}
+                  className="inline-flex items-center gap-1 min-h-11 lg:min-h-0 py-2.5 lg:py-0 hover:text-stone-900 hover:underline"
+                >
                   <IconPhone size={13} className="text-stone-400" />
                   <span>{config.phone}</span>
-                </span>
+                </a>
               )}
               {config.email && (
-                <span className="inline-flex items-center gap-1">
+                <a
+                  href={`mailto:${config.email}`}
+                  className="inline-flex items-center gap-1 min-h-11 lg:min-h-0 py-2.5 lg:py-0 hover:text-stone-900 hover:underline"
+                >
                   <IconMail size={13} className="text-stone-400" />
                   <span>{config.email}</span>
-                </span>
+                </a>
               )}
             </div>
           </div>
@@ -918,7 +1071,7 @@ export default function StorefrontApp() {
                   key={p.id}
                   type="button"
                   onClick={() => navigate(`/page/${encodeURIComponent(p.slug)}`)}
-                  className="text-left hover:text-stone-900 hover:underline"
+                  className="text-left min-h-11 lg:min-h-0 py-2.5 lg:py-0.5 hover:text-stone-900 hover:underline"
                 >
                   {p.title}
                 </button>
@@ -926,7 +1079,7 @@ export default function StorefrontApp() {
               <button
                 type="button"
                 onClick={() => navigate('/orders')}
-                className="text-left hover:text-stone-900 hover:underline"
+                className="text-left min-h-11 lg:min-h-0 py-2.5 lg:py-0.5 hover:text-stone-900 hover:underline"
               >
                 Order Status & History
               </button>
@@ -971,7 +1124,30 @@ export default function StorefrontApp() {
         customerSession={customerSession}
         onUpdateQty={(key, nextBaseQty) =>
           setCart((prev) =>
-            prev.map((c) => (c.key === key ? { ...c, baseQty: nextBaseQty, qty: nextBaseQty } : c))
+            prev.map((c) => {
+              if (c.key !== key) return c;
+              const specsObj =
+                c.item.specs && typeof c.item.specs === 'object'
+                  ? (c.item.specs as Record<string, unknown>)
+                  : null;
+              const rawSqft = Number(specsObj?.sqft_per_box ?? 0);
+              const sqftPerBox =
+                Number.isFinite(rawSqft) && rawSqft > 0
+                  ? rawSqft
+                  : c.sqftCovered && c.baseQty > 0
+                    ? c.sqftCovered / c.baseQty
+                    : null;
+              const nextSqftCovered = sqftPerBox
+                ? Math.round(nextBaseQty * sqftPerBox * 100) / 100
+                : c.sqftCovered;
+              return {
+                ...c,
+                mode: c.mode === 'sqft' ? 'boxes' : c.mode,
+                baseQty: nextBaseQty,
+                qty: nextBaseQty,
+                sqftCovered: nextSqftCovered,
+              };
+            })
           )
         }
         onRemoveItem={(key) => setCart((prev) => prev.filter((c) => c.key !== key))}

@@ -2,6 +2,8 @@ import { IconAlertCircle, IconCheck, IconFileInvoice, IconLoader2, IconPrinter }
 import { useEffect, useMemo, useState } from 'react';
 import { buildUpiDeepLink, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
+import enMessages from '../../i18n/en.json';
+import hiMessages from '../../i18n/hi.json';
 import type { PublicSharedBillPayload } from '../../types/decorbiz';
 import { UpiQrSvg } from './UpiQrSvg';
 
@@ -13,6 +15,12 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
   const [payload, setPayload] = useState<PublicSharedBillPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const lang =
+    typeof window !== 'undefined' && window.localStorage.getItem('decorbiz_language') === 'hi'
+      ? 'hi'
+      : 'en';
+  const t = (key: keyof typeof enMessages.share) =>
+    (lang === 'hi' ? hiMessages.share[key] : enMessages.share[key]) || enMessages.share[key];
 
   useEffect(() => {
     let active = true;
@@ -96,7 +104,7 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
       <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
         <div className="flex items-center gap-2.5 text-sm text-[var(--text-muted)]">
           <IconLoader2 size={20} stroke={2} className="animate-spin text-[var(--primary-dark)]" />
-          <span>Loading invoice document...</span>
+          <span>{t('loading')}</span>
         </div>
       </div>
     );
@@ -107,7 +115,7 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
       <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
         <div className="max-w-md w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 text-center space-y-3">
           <IconAlertCircle size={32} stroke={2} className="text-[var(--give)] mx-auto" />
-          <h1 className="text-lg font-semibold">Invoice Link Unavailable</h1>
+          <h1 className="text-lg font-semibold">{t('linkUnavailable')}</h1>
           <p className="text-sm text-[var(--text-muted)]">
             {errorMsg || 'This shared invoice link has expired or been revoked.'}
           </p>
@@ -130,7 +138,7 @@ export function PublicBillShareView({ shareToken }: PublicBillShareViewProps) {
     <div className="min-h-screen bg-[var(--surface-muted)] py-6 px-3 sm:px-6 text-neutral-900">
       <div className="no-print max-w-[780px] mx-auto mb-3 flex items-center justify-between gap-3">
         <span className="text-xs text-[var(--text-muted)]">
-          View-only shared document
+          {t('viewOnly')}
         </span>
         <button
           type="button"

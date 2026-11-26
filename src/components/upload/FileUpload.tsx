@@ -13,7 +13,7 @@ export interface UploadedFileItem {
 
 interface FileUploadProps {
   label: string;
-  purpose?: 'attachment' | 'prescription';
+  purpose?: 'attachment';
   value: UploadedFileItem | null;
   onChange: (next: UploadedFileItem | null) => void;
   helperText?: string;
@@ -94,7 +94,9 @@ export function FileUpload({
     if (value?.fileId && session?.access_token) {
       await erpFetch(`/api/erp/files/${encodeURIComponent(value.fileId)}`, session.access_token, {
         method: 'DELETE',
-      }).catch(() => undefined);
+      }).catch((err) => {
+        console.warn('Failed to delete uploaded attachment:', err);
+      });
     }
     onChange(null);
   };

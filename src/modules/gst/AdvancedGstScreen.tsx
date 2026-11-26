@@ -46,7 +46,7 @@ interface Gstr1Data {
 }
 
 export function AdvancedGstScreen() {
-  const { session, isModuleEnabled, showToast } = useApp();
+  const { session, isModuleEnabled, showToast, t } = useApp();
   const einvoiceEnabled = isModuleEnabled('einvoice');
 
   const [tab, setTab] = useState<GstTab>('gstr1');
@@ -355,7 +355,7 @@ export function AdvancedGstScreen() {
             className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium inline-flex items-center gap-1"
           >
             <IconRefresh size={14} stroke={2} />
-            <span>Refresh</span>
+            <span>{t('gst.refresh')}</span>
           </button>
         </div>
       </div>
@@ -364,11 +364,11 @@ export function AdvancedGstScreen() {
       <div className="flex items-center gap-2 overflow-x-auto border-b border-[var(--border)] pb-2">
         {(
           [
-            { key: 'gstr1', label: 'GSTR-1', icon: IconFileSpreadsheet, visible: true },
-            { key: 'gstr3b', label: 'GSTR-3B & HSN', icon: IconScale, visible: true },
-            { key: 'gstr2b', label: 'GSTR-2B ITC Match', icon: IconShieldCheck, visible: true },
-            { key: 'einvoice', label: 'E-Invoice / E-Way', icon: IconReceipt, visible: einvoiceEnabled },
-            { key: 'tds', label: 'TDS / TCS', icon: IconPlus, visible: true },
+            { key: 'gstr1', label: t('gst.gstr1'), icon: IconFileSpreadsheet, visible: true },
+            { key: 'gstr3b', label: t('gst.gstr3b'), icon: IconScale, visible: true },
+            { key: 'gstr2b', label: t('gst.gstr2b'), icon: IconShieldCheck, visible: true },
+            { key: 'einvoice', label: t('gst.einvoice'), icon: IconReceipt, visible: einvoiceEnabled },
+            { key: 'tds', label: t('gst.tds'), icon: IconPlus, visible: true },
           ] as const
         )
           .filter((item) => item.visible)
@@ -402,7 +402,7 @@ export function AdvancedGstScreen() {
               className="h-9 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium inline-flex items-center gap-1.5"
             >
               <IconDownload size={14} stroke={2} />
-              <span>Export GSTR-1 CSV</span>
+              <span>{t('gst.exportGstr1Csv')}</span>
             </button>
           </div>
 

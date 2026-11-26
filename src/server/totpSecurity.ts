@@ -4,7 +4,16 @@ const FALLBACK_TOTP_PROOF_KEY = crypto.randomBytes(32).toString('hex');
 
 function getTotpProofSecret(): string {
   const configured = process.env.APP_ENCRYPTION_KEY?.trim() || '';
-  return configured.length >= 16 ? configured : FALLBACK_TOTP_PROOF_KEY;
+  if (configured.length >= 16) return configured;
+
+  const isProd =
+    process.env.NODE_ENV === 'production' ||
+    process.env.VERCEL === '1' ||
+    process.env.VERCEL === 'true';
+  if (isProd) {
+    throw new Error('APP_ENCRYPTION_KEY (at least 16 characters) is required in production.');
+  }
+  return FALLBACK_TOTP_PROOF_KEY;
 }
 
 export function hashRecoveryCode(code: string): string {

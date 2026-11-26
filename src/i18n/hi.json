@@ -483,6 +483,79 @@
       "ageing": "बकाया अवधि (Ageing)",
       "audit": "गतिविधि लॉग"
     }
+  },
+  "workspace": {
+    "loading": "DecorBiz कार्यक्षेत्र लोड हो रहा है...",
+    "ipBlocked": "IP पता अनुमत नहीं है",
+    "securityTitle": "DecorBiz ERP सुरक्षा",
+    "ipBlockedHint": "यदि आपका ISP IP बदल गया है, तो व्यवसाय स्वामी से Settings -> Security अपडेट करने को कहें।",
+    "retry": "पुनः प्रयास करें",
+    "securityUnavailable": "सुरक्षा सत्यापन अनुपलब्ध",
+    "retrySecurityCheck": "सुरक्षा जांच पुनः करें",
+    "accountDeactivated": "खाता निष्क्रिय कर दिया गया",
+    "accountDeactivatedDesc": "आपका स्टाफ खाता व्यवसाय स्वामी द्वारा निष्क्रिय कर दिया गया है।"
+  },
+  "authExtra": {
+    "setNewPasswordTitle": "नया पासवर्ड सेट करें",
+    "setNewPasswordDesc": "अपने DecorBiz खाते के लिए एक मजबूत नया पासवर्ड चुनें।",
+    "twoFactorTitle": "दो-चरणीय सत्यापन (2FA)",
+    "twoFactorDesc": "6-अंकीय ऑथेंटिकेटर कोड या रिकवरी कोड दर्ज करें",
+    "authenticatorCodeLabel": "ऑथेंटिकेटर या रिकवरी कोड",
+    "verifying": "सत्यापित हो रहा है...",
+    "verifyAndOpen": "सत्यापित करें और ERP खोलें",
+    "signOutAndSwitch": "साइन आउट करें और खाता बदलें"
+  },
+  "pos": {
+    "title": "POS-लाइट और ऑफ़लाइन काउंटर",
+    "subtitle": "तेज़ काउंटर बिलिंग, होल्ड बिल, कैश+UPI भुगतान, शिफ्ट मिलान और ऑफ़लाइन कतार।",
+    "online": "ऑनलाइन",
+    "offline": "ऑफ़लाइन",
+    "queueOfflineMode": "ऑफ़लाइन कतार मोड",
+    "refresh": "रीफ़्रेश",
+    "resume": "फिर शुरू करें",
+    "syncing": "सिंक हो रहा है...",
+    "syncNow": "अभी सिंक करें",
+    "closeShift": "शिफ्ट बंद करें",
+    "openShift": "शिफ्ट खोलें"
+  },
+  "gst": {
+    "refresh": "रीफ़्रेश",
+    "gstr1": "GSTR-1",
+    "gstr3b": "GSTR-3B और HSN",
+    "gstr2b": "GSTR-2B ITC मिलान",
+    "einvoice": "ई-इनवॉइस / ई-वे",
+    "tds": "TDS / TCS",
+    "exportGstr1Csv": "GSTR-1 CSV निर्यात करें"
+  },
+  "ops": {
+    "title": "संचालन, गोदाम और शोरूम डिस्पैच",
+    "subtitle": "गोदाम ट्रांसफर, स्टॉक गिनती, ऑर्डर, ब्रेकेज रिटर्न, सैंपल, कॉन्ट्रैक्टर दरें, कमीशन और डिलीवरी ट्रिप।",
+    "refresh": "रीफ़्रेश"
+  },
+  "storeAdmin": {
+    "ordersTab": "ऑर्डर इनबॉक्स",
+    "catalogTab": "ऑनलाइन कैटलॉग",
+    "tripsTab": "डिलीवरी ट्रिप",
+    "zonesTab": "ज़ोन",
+    "couponsTab": "कूपन",
+    "contentTab": "बैनर और पेज",
+    "reviewsTab": "समीक्षाएं",
+    "pickingSlip": "शोरूम पिकिंग स्लिप",
+    "dispatchSheet": "डिलीवरी डिस्पैच शीट",
+    "print": "प्रिंट करें",
+    "close": "बंद करें"
+  },
+  "specs": {
+    "lengthMm": "लंबाई (mm) *",
+    "widthMm": "चौड़ाई (mm) *",
+    "thicknessMm": "मोटाई (mm)",
+    "sqftPerBox": "वर्ग फुट / बॉक्स *",
+    "sqmPerBox": "वर्ग मीटर / बॉक्स"
+  },
+  "share": {
+    "loading": "इनवॉइस दस्तावेज़ लोड हो रहा है...",
+    "linkUnavailable": "इनवॉइस लिंक उपलब्ध नहीं है",
+    "viewOnly": "केवल देखने योग्य साझा दस्तावेज़"
   }
 }
 

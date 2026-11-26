@@ -17,14 +17,10 @@
   - **POS-Lite Counter Billing**: Fast item grid, barcode scan, decimal & integer quantities, parked/held bills, split Cash + UPI tender validation, cash register shift open/close variance, and idempotent offline queue sync (`idempotency_key`).
 - **Purchases, Expenses & Business Reports**:
   - Supplier purchase bills (auto-updating stock & purchase price), purchase returns/debit notes, expense vouchers with receipt attachments, Day Book, Cash Book, Bank Book, Profit Estimate (hidden from Cashier/Storekeeper), Party Dues Ageing, GST Summary, and HSN Summary.
-- **7 Trade-Specific Business Packs**:
-  1. **Kirana / Grocery**: Loose weight ↔ amount calculator (`₹50` → `kg`/`gm`), quick MRP discount presets.
-  2. **Medical Store / Pharmacy**: Batch numbers, Mfg/Expiry dates, automatic **FEFO** batch picking, expired batch sale lockout, near-expiry alerts, and Schedule H/H1/X prescription register.
-  3. **Clothing / Footwear**: Size × Colour variant matrix generator, style code, fabric & season attributes.
-  4. **Hardware / Tiles / Sanitary / Timber**: Area (`sq.ft` → boxes), paint coverage, and wire length calculators + party-specific rate cards & contractor project sites.
-  5. **General Retail / Electronics**: Serial/IMEI tracking, warranty months, and MRP savings display on invoices.
-  6. **Wholesale / Distribution**: Multi-tier pricing (`Retail`, `Wholesale`, `Distributor`, `Special`), minimum order qty, and margin checks.
-  7. **Service / Repair / Workshop**: Job cards (`received` → `diagnosing` → `in_progress` → `ready` → `delivered`), device/serial intake, spare parts + labour billing.
+- **DecorBiz Showroom & Building Materials Configuration**:
+  - **5 Fixed Product Lines with Typed Specifications**: `Tiles & Slabs`, `Sanitaryware`, `Faucets & CP Fittings`, `Tile Adhesive & Grout`, and `Other / General`, each with dedicated technical specs, shade/batch lot tracking, and **Box ↔ Sq.Ft ↔ Sq.M ↔ Pcs** unit conversions.
+  - **Material Estimator & Contractor Sites**: Tile area-to-boxes calculator (with wastage %), contractor/project site tracking on bills, party-specific rate cards, and 1-click estimate-to-quotation workflows.
+  - **Online Storefront (`/`) + ERP (`/ERP`)**: Integrated public product catalogue, cart, wishlist, and checkout/quote requests alongside the full back-office ERP.
 - **Double-Entry Accounting & Advanced GST**:
   - Chart of Accounts, balanced `Dr = Cr` vouchers (`Journal`, `Contra`, `Receipt`, `Payment`), Guided Opening Balance Migration, Trial Balance, Profit & Loss, Balance Sheet, and Bank Reconciliation.
   - GSTR-1 (B2B, B2C state summary, Credit Notes CSV export), GSTR-3B, GSTR-2B ITC auto-reconciliation, NIC/GSP E-Invoice IRN/QR & E-Way Bill panel, and TDS/TCS registers.

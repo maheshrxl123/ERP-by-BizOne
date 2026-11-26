@@ -1,7 +1,15 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Express, Request, Response } from 'express';
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import crypto from 'node:crypto';
 import { redactSecretsFromText } from '../aiGateway.ts';
+
+function asyncHandler<TReq extends Request = AuthenticatedRequest>(
+  fn: (req: TReq, res: Response, next: NextFunction) => Promise<void> | void
+): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req as TReq, res, next)).catch(next);
+  };
+}
 import { createUserScopedClient, getSupabaseAdmin, STORAGE_BUCKET } from '../config.ts';
 import {
   decryptSecret,
@@ -171,7 +179,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
     '/api/integrations/google-drive/status',
     requireActiveStaff,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       if (!['owner', 'manager', 'accountant'].includes(req.staffUser?.role ?? '')) {
         res.status(403).json({ error: 'Insufficient permissions.' });
         return;
@@ -223,7 +231,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
             err instanceof Error ? err.message : 'Unable to check Google Drive status.',
         });
       }
-    }
+    })
   );
 
   app.post(
@@ -231,7 +239,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
     requireActiveStaff,
     requireOwner,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       const supabaseAdmin = req.supabaseAdmin!;
       try {
         const { clientId } = await getGoogleDriveOAuthConfig(supabaseAdmin);
@@ -261,10 +269,10 @@ export function registerGoogleDriveRoutes(app: Express): void {
         const message = err instanceof Error ? err.message : 'Unable to start Google OAuth.';
         res.status(400).json({ error: message });
       }
-    }
+    })
   );
 
-  app.get('/api/integrations/google-drive/callback', async (req: Request, res: Response) => {
+  app.get('/api/integrations/google-drive/callback', asyncHandler(async (req: Request, res: Response) => {
     const supabaseAdmin = getSupabaseAdmin();
     if (!supabaseAdmin) {
       res.status(503).send('Supabase is not configured on the server.');
@@ -417,14 +425,14 @@ export function registerGoogleDriveRoutes(app: Express): void {
         err instanceof Error ? err.message : 'Unable to complete Google Drive OAuth.'
       );
     }
-  });
+  }));
 
   app.post(
     '/api/integrations/google-drive/schedule',
     requireActiveStaff,
     requireOwner,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       const supabaseAdmin = req.supabaseAdmin!;
       try {
         const scheduleEnabled = Boolean(req.body?.scheduleEnabled);
@@ -454,14 +462,14 @@ export function registerGoogleDriveRoutes(app: Express): void {
           error: err instanceof Error ? err.message : 'Failed to update schedule.',
         });
       }
-    }
+    })
   );
 
   app.post(
     '/api/integrations/google-drive/backup-now',
     requireActiveStaff,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       if (!['owner', 'manager', 'accountant'].includes(req.staffUser?.role ?? '')) {
         res.status(403).json({
           error: 'Only Owner, Manager, or Accountant can upload Drive backups.',
@@ -615,14 +623,14 @@ export function registerGoogleDriveRoutes(app: Express): void {
           .eq('id', 1);
         res.status(400).json({ error: message });
       }
-    }
+    })
   );
 
   app.get(
     '/api/integrations/google-drive/backups',
     requireActiveStaff,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       if (!['owner', 'manager', 'accountant'].includes(req.staffUser?.role ?? '')) {
         res.status(403).json({ error: 'Insufficient permissions.' });
         return;
@@ -661,7 +669,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
           error: err instanceof Error ? err.message : 'Unable to list Drive backups.',
         });
       }
-    }
+    })
   );
 
   app.post(
@@ -669,7 +677,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
     requireActiveStaff,
     requireOwner,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       const supabaseAdmin = req.supabaseAdmin!;
       const userClient = createUserScopedClient(req.headers.authorization!);
       try {
@@ -746,7 +754,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
           error: err instanceof Error ? err.message : 'Google Drive restore failed.',
         });
       }
-    }
+    })
   );
 
   app.post(
@@ -754,7 +762,7 @@ export function registerGoogleDriveRoutes(app: Express): void {
     requireActiveStaff,
     requireOwner,
     requireModuleEnabled('google_drive_backup'),
-    async (req: AuthenticatedRequest, res: Response) => {
+    asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
       const supabaseAdmin = req.supabaseAdmin!;
       try {
         const { data: conn } = await supabaseAdmin
@@ -811,6 +819,6 @@ export function registerGoogleDriveRoutes(app: Express): void {
               : 'Unable to disconnect Google Drive.',
         });
       }
-    }
+    })
   );
 }

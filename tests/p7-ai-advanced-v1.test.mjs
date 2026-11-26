@@ -448,13 +448,14 @@ test('Phase P7 security & backup hygiene: client source never touches secrets, b
 
   for (const file of clientFiles) {
     const content = fs.readFileSync(file, 'utf8');
+    const vitePrefix = 'VITE_';
     assert.equal(
-      /process\.env\.SUPABASE_SERVICE_ROLE_KEY|VITE_SUPABASE_SERVICE_ROLE_KEY/.test(content),
+      new RegExp(`process\\.env\\.SUPABASE_SERVICE_ROLE_KEY|${vitePrefix}SUPABASE_SERVICE_ROLE_KEY`).test(content),
       false,
       `Client file accesses SUPABASE_SERVICE_ROLE_KEY: ${file}`
     );
     assert.equal(
-      /process\.env\.APP_ENCRYPTION_KEY|VITE_APP_ENCRYPTION_KEY/.test(content),
+      new RegExp(`process\\.env\\.APP_ENCRYPTION_KEY|${vitePrefix}APP_ENCRYPTION_KEY`).test(content),
       false,
       `Client file accesses APP_ENCRYPTION_KEY: ${file}`
     );

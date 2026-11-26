@@ -116,9 +116,36 @@ test('Step 5 (3): /ERP guard enforces noindex headers, robots.txt disallow, and 
     const res = await fetch(`http://127.0.0.1:${port}/api/erp/store-admin/overview`);
     assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow');
     assert.ok([401, 403, 503].includes(res.status));
+
+    // Canonical /erp -> /ERP redirects (preserving subpath & query) and noindex header
+    const redirRoot = await fetch(`http://127.0.0.1:${port}/erp`, { redirect: 'manual' });
+    assert.ok([301, 308].includes(redirRoot.status));
+    assert.equal(redirRoot.headers.get('location'), '/ERP');
+    assert.equal(redirRoot.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+    const redirMixed = await fetch(`http://127.0.0.1:${port}/Erp/login?next=1`, { redirect: 'manual' });
+    assert.ok([301, 308].includes(redirMixed.status));
+    assert.equal(redirMixed.headers.get('location'), '/ERP/login?next=1');
+    assert.equal(redirMixed.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+    // /api/store/health returns 200 separately from /api/erp/health
+    const storeHealth = await fetch(`http://127.0.0.1:${port}/api/store/health`);
+    assert.equal(storeHealth.status, 200);
+    const storeHealthJson = await storeHealth.json();
+    assert.equal(storeHealthJson.service, 'storefront');
+
+    const erpHealth = await fetch(`http://127.0.0.1:${port}/api/erp/health`);
+    assert.equal(erpHealth.status, 200);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+
+  // Verify vercel.json canonical redirects & vite.config.ts case-insensitive denylist
+  assert.ok(Array.isArray(vercel.redirects) && vercel.redirects.length >= 2);
+  const redirStr = JSON.stringify(vercel.redirects);
+  assert.match(redirStr, /\/ERP/);
+  const viteCfg = fs.readFileSync(path.resolve('vite.config.ts'), 'utf8');
+  assert.match(viteCfg, /navigateFallbackDenylist:\s*\[[^\]]*\/erp[^\]]*\/i/i);
 });
 
 test('Step 5 (4): IP allowlist blocks unauthorized IPs across /ERP, /erp.html, and /api/erp/* while allowing break-glass & storefront', () => {

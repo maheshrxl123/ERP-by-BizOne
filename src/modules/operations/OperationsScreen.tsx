@@ -97,7 +97,7 @@ interface RecurringRow {
 }
 
 export function OperationsScreen() {
-  const { isModuleEnabled, showToast } = useApp();
+  const { isModuleEnabled, showToast, t } = useApp();
   const locationsEnabled = isModuleEnabled('locations');
   const stockCountsEnabled = isModuleEnabled('stock_counts');
   const ordersEnabled = isModuleEnabled('orders');
@@ -767,10 +767,10 @@ export function OperationsScreen() {
         <div>
           <h1 className="text-xl sm:text-2xl font-semibold tracking-tight inline-flex items-center gap-2">
             <IconBuildingWarehouse size={24} stroke={2} className="text-[var(--primary-dark)]" />
-            <span>Operations, Godowns & Showroom Dispatch</span>
+            <span>{t('ops.title')}</span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
-            Godown transfers, stock counts, orders, breakage returns, samples, contractor rates, commissions, supplier price lists, and delivery trips.
+            {t('ops.subtitle')}
           </p>
         </div>
 
@@ -780,7 +780,7 @@ export function OperationsScreen() {
           className="h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium inline-flex items-center gap-1 self-start"
         >
           <IconRefresh size={14} stroke={2} />
-          <span>Refresh</span>
+          <span>{t('ops.refresh')}</span>
         </button>
       </div>
 

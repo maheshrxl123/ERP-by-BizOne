@@ -173,23 +173,16 @@ DecorBiz is pre-configured for **one-click GitHub → Vercel deployment** via `v
 1. Open your deployed URL (`https://<your-vercel-domain>.vercel.app`).
 2. When the database has no business record yet, DecorBiz automatically opens the **Set Up Your Business** screen:
    - Enter **Business Name**, **Owner Full Name**, **Owner Email**, and **Owner Password**.
-   - Choose your **Business Type (Pack)**:
-     - **Kirana / Grocery**
-     - **Medical Store / Pharmacy**
-     - **Clothing / Footwear / Garments**
-     - **Hardware / Tiles / Sanitary / Timber**
-     - **General Retail / Electronics**
-     - **Wholesale / Distribution**
-     - **Service / Repair / Workshop**
+   - DecorBiz uses a single fixed **Tiles, Sanitaryware & Building Materials** workspace configuration (`decorbiz`).
    - Toggle **GST Registered Business** (and enter 15-character GSTIN if registered).
 3. Click **Launch Business Workspace** — you are signed in immediately as the **Business Owner**.
 
 ### 5.2 Seed Sample Data for Testing & Live Demos
 To quickly showcase or test all features on Vercel:
-1. Go to **Settings → Business Profile** (or **Pack Workspace**).
-2. Click **Load Sample Demo Data** (`seed_pack_demo_data`).
-   - This populates realistic Indian parties (customers & suppliers), pack-specific items, batches/variants/job cards, and opening stock tagged with `is_demo = true`.
-3. When you finish testing or demoing, click **Remove Demo Data** (`remove_pack_demo_data`) to cleanly remove sample records without touching your real business transactions.
+1. Go to **Settings → Business Profile**.
+2. Click **Load Sample Demo Data** (`seed_demo_data`).
+   - This populates realistic Indian parties (customers & suppliers), contractor sites, DecorBiz items across all 5 product lines, and opening stock tagged with `is_demo = true`.
+3. When you finish testing or demoing, click **Remove Demo Data** (`remove_demo_data`) to cleanly remove sample records without touching your real business transactions.
 
 ---
 

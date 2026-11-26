@@ -159,7 +159,7 @@ export function StoreAiAssistant({
   };
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
+    <div className="fixed bottom-4 right-4 sm:bottom-5 sm:right-5 z-50 flex flex-col items-end">
       {open && (
         <section
           aria-label="Showroom Shopping Assistant"
@@ -235,6 +235,10 @@ export function StoreAiAssistant({
                           <img
                             src={imgSrc}
                             alt={it.name}
+                            width={48}
+                            height={48}
+                            loading="lazy"
+                            decoding="async"
                             referrerPolicy="no-referrer"
                             className="w-12 h-12 rounded-lg object-cover border border-stone-100 shrink-0"
                           />
@@ -353,10 +357,11 @@ export function StoreAiAssistant({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="h-12 px-4 rounded-2xl bg-stone-900 hover:bg-stone-800 text-white shadow-lg border border-stone-800 inline-flex items-center gap-2 text-xs font-semibold transition-transform active:scale-95"
+        aria-label={open ? 'Hide Showroom AI Assistant' : 'Ask Showroom AI'}
+        className="h-12 w-12 sm:w-auto sm:px-4 rounded-2xl bg-stone-900 hover:bg-stone-800 text-white shadow-lg border border-stone-800 inline-flex items-center justify-center gap-2 text-xs font-semibold transition-transform active:scale-95"
       >
         <IconMessageChatbot size={18} />
-        <span>{open ? 'Hide Assistant' : 'Ask Showroom AI'}</span>
+        <span className="hidden sm:inline">{open ? 'Hide Assistant' : 'Ask Showroom AI'}</span>
       </button>
     </div>
   );

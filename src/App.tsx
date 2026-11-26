@@ -78,6 +78,7 @@ function RootRouter() {
     language,
     setLanguage,
     signOut,
+    t,
   } = useApp();
 
   if (!supabaseConfigured) {
@@ -152,7 +153,7 @@ function RootRouter() {
       <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] flex items-center justify-center p-6">
         <div className="flex items-center gap-2.5 text-sm font-medium text-[var(--text-muted)]">
           <IconLoader2 size={20} stroke={2} className="animate-spin text-[var(--primary-dark)]" />
-          <span>Loading DecorBiz workspace...</span>
+          <span>{t('workspace.loading')}</span>
         </div>
       </div>
     );
@@ -169,14 +170,14 @@ function RootRouter() {
             <div>
               <h1 className="text-lg font-semibold inline-flex items-center gap-1.5">
                 <IconLock size={18} stroke={2} className="text-[var(--give)] shrink-0" />
-                <span>IP Address Not Allowed</span>
+                <span>{t('workspace.ipBlocked')}</span>
               </h1>
-              <p className="text-xs text-[var(--text-muted)]">DecorBiz ERP Security</p>
+              <p className="text-xs text-[var(--text-muted)]">{t('workspace.securityTitle')}</p>
             </div>
           </div>
           <p className="text-sm text-[var(--text-muted)] leading-relaxed">{ipBlockedError}</p>
           <p className="text-xs text-[var(--text-muted)]">
-            If your ISP IP changed, ask the Business Owner to update Settings &rarr; Security or use break-glass recovery.
+            {t('workspace.ipBlockedHint')}
           </p>
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
@@ -185,14 +186,14 @@ function RootRouter() {
               className="h-10 px-4 rounded-lg border border-[var(--border)] text-sm font-medium inline-flex items-center gap-1.5 hover:bg-[var(--surface-muted)]"
             >
               <IconRefresh size={16} stroke={2} />
-              <span>Retry</span>
+              <span>{t('workspace.retry')}</span>
             </button>
             <button
               type="button"
               onClick={() => void signOut()}
               className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold"
             >
-              Sign Out
+              {t('nav.signOut')}
             </button>
           </div>
         </div>
@@ -206,7 +207,7 @@ function RootRouter() {
         <div className="max-w-md w-full rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 space-y-4">
           <h1 className="text-lg font-semibold inline-flex items-center gap-2">
             <IconAlertCircle size={20} stroke={2} className="text-[var(--give)] shrink-0" />
-            <span>Security Verification Unavailable</span>
+            <span>{t('workspace.securityUnavailable')}</span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] leading-relaxed">{totpCheckError}</p>
           <div className="flex items-center justify-end gap-2">
@@ -215,7 +216,7 @@ function RootRouter() {
               onClick={() => void signOut()}
               className="h-10 px-4 rounded-lg border border-[var(--border)] text-sm font-medium hover:bg-[var(--surface-muted)]"
             >
-              Sign Out
+              {t('nav.signOut')}
             </button>
             <button
               type="button"
@@ -223,7 +224,7 @@ function RootRouter() {
               className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center gap-1.5"
             >
               <IconRefresh size={16} stroke={2} />
-              <span>Retry Security Check</span>
+              <span>{t('workspace.retrySecurityCheck')}</span>
             </button>
           </div>
         </div>
@@ -242,17 +243,17 @@ function RootRouter() {
           <IconAlertCircle size={32} stroke={2} className="text-[var(--give)] mx-auto" />
           <h1 className="text-lg font-semibold inline-flex items-center gap-2 justify-center">
             <IconLock size={18} stroke={2} className="text-[var(--give)] shrink-0" />
-            <span>Account deactivated</span>
+            <span>{t('workspace.accountDeactivated')}</span>
           </h1>
           <p className="text-sm text-[var(--text-muted)]">
-            Your staff account has been deactivated by the Business Owner.
+            {t('workspace.accountDeactivatedDesc')}
           </p>
           <button
             type="button"
             onClick={() => signOut()}
             className="h-11 px-5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold"
           >
-            Sign Out
+            {t('nav.signOut')}
           </button>
         </div>
       </div>

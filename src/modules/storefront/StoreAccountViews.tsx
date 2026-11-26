@@ -355,6 +355,10 @@ export function StoreWishlistView({
                 <img
                   src={getProductImageSrc(item)}
                   alt={item.name}
+                  width={400}
+                  height={300}
+                  loading="lazy"
+                  decoding="async"
                   referrerPolicy="no-referrer"
                   className="w-full h-full object-cover hover:scale-105 transition-transform"
                 />

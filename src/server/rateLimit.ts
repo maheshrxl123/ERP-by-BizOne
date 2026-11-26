@@ -20,13 +20,11 @@ export function clearRateLimitStore(name?: string): void {
 }
 
 export function extractRequestIp(req: Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  const raw = Array.isArray(forwarded)
-    ? forwarded[0]
-    : typeof forwarded === 'string'
-      ? forwarded
-      : req.socket?.remoteAddress || req.ip || '127.0.0.1';
-  return String(raw).split(',')[0].trim() || '127.0.0.1';
+  // Rely on Express req.ip (which respects app.get('trust proxy')) instead of raw x-forwarded-for
+  const raw = req.ip || req.socket?.remoteAddress || '127.0.0.1';
+  const cleaned = String(raw).split(',')[0].trim();
+  if (!cleaned) return '127.0.0.1';
+  return cleaned.startsWith('::ffff:') ? cleaned.slice(7) : cleaned;
 }
 
 export interface RateLimiterOptions {

@@ -222,7 +222,7 @@ export function AuthScreens() {
           <button
             type="button"
             onClick={() => setLanguage(language === 'en' ? 'hi' : 'en')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)]"
+            className="min-h-11 min-w-11 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)]"
           >
             <IconLanguage size={16} stroke={2} />
             <span>{language === 'en' ? 'हिन्दी' : 'English'}</span>
@@ -231,7 +231,7 @@ export function AuthScreens() {
             type="button"
             onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
             aria-label="Toggle theme"
-            className="p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)]"
+            className="min-h-11 min-w-11 flex items-center justify-center p-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)]"
           >
             {theme === 'light' ? (
               <IconMoon size={16} stroke={2} />
@@ -251,10 +251,10 @@ export function AuthScreens() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold tracking-tight">
-                  Set New Password
+                  {t('authExtra.setNewPasswordTitle')}
                 </h1>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Choose a strong new password for your DecorBiz account.
+                  {t('authExtra.setNewPasswordDesc')}
                 </p>
               </div>
             </div>
@@ -505,10 +505,10 @@ export function AuthScreens() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold tracking-tight">
-                  {language === 'hi' ? 'दो-चरणीय सत्यापन (2FA)' : 'Two-Factor Verification'}
+                  {t('authExtra.twoFactorTitle')}
                 </h1>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  {session.user.email} · Enter 6-digit authenticator code or recovery code
+                  {session.user.email} · {t('authExtra.twoFactorDesc')}
                 </p>
               </div>
             </div>
@@ -529,7 +529,7 @@ export function AuthScreens() {
                   htmlFor="totp-challenge-input"
                   className="block text-sm font-medium mb-1.5"
                 >
-                  Authenticator or Recovery Code
+                  {t('authExtra.authenticatorCodeLabel')}
                 </label>
                 <input
                   id="totp-challenge-input"
@@ -549,7 +549,7 @@ export function AuthScreens() {
                 disabled={submitting}
                 className="w-full h-12 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] font-semibold text-sm hover:opacity-95 disabled:opacity-50"
               >
-                {submitting ? 'Verifying...' : 'Verify & Open ERP'}
+                {submitting ? t('authExtra.verifying') : t('authExtra.verifyAndOpen')}
               </button>
 
               <button
@@ -561,7 +561,7 @@ export function AuthScreens() {
                 className="w-full h-11 rounded-lg border border-[var(--border)] text-sm font-medium inline-flex items-center justify-center gap-2 hover:bg-[var(--surface-muted)]"
               >
                 <IconLogout size={16} stroke={2} />
-                <span>Sign Out & Switch Account</span>
+                <span>{t('authExtra.signOutAndSwitch')}</span>
               </button>
             </form>
           </div>
@@ -640,7 +640,7 @@ export function AuthScreens() {
                         setMode('forgot');
                         setError(null);
                       }}
-                      className="text-xs font-medium text-[var(--primary-dark)] hover:underline"
+                      className="py-2.5 text-xs font-medium text-[var(--primary-dark)] hover:underline"
                     >
                       {t('auth.forgotPassword')}
                     </button>

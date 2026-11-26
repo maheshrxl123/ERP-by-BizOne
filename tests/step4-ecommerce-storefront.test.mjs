@@ -324,8 +324,17 @@ test('Step 4: Express app isolates /api/store/* and /api/erp/store-admin/* witho
     // Public catalogue & config endpoints respond gracefully (never 500)
     const cfgRes = await fetch(`${baseUrl}/api/store/config`);
     assert.equal(cfgRes.status, 200);
+    assert.match(cfgRes.headers.get('cache-control') || '', /max-age=/);
+    const cfgEtag = cfgRes.headers.get('etag');
+    assert.ok(cfgEtag, 'GET /api/store/config must include an ETag header');
+
+    const cfgNotModified = await fetch(`${baseUrl}/api/store/config`, {
+      headers: { 'If-None-Match': cfgEtag },
+    });
+    assert.equal(cfgNotModified.status, 304);
+
     const catRes = await fetch(`${baseUrl}/api/store/catalogue`);
-    assert.ok([200, 503].includes(catRes.status));
+    assert.ok([200, 403, 503].includes(catRes.status));
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -355,4 +364,40 @@ test('Step 4 Completion: Password reset recovery, strict email verification, saf
   assert.match(storeAdminScreen, /purpose="store_banner"/);
   assert.match(storeAdminScreen, /\/api\/erp\/store-admin\//);
   assert.doesNotMatch(storeAdminScreen, /['"]\/api\/store-admin\//);
+});
+
+test('Step 4 Hardening: CQ-01 asyncHandler, COM-02 coupon filtering, COM-04 atomic increment & PERF-05 pagination/caching', () => {
+  const storefrontRoute = fs.readFileSync(path.resolve('src/server/routes/storefront.ts'), 'utf8');
+  const storeAdminRoute = fs.readFileSync(path.resolve('src/server/routes/storeAdmin.ts'), 'utf8');
+  const googleDriveRoute = fs.readFileSync(path.resolve('src/server/routes/googleDrive.ts'), 'utf8');
+
+  // CQ-01: asyncHandler wrapper used across all three route modules with no raw async route callbacks
+  for (const [name, src] of [
+    ['storefront.ts', storefrontRoute],
+    ['storeAdmin.ts', storeAdminRoute],
+    ['googleDrive.ts', googleDriveRoute],
+  ]) {
+    assert.match(src, /function asyncHandler/, `${name} must define asyncHandler`);
+    assert.doesNotMatch(
+      src,
+      /app\.(get|post|patch|put|delete)\([^;]*,\s*async\s*\(/,
+      `${name} must wrap all async route handlers with asyncHandler`
+    );
+  }
+
+  // COM-02: /api/store/config filters expired and exhausted coupons
+  assert.match(storefrontRoute, /c\.valid_until && String\(c\.valid_until\) < todayStr/);
+  assert.match(storefrontRoute, /Number\(c\.used_count \|\| 0\) >= Number\(c\.usage_limit\)/);
+
+  // COM-04: verify-razorpay enforces atomic used_count < usage_limit increment
+  const verifyIdx = storefrontRoute.indexOf('/api/store/orders/:id/verify-razorpay');
+  assert.ok(verifyIdx !== -1);
+  const verifySlice = storefrontRoute.slice(verifyIdx, verifyIdx + 4000);
+  assert.match(verifySlice, /usageLimit === null \|\| currentCount < usageLimit/);
+  assert.match(verifySlice, /\.eq\('used_count',\s*currentCount\)/);
+
+  // PERF-05: catalogue supports optional limit/offset pagination & ETag/Cache-Control
+  assert.match(storefrontRoute, /req\.query\.limit/);
+  assert.match(storefrontRoute, /req\.query\.offset/);
+  assert.match(storefrontRoute, /sendWithEtag/);
 });

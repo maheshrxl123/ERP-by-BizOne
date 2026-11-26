@@ -503,7 +503,7 @@ export function GlobalSearchModal({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('common.searchPlaceholder')}
-            className="flex-1 bg-transparent text-sm focus:outline-none"
+            className="flex-1 bg-transparent text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-dark)] rounded"
           />
           <button
             type="button"

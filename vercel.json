@@ -6,17 +6,34 @@
   "outputDirectory": "dist",
   "functions": {
     "api/index.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "dist/ERP/erp.html"
     }
   },
+  "redirects": [
+    {
+      "source": "/(?!ERP$)[Ee][Rr][Pp]",
+      "destination": "/ERP",
+      "permanent": true
+    },
+    {
+      "source": "/(?!ERP/)[Ee][Rr][Pp]/(.*)",
+      "destination": "/ERP/$1",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {
-      "source": "/ERP(/(?!assets/).*)?",
-      "destination": "/ERP/erp.html"
+      "source": "/ERP",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/ERP/((?!assets/|pwa-|apple-touch-icon|icon\\.svg|robots\\.txt|erp\\.webmanifest|sw\\.js|workbox-).*)",
+      "destination": "/api/index.ts"
     },
     {
       "source": "/((?!api/|ERP/|assets/|pwa-|apple-touch-icon|icon\\.svg|manifest\\.webmanifest|sw\\.js|workbox-).*)",

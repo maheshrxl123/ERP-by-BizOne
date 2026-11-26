@@ -128,3 +128,25 @@ test('Step 1 Item 3: server routes gate optional feature APIs with requireModule
     assert.ok(serverSrc.includes(routeAndGate), `Missing API gate in server routes: ${routeAndGate}`);
   }
 });
+
+test('Step 1 Hardening: SET-01 storefront files/catalogue gating & SET-02 store-admin online_payments gating', () => {
+  const storefrontSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/routes/storefront.ts'), 'utf8');
+  const storeAdminSrc = fs.readFileSync(path.resolve(process.cwd(), 'src/server/routes/storeAdmin.ts'), 'utf8');
+
+  // SET-01: /api/store/files/:id gated with requireOnlineStoreEnabled; /api/store/catalogue returns 403 when disabled
+  assert.match(
+    storefrontSrc,
+    /app\.get\('\/api\/store\/files\/:id',\s*requireOnlineStoreEnabled/
+  );
+  const catIdx = storefrontSrc.indexOf("app.get('/api/store/catalogue'");
+  assert.ok(catIdx !== -1);
+  assert.match(storefrontSrc.slice(catIdx, catIdx + 500), /res\.status\(403\)\.json/);
+
+  // SET-02: /api/store-admin/overview gates online_payments query with isModuleEnabledServer('online_payments')
+  const ovIdx = storeAdminSrc.indexOf("app.get('/api/store-admin/overview'");
+  assert.ok(ovIdx !== -1);
+  assert.match(
+    storeAdminSrc.slice(ovIdx, ovIdx + 1800),
+    /isModuleEnabledServer\('online_payments'\)/
+  );
+});

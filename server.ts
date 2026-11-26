@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import zlib from 'node:zlib';
 import { getSupabaseAdmin, PORT } from './src/server/config.ts';
 import { requireIpAllowlist } from './src/server/ipAllowlist.ts';
 import {
@@ -77,7 +78,90 @@ async function gateDisabledStorefront(req: Request, res: Response, next: NextFun
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function resolveTrustProxy(): boolean | number | string {
+  const raw = process.env.TRUST_PROXY?.trim();
+  if (raw) {
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    const num = Number(raw);
+    if (Number.isInteger(num) && num >= 0) return num;
+    return raw;
+  }
+  return process.env.VERCEL ? 1 : false;
+}
+
+const COMPRESSIBLE_CT_RE = /^(?:text\/(?!event-stream)|application\/(?:json|javascript|xml|manifest\+json)|image\/svg\+xml)/i;
+
+function createCompressionMiddleware() {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.method === 'HEAD') {
+      next();
+      return;
+    }
+    const accept = String(req.headers['accept-encoding'] || '');
+    const encoding = accept.includes('br') ? 'br' : accept.includes('gzip') ? 'gzip' : null;
+    if (!encoding) {
+      next();
+      return;
+    }
+
+    const origWrite = res.write.bind(res);
+    const origEnd = res.end.bind(res);
+    let compressor: zlib.BrotliCompress | zlib.Gzip | null = null;
+    let decided = false;
+
+    const initCompressor = () => {
+      if (decided) return;
+      decided = true;
+      const ct = String(res.getHeader('Content-Type') || '');
+      if (
+        res.statusCode === 204 ||
+        res.statusCode === 304 ||
+        res.getHeader('Content-Encoding') ||
+        !COMPRESSIBLE_CT_RE.test(ct)
+      ) {
+        return;
+      }
+      res.removeHeader('Content-Length');
+      res.setHeader('Content-Encoding', encoding);
+      res.setHeader('Vary', 'Accept-Encoding');
+      compressor = encoding === 'br' ? zlib.createBrotliCompress() : zlib.createGzip();
+      compressor.on('data', (chunk: Buffer) => {
+        origWrite(chunk);
+      });
+      compressor.on('end', () => {
+        origEnd();
+      });
+    };
+
+    res.write = ((chunk: unknown, ...args: unknown[]) => {
+      initCompressor();
+      if (compressor) {
+        return compressor.write(chunk as Buffer, ...(args as []));
+      }
+      return origWrite(chunk as Buffer, ...(args as []));
+    }) as typeof res.write;
+
+    res.end = ((chunk?: unknown, ...args: unknown[]) => {
+      initCompressor();
+      if (compressor) {
+        if (chunk !== undefined && chunk !== null && typeof chunk !== 'function') {
+          compressor.end(chunk as Buffer, ...(args as []));
+        } else {
+          compressor.end(...(args as []));
+        }
+        return res;
+      }
+      return origEnd(chunk as Buffer, ...(args as []));
+    }) as typeof res.end;
+
+    next();
+  };
+}
+
 export const app = express();
+app.set('trust proxy', resolveTrustProxy());
+app.use(createCompressionMiddleware());
 
 function registerApiRoutes() {
   app.use(
@@ -138,6 +222,25 @@ function registerApiRoutes() {
 }
 
 registerApiRoutes();
+
+// Canonicalize /erp and /erp/* (and mixed-case variants like /Erp, /Erp/*) to /ERP and /ERP/*
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    next();
+    return;
+  }
+  const reqPath = req.path || '';
+  if (reqPath !== '/ERP' && !reqPath.startsWith('/ERP/') && /^\/erp(?:\/(.*))?$/i.test(reqPath)) {
+    const match = reqPath.match(/^\/erp(\/.*)?$/i);
+    const suffix = match?.[1] ?? '';
+    const qIdx = req.originalUrl.indexOf('?');
+    const query = qIdx >= 0 ? req.originalUrl.slice(qIdx) : '';
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.redirect(308, `/ERP${suffix}${query}`);
+    return;
+  }
+  next();
+});
 
 async function startServer() {
   if (process.env.NODE_ENV === 'production') {
@@ -203,6 +306,26 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`DecorBiz server listening on http://localhost:${PORT}`);
+  });
+}
+
+if (process.env.VERCEL) {
+  app.get(['/ERP', '/ERP/*'], requireIpAllowlist, (_req: Request, res: Response) => {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    res.setHeader('Cache-Control', 'no-store');
+    const erpHtmlPath = path.join(__dirname, 'dist', 'ERP', 'erp.html');
+    if (fs.existsSync(erpHtmlPath)) {
+      res.sendFile(erpHtmlPath);
+      return;
+    }
+    res.status(404).json({ error: 'ERP bundle not found.' });
+  });
+}
+
+if (!(globalThis as { __decorbizUnhandledRejectionBound?: boolean }).__decorbizUnhandledRejectionBound) {
+  (globalThis as { __decorbizUnhandledRejectionBound?: boolean }).__decorbizUnhandledRejectionBound = true;
+  process.on('unhandledRejection', (reason) => {
+    console.error('[server] Unhandled promise rejection:', reason);
   });
 }
 

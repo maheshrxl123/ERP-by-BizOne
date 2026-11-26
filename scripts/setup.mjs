@@ -197,6 +197,7 @@ async function applyMigrationsIfToken() {
     '0024_decorbiz_step2_modules_and_security.sql',
     '0025_decorbiz_fix_views_and_grants.sql',
     '0026_decorbiz_fix_reset_and_restore.sql',
+    '0027_seed_all_product_lines.sql',
   ]);
 
   for (const file of migrationFiles) {
@@ -286,7 +287,7 @@ async function verifyConnectivity() {
   await applyMigrationsIfToken();
   await verifyConnectivity();
   console.log(
-    '[setup] All DecorBiz migrations (0001..0026) & private storage bucket are verified and live.'
+    '[setup] All DecorBiz migrations (0001..0027) & private storage bucket are verified and live.'
   );
 })().catch((err) => {
   console.error('[setup] Error:', err.message);

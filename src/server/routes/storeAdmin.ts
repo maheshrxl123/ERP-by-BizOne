@@ -1,4 +1,4 @@
-import type { Express, Response } from 'express';
+import type { Express, NextFunction, Request, RequestHandler, Response } from 'express';
 import { z } from 'zod';
 import { createUserScopedClient } from '../config.ts';
 import { sendSmtpOrWebhookEmail } from '../mailer.ts';
@@ -16,6 +16,14 @@ import {
 } from '../../core/productSpecs.ts';
 import { isValidProductLine, type ProductLineKey } from '../../core/productLines.ts';
 import type { StoreOrderStatus } from '../../types/decorbiz.ts';
+
+function asyncHandler<TReq extends Request = AuthenticatedRequest>(
+  fn: (req: TReq, res: Response, next: NextFunction) => Promise<void> | void
+): RequestHandler {
+  return (req, res, next) => {
+    Promise.resolve(fn(req as TReq, res, next)).catch(next);
+  };
+}
 
 function slugifyText(raw: string): string {
   return raw
@@ -133,7 +141,7 @@ const tripSchema = z.object({
 export function registerStoreAdminRoutes(app: Express): void {
   const guard = [requireActiveStaff, requireModuleEnabled('online_store', 'inventory')] as const;
 
-  app.get('/api/store-admin/overview', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/store-admin/overview', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const admin = req.supabaseAdmin!;
     try {
       const [
@@ -161,11 +169,16 @@ export function registerStoreAdminRoutes(app: Express): void {
         admin.from('item_categories').select('*').eq('is_active', true).order('name'),
         admin.from('brands').select('*').eq('is_active', true).order('name'),
         admin.from('item_units').select('*').eq('is_active', true).order('is_system', { ascending: false }).order('code'),
-        admin
-          .from('integration_settings')
-          .select('enabled, config_public, has_secret')
-          .eq('integration_key', 'online_payments')
-          .maybeSingle(),
+        (async () => {
+          const enabled = await isModuleEnabledServer('online_payments');
+          if (!enabled) return null;
+          const { data } = await admin
+            .from('integration_settings')
+            .select('enabled, config_public, has_secret')
+            .eq('integration_key', 'online_payments')
+            .maybeSingle();
+          return data;
+        })(),
       ]);
 
       if (itemsErr) throw itemsErr;
@@ -201,17 +214,17 @@ export function registerStoreAdminRoutes(app: Express): void {
         categories: categories || [],
         brands: brands || [],
         units: units || [],
-        razorpayConfigured: Boolean(razorpaySlot.data?.enabled && razorpaySlot.data?.has_secret),
+        razorpayConfigured: Boolean(razorpaySlot?.enabled && razorpaySlot?.has_secret),
       });
     } catch (err) {
       res.status(500).json({
         error: err instanceof Error ? err.message : 'Unable to load store admin overview.',
       });
     }
-  });
+  }));
 
   // Create new Goods or Service item directly from Store Admin & publish online
-  app.post('/api/store-admin/items', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/items', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!['owner', 'manager', 'storekeeper'].includes(req.staffUser!.role)) {
       res.status(403).json({ error: 'Only Owner, Manager, or Storekeeper can add online items.' });
       return;
@@ -369,10 +382,10 @@ export function registerStoreAdminRoutes(app: Express): void {
         error: err instanceof Error ? err.message : 'Unable to create online store item.',
       });
     }
-  });
+  }));
 
   // Publish / Unpublish Item + Online Price, Slug, Description
-  app.patch('/api/store-admin/items/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/items/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!['owner', 'manager', 'storekeeper'].includes(req.staffUser!.role)) {
       res.status(403).json({ error: 'Only Owner, Manager, or Storekeeper can update online listings.' });
       return;
@@ -438,10 +451,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     });
 
     res.json({ item: data });
-  });
+  }));
 
   // Order Status Update (reserves on confirm, deducts on delivery/pickup, releases on cancel) & Trip Assignment
-  app.patch('/api/store-admin/orders/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/orders/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!['owner', 'manager', 'storekeeper', 'cashier'].includes(req.staffUser!.role)) {
       res.status(403).json({ error: 'Insufficient permission to update store orders.' });
       return;
@@ -527,10 +540,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'Order update failed.' });
     }
-  });
+  }));
 
   // Delivery Trips CRUD
-  app.post('/api/store-admin/trips', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/trips', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsed = tripSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid trip payload.' });
@@ -550,9 +563,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ trip: data });
-  });
+  }));
 
-  app.patch('/api/store-admin/trips/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/trips/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid trip ID required.' });
@@ -574,10 +587,10 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.json({ trip: data });
-  });
+  }));
 
   // Delivery Zones CRUD
-  app.post('/api/store-admin/zones', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/zones', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsed = zoneSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid zone data.' });
@@ -593,9 +606,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ zone: data });
-  });
+  }));
 
-  app.patch('/api/store-admin/zones/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/zones/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     const parsed = zoneSchema.partial().safeParse(req.body);
     if (!parsedId.success || !parsed.success) {
@@ -613,9 +626,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.json({ zone: data });
-  });
+  }));
 
-  app.delete('/api/store-admin/zones/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/store-admin/zones/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid zone ID required.' });
@@ -623,10 +636,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     }
     await req.supabaseAdmin!.from('store_delivery_zones').delete().eq('id', parsedId.data);
     res.json({ ok: true });
-  });
+  }));
 
   // Coupons CRUD
-  app.post('/api/store-admin/coupons', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/coupons', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsed = couponSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid coupon data.' });
@@ -642,9 +655,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ coupon: data });
-  });
+  }));
 
-  app.patch('/api/store-admin/coupons/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/coupons/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     const parsed = couponSchema.partial().safeParse(req.body);
     if (!parsedId.success || !parsed.success) {
@@ -666,9 +679,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.json({ coupon: data });
-  });
+  }));
 
-  app.delete('/api/store-admin/coupons/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/store-admin/coupons/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid coupon ID required.' });
@@ -676,10 +689,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     }
     await req.supabaseAdmin!.from('store_coupons').delete().eq('id', parsedId.data);
     res.json({ ok: true });
-  });
+  }));
 
   // Banners CRUD
-  app.post('/api/store-admin/banners', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/banners', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsed = bannerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid banner data.' });
@@ -695,9 +708,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ banner: data });
-  });
+  }));
 
-  app.patch('/api/store-admin/banners/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/banners/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     const parsed = bannerSchema.partial().safeParse(req.body);
     if (!parsedId.success || !parsed.success) {
@@ -715,9 +728,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.json({ banner: data });
-  });
+  }));
 
-  app.delete('/api/store-admin/banners/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/store-admin/banners/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid banner ID required.' });
@@ -725,10 +738,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     }
     await req.supabaseAdmin!.from('store_banners').delete().eq('id', parsedId.data);
     res.json({ ok: true });
-  });
+  }));
 
   // Static Pages CRUD
-  app.post('/api/store-admin/pages', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/store-admin/pages', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsed = pageSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid page data.' });
@@ -752,9 +765,9 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.status(201).json({ page: data });
-  });
+  }));
 
-  app.delete('/api/store-admin/pages/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.delete('/api/store-admin/pages/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const parsedId = UUID_SCHEMA.safeParse(req.params.id);
     if (!parsedId.success) {
       res.status(400).json({ error: 'Valid page ID required.' });
@@ -762,10 +775,10 @@ export function registerStoreAdminRoutes(app: Express): void {
     }
     await req.supabaseAdmin!.from('store_pages').delete().eq('id', parsedId.data);
     res.json({ ok: true });
-  });
+  }));
 
   // Review Moderation
-  app.patch('/api/store-admin/reviews/:id', ...guard, async (req: AuthenticatedRequest, res: Response) => {
+  app.patch('/api/store-admin/reviews/:id', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     if (!['owner', 'manager'].includes(req.staffUser!.role)) {
       res.status(403).json({ error: 'Only Owner or Manager can moderate product reviews.' });
       return;
@@ -787,5 +800,5 @@ export function registerStoreAdminRoutes(app: Express): void {
       return;
     }
     res.json({ review: data });
-  });
+  }));
 }

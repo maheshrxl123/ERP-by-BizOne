@@ -483,6 +483,79 @@
       "ageing": "Party Dues Ageing",
       "audit": "Activity Log"
     }
+  },
+  "workspace": {
+    "loading": "Loading DecorBiz workspace...",
+    "ipBlocked": "IP Address Not Allowed",
+    "securityTitle": "DecorBiz ERP Security",
+    "ipBlockedHint": "If your ISP IP changed, ask the Business Owner to update Settings -> Security or use break-glass recovery.",
+    "retry": "Retry",
+    "securityUnavailable": "Security Verification Unavailable",
+    "retrySecurityCheck": "Retry Security Check",
+    "accountDeactivated": "Account deactivated",
+    "accountDeactivatedDesc": "Your staff account has been deactivated by the Business Owner."
+  },
+  "authExtra": {
+    "setNewPasswordTitle": "Set New Password",
+    "setNewPasswordDesc": "Choose a strong new password for your DecorBiz account.",
+    "twoFactorTitle": "Two-Factor Verification",
+    "twoFactorDesc": "Enter 6-digit authenticator code or recovery code",
+    "authenticatorCodeLabel": "Authenticator or Recovery Code",
+    "verifying": "Verifying...",
+    "verifyAndOpen": "Verify & Open ERP",
+    "signOutAndSwitch": "Sign Out & Switch Account"
+  },
+  "pos": {
+    "title": "POS-Lite & Offline Counter",
+    "subtitle": "Fast counter billing, hold/park bills, split cash+UPI tender, register shift reconciliation, and idempotent offline queue.",
+    "online": "Online",
+    "offline": "Offline",
+    "queueOfflineMode": "Queue Offline Mode",
+    "refresh": "Refresh",
+    "resume": "Resume",
+    "syncing": "Syncing...",
+    "syncNow": "Sync Now",
+    "closeShift": "Close Shift",
+    "openShift": "Open Shift"
+  },
+  "gst": {
+    "refresh": "Refresh",
+    "gstr1": "GSTR-1",
+    "gstr3b": "GSTR-3B & HSN",
+    "gstr2b": "GSTR-2B ITC Match",
+    "einvoice": "E-Invoice / E-Way",
+    "tds": "TDS / TCS",
+    "exportGstr1Csv": "Export GSTR-1 CSV"
+  },
+  "ops": {
+    "title": "Operations, Godowns & Showroom Dispatch",
+    "subtitle": "Godown transfers, stock counts, orders, breakage returns, samples, contractor rates, commissions, supplier price lists, and delivery trips.",
+    "refresh": "Refresh"
+  },
+  "storeAdmin": {
+    "ordersTab": "Order Inbox",
+    "catalogTab": "Online Catalogue",
+    "tripsTab": "Delivery Trips",
+    "zonesTab": "Zones",
+    "couponsTab": "Coupons",
+    "contentTab": "Banners & Pages",
+    "reviewsTab": "Reviews",
+    "pickingSlip": "Showroom Picking Slip",
+    "dispatchSheet": "Delivery Dispatch Sheet",
+    "print": "Print",
+    "close": "Close"
+  },
+  "specs": {
+    "lengthMm": "Length (mm) *",
+    "widthMm": "Width (mm) *",
+    "thicknessMm": "Thickness (mm)",
+    "sqftPerBox": "Sq.Ft / Box *",
+    "sqmPerBox": "Sq.M / Box"
+  },
+  "share": {
+    "loading": "Loading invoice document...",
+    "linkUnavailable": "Invoice Link Unavailable",
+    "viewOnly": "View-only shared document"
   }
 }
 

@@ -22,15 +22,9 @@ import {
   parseSpreadsheetBuffer,
 } from '../src/core/spreadsheet.ts';
 import {
-  applyDiscountPreset,
-  calculateMarginPct,
-  calculatePaintLitres,
   calculateTileBoxes,
-  calculateWireCoils,
   DECORBIZ_WORKSPACE_META,
   getPackWorkspaceTitle,
-  getRecommendedModulesForPack,
-  getWorkspaceMeta,
 } from '../src/packs/registry.ts';
 
 dotenv.config();
@@ -71,30 +65,19 @@ function collectLeafPaths(obj, prefix = '') {
   return paths;
 }
 
-test('Phase P6 DecorBiz workspace metadata & domain calculators work accurately', () => {
-  const wf = getWorkspaceMeta();
-  assert.equal(wf.key, 'decorbiz');
-  assert.equal(wf, DECORBIZ_WORKSPACE_META);
-  assert.ok(wf.workspaceLabelEn.length > 3);
-  assert.ok(wf.workspaceLabelHi.length > 3);
-  assert.ok(getRecommendedModulesForPack().includes('billing'));
+test('Phase P6 DecorBiz workspace metadata & tile estimator work accurately', () => {
+  assert.equal(DECORBIZ_WORKSPACE_META.key, 'decorbiz');
+  assert.ok(DECORBIZ_WORKSPACE_META.workspaceLabelEn.length > 3);
+  assert.ok(DECORBIZ_WORKSPACE_META.workspaceLabelHi.length > 3);
+  assert.ok(DECORBIZ_WORKSPACE_META.recommendedModules.includes('billing'));
   assert.equal(getPackWorkspaceTitle('decorbiz', 'en'), DECORBIZ_WORKSPACE_META.workspaceLabelEn);
   assert.equal(getPackWorkspaceTitle('decorbiz', 'hi'), DECORBIZ_WORKSPACE_META.workspaceLabelHi);
 
-  // Tiles, paint & wire material estimators
+  // Tiles material estimator
   const tiles = calculateTileBoxes(100, 16, 10);
   assert.equal(tiles.totalSqFtWithWastage, 110);
   assert.equal(tiles.boxesNeeded, 7);
   assert.equal(tiles.actualCoveredSqFt, 112);
-  const paint = calculatePaintLitres(550, 2, 110);
-  assert.equal(paint.totalSqFtToCoat, 1100);
-  assert.equal(paint.litresNeeded, 10);
-  const wire = calculateWireCoils(210, 90);
-  assert.equal(wire.coilsNeeded, 3);
-  assert.equal(wire.surplusMeters, 60);
-
-  assert.equal(applyDiscountPreset(1000, 15), 850);
-  assert.equal(calculateMarginPct(1000, 750), 25);
 });
 
 test('Phase P6 CSV/XLSX import/export: templates, column mapping, error rows CSV & multi-sheet XLSX', async () => {

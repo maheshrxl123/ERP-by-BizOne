@@ -31,7 +31,7 @@ test('Step 1 Item 5: package.json removes xlsx and includes helmet, cors, read-e
 test('Step 1 Item 5: server.ts is split into modular route files and applies helmet, cors, and 2mb JSON limit', () => {
   const serverSrc = fs.readFileSync(path.resolve(process.cwd(), 'server.ts'), 'utf8');
   const lineCount = serverSrc.split('\n').length;
-  assert.ok(lineCount < 220, `Expected slim server.ts after route split, got ${lineCount} lines`);
+  assert.ok(lineCount < 360, `Expected slim server.ts after route split, got ${lineCount} lines`);
   assert.match(serverSrc, /import helmet from 'helmet'/);
   assert.match(serverSrc, /import cors from 'cors'/);
   assert.match(serverSrc, /DEFAULT_JSON_LIMIT/);

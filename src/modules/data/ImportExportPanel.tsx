@@ -247,7 +247,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
             onClick={() => setTab('import')}
             className={`h-9 px-3.5 rounded-lg border text-xs font-medium ${
               tab === 'import'
-                ? 'bg-[var(--primary)] text-white border-[var(--primary)]'
+                ? 'bg-[var(--primary)] text-[var(--on-primary)] border-[var(--primary)]'
                 : 'bg-[var(--surface)] border-[var(--border)]'
             }`}
           >
@@ -258,7 +258,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
             onClick={() => setTab('export')}
             className={`h-9 px-3.5 rounded-lg border text-xs font-medium ${
               tab === 'export'
-                ? 'bg-[var(--primary)] text-white border-[var(--primary)]'
+                ? 'bg-[var(--primary)] text-[var(--on-primary)] border-[var(--primary)]'
                 : 'bg-[var(--surface)] border-[var(--border)]'
             }`}
           >
@@ -330,7 +330,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="h-10 px-4 rounded-lg bg-[var(--primary)] hover:bg-[var(--primary-dark)] text-white text-xs font-semibold inline-flex items-center gap-2"
+                  className="h-10 px-4 rounded-lg bg-[var(--primary)] hover:bg-[var(--primary-dark)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-2"
                 >
                   <IconUpload size={15} stroke={2} />
                   <span>{fileName ? `Replace File (${fileName})` : 'Choose CSV or Excel File'}</span>
@@ -392,7 +392,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                     type="button"
                     disabled={!canRunImport}
                     onClick={() => void handleExecuteImport()}
-                    className="h-9 px-4 rounded-lg bg-[var(--primary)] hover:bg-[var(--primary-dark)] text-white text-xs font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
+                    className="h-9 px-4 rounded-lg bg-[var(--primary)] hover:bg-[var(--primary-dark)] text-[var(--on-primary)] text-xs font-semibold disabled:opacity-50 inline-flex items-center gap-1.5"
                   >
                     {importing ? (
                       <IconLoader2 size={14} stroke={2} className="animate-spin" />
@@ -510,7 +510,7 @@ export function ImportExportPanel({ onImported }: { onImported?: () => void }) {
                   type="button"
                   disabled={exporting}
                   onClick={() => void handleExportEntity('full_workbook', 'xlsx')}
-                  className="h-9 px-3.5 rounded-lg bg-[var(--primary)] text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                  className="h-9 px-3.5 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs font-semibold inline-flex items-center gap-1.5"
                 >
                   <IconDownload size={14} stroke={2} />
                   <span>Download Full .XLSX</span>

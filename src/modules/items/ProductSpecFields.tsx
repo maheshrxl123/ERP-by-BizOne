@@ -1,5 +1,6 @@
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useApp } from '../../app/AppProvider';
 import type { ProductLineKey } from '../../core/productLines';
 import {
   ADHESIVE_SUITABLE_FOR,
@@ -45,16 +46,22 @@ export function ProductSpecFields({
   errors,
   onChange,
 }: ProductSpecFieldsProps) {
+  const { t } = useApp();
   const [newAttrKey, setNewAttrKey] = useState('');
   const [newAttrVal, setNewAttrVal] = useState('');
 
   const setField = (key: string, value: unknown) => {
     const next: AnySpecsMap = { ...specs, [key]: value };
-    // Auto-calculate sqm_per_box <-> sqft_per_box cleanly when user enters sqft_per_box
+    // Auto-calculate sqm_per_box <-> sqft_per_box cleanly
     if (productLine === 'tiles_slabs' && key === 'sqft_per_box') {
       const sqft = Number(value);
       if (Number.isFinite(sqft) && sqft > 0) {
         next.sqm_per_box = (sqft / SQFT_PER_SQM).toFixed(4);
+      }
+    } else if (productLine === 'tiles_slabs' && key === 'sqm_per_box') {
+      const sqm = Number(value);
+      if (Number.isFinite(sqm) && sqm > 0) {
+        next.sqft_per_box = (sqm * SQFT_PER_SQM).toFixed(4);
       }
     }
     onChange(next);
@@ -65,7 +72,7 @@ export function ProductSpecFields({
       <div className="space-y-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
-            <label className="block text-xs font-medium mb-1">Length (mm) *</label>
+            <label className="block text-xs font-medium mb-1">{t('specs.lengthMm')}</label>
             <input
               type="number"
               step="any"

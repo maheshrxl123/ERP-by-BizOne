@@ -27,6 +27,7 @@ import {
   syncOfflineQueue,
 } from '../../core/offlineQueue';
 import { supabase } from '../../core/supabase';
+import { useNetworkStatus } from '../../core/useNetworkStatus';
 import type {
   ItemCatalogRecord,
   OfflineBillQueueItem,
@@ -74,9 +75,7 @@ export function PosLiteScreen() {
     loadOfflineQueue()
   );
 
-  const [isOnline, setIsOnline] = useState<boolean>(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
+  const { isOnline } = useNetworkStatus();
   const [queueOfflineMode, setQueueOfflineMode] = useState(false);
 
   const [search, setSearch] = useState('');
@@ -94,17 +93,6 @@ export function PosLiteScreen() {
   const [openingCashInput, setOpeningCashInput] = useState('0');
   const [countedCashInput, setCountedCashInput] = useState('0');
   const [registerBusy, setRegisterBusy] = useState(false);
-
-  useEffect(() => {
-    const onOnline = () => setIsOnline(true);
-    const onOffline = () => setIsOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
 
   const loadData = useCallback(async () => {
     try {

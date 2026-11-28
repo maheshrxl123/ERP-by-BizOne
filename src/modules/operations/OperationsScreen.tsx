@@ -770,7 +770,9 @@ export function OperationsScreen() {
             <span>{t('ops.title')}</span>
           </h1>
           <p className="text-sm text-[var(--text-muted)] mt-0.5">
-            {t('ops.subtitle')}
+            {availableTabs.length > 0
+              ? `Manage ${availableTabs.map((item) => item.label).join(' · ')}.`
+              : t('ops.subtitle')}
           </p>
         </div>
 

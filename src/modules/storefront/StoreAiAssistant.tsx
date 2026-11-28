@@ -47,6 +47,7 @@ interface StoreAiAssistantProps {
   onOpenProductSlug: (slug: string) => void;
   onOpenPageSlug: (slug: string) => void;
   onAddToCart: (line: StoreCartItem) => void;
+  hidden?: boolean;
 }
 
 const STARTER_PROMPTS = [
@@ -62,6 +63,7 @@ export function StoreAiAssistant({
   onOpenProductSlug,
   onOpenPageSlug,
   onAddToCart,
+  hidden = false,
 }: StoreAiAssistantProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -95,10 +97,13 @@ export function StoreAiAssistant({
     setLoading(true);
     setErrorMsg(null);
 
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 22_000);
     try {
       const res = await fetch('/api/store/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           message: trimmed,
           history: nextHistory.slice(0, -1),
@@ -112,7 +117,10 @@ export function StoreAiAssistant({
         boxEstimateNote?: string | null;
       };
       if (!res.ok) {
-        throw new Error(json.error || 'Assistant is unavailable right now.');
+        throw new Error(
+          json.error ||
+            'Showroom AI is currently unavailable. Please contact our showroom or browse the catalogue.'
+        );
       }
 
       const replyEntry: ChatEntry = {
@@ -125,8 +133,15 @@ export function StoreAiAssistant({
       };
       setMessages((prev) => [...prev, replyEntry]);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Unable to send message.');
+      const fallback =
+        err instanceof DOMException && err.name === 'AbortError'
+          ? 'Showroom AI timed out. Please try again or browse our catalogue directly.'
+          : err instanceof Error
+            ? err.message
+            : 'Showroom AI is currently unavailable. Please contact our showroom or browse the catalogue.';
+      setErrorMsg(fallback);
     } finally {
+      window.clearTimeout(timeoutId);
       setLoading(false);
     }
   };
@@ -158,8 +173,10 @@ export function StoreAiAssistant({
     setAddedItemIds((prev) => ({ ...prev, [fullItem.id]: true }));
   };
 
+  if (hidden) return null;
+
   return (
-    <div className="fixed bottom-4 right-4 sm:bottom-5 sm:right-5 z-50 flex flex-col items-end">
+    <div className="fixed bottom-4 right-4 sm:bottom-5 sm:right-5 z-40 flex flex-col items-end">
       {open && (
         <section
           aria-label="Showroom Shopping Assistant"

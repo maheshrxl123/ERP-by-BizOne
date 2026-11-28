@@ -249,27 +249,27 @@ export function ReportsScreen() {
       };
     }
     if (activeTab === 'sales' && salesRows.length > 0) {
-      const headers = Object.keys(salesRows[0]);
+      const keys = Object.keys(salesRows[0]);
       return {
         title: `Sales Report - ${salesGroup} (${fromDate} to ${toDate})`,
-        headers,
-        rows: salesRows.map((r) => headers.map((k) => String(r[k] ?? ''))),
+        headers: keys.map(formatReportHeader),
+        rows: salesRows.map((r) => keys.map((k) => String(r[k] ?? ''))),
       };
     }
     if (activeTab === 'purchases' && purchaseRows.length > 0) {
-      const headers = Object.keys(purchaseRows[0]);
+      const keys = Object.keys(purchaseRows[0]);
       return {
         title: `Purchase Report - ${purchaseGroup} (${fromDate} to ${toDate})`,
-        headers,
-        rows: purchaseRows.map((r) => headers.map((k) => String(r[k] ?? ''))),
+        headers: keys.map(formatReportHeader),
+        rows: purchaseRows.map((r) => keys.map((k) => String(r[k] ?? ''))),
       };
     }
     if (activeTab === 'stock' && stockResult && stockResult.rows.length > 0) {
-      const headers = Object.keys(stockResult.rows[0]);
+      const keys = Object.keys(stockResult.rows[0]);
       return {
         title: `Stock Report - ${stockView}`,
-        headers,
-        rows: stockResult.rows.map((r) => headers.map((k) => String(r[k] ?? ''))),
+        headers: keys.map(formatReportHeader),
+        rows: stockResult.rows.map((r) => keys.map((k) => String(r[k] ?? ''))),
       };
     }
     if (activeTab === 'ageing') {
@@ -818,6 +818,51 @@ export function ReportsScreen() {
   );
 }
 
+const REPORT_COL_LABELS: Record<string, string> = {
+  is_low_stock: 'Low Stock',
+  is_out_of_stock: 'Out of Stock',
+  qty_on_hand: 'Stock Qty',
+  selling_price: 'Selling Price',
+  purchase_price: 'Cost Price',
+  stock_value: 'Stock Value',
+  base_unit_code: 'Unit',
+  category_name: 'Category',
+  brand_name: 'Brand',
+  gstin: 'GSTIN',
+  hsn_code: 'HSN / SAC',
+  party_name: 'Party Name',
+  party_type: 'Type',
+  bill_number: 'Bill #',
+  bill_date: 'Date',
+  purchase_number: 'Purchase #',
+  grand_total: 'Grand Total',
+  paid_amount: 'Paid',
+  balance_due: 'Balance Due',
+  net_balance: 'Net Balance',
+  to_receive: 'To Receive',
+  to_give: 'To Pay',
+  low_stock_alert: 'Reorder Level',
+  product_line: 'Product Line',
+  item_name: 'Item',
+  movement_type: 'Movement Type',
+  movement_date: 'Date',
+  entered_qty: 'Qty',
+  entered_unit_code: 'Unit',
+  signed_base_qty: 'Stock Δ',
+  unit_cost: 'Unit Cost',
+  reference_no: 'Reference #',
+  taxable_value: 'Taxable Value',
+  tax_amount: 'GST Tax',
+};
+
+function formatReportHeader(col: string): string {
+  if (REPORT_COL_LABELS[col]) return REPORT_COL_LABELS[col];
+  return col
+    .replace(/^is_/, '')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 function DynamicReportTable({
   rows,
   emptyText,
@@ -833,7 +878,15 @@ function DynamicReportTable({
     );
   }
 
-  const cols = Object.keys(rows[0]).filter((k) => k !== 'id' && k !== 'item_id' && k !== 'party_id' && k !== 'created_by' && k !== 'created_at');
+  const cols = Object.keys(rows[0]).filter(
+    (k) =>
+      k !== 'id' &&
+      k !== 'item_id' &&
+      k !== 'party_id' &&
+      k !== 'created_by' &&
+      k !== 'created_at' &&
+      k !== 'updated_at'
+  );
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-x-auto">
@@ -841,8 +894,8 @@ function DynamicReportTable({
         <thead>
           <tr className="bg-[var(--surface-muted)] text-[var(--text-muted)] border-b border-[var(--border)]">
             {cols.map((c) => (
-              <th key={c} className="text-left px-3 py-2.5 font-medium capitalize whitespace-nowrap">
-                {c.replace(/_/g, ' ')}
+              <th key={c} className="text-left px-3 py-2.5 font-medium whitespace-nowrap">
+                {formatReportHeader(c)}
               </th>
             ))}
           </tr>
@@ -859,9 +912,13 @@ function DynamicReportTable({
                   <td key={c} className="px-3 py-2.5 whitespace-nowrap tabular-nums">
                     {v === null || v === undefined
                       ? '—'
-                      : isMoney
-                        ? formatINR(Number(v))
-                        : String(v)}
+                      : typeof v === 'boolean'
+                        ? v
+                          ? 'Yes'
+                          : 'No'
+                        : isMoney
+                          ? formatINR(Number(v))
+                          : String(v)}
                   </td>
                 );
               })}

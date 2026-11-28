@@ -20,12 +20,15 @@ import {
   extractStoreFilterFacets,
   filterStoreProducts,
   getItemSizeLabel,
+  mergeStoreCartItems,
   resolveSafeStorePath,
+  updateStoreCartItemQty,
 } from './core/storeCatalog';
 import { StoreOrdersView, StoreWishlistView } from './modules/storefront/StoreAccountViews';
 import { StoreAiAssistant } from './modules/storefront/StoreAiAssistant';
 import { StoreAuthModal } from './modules/storefront/StoreAuthModal';
 import { StoreCheckoutDrawer } from './modules/storefront/StoreCheckoutDrawer';
+import { StoreImage } from './modules/storefront/StoreImage';
 import { StoreProductDetail } from './modules/storefront/StoreProductDetail';
 import {
   formatInr,
@@ -43,15 +46,17 @@ import type { PublishedStoreItemRecord, StoreOrderRecord } from './types/decorbi
 
 const CUSTOMER_STORAGE_KEY = 'decorbiz_store_customer_session';
 const CART_STORAGE_KEY = 'decorbiz_store_cart_v1';
+const STORE_BRANDING_CACHE_KEY = 'decorbiz_store_branding_v1';
 
 const DEFAULT_CONFIG: StoreConfigPayload = {
   onlineStoreEnabled: true,
   aiAssistantEnabled: false,
-  storeName: 'DecorBiz Architectural Showroom',
+  storeName: '',
   phone: null,
   email: null,
   address: null,
   logoUrl: null,
+  gstRegistered: false,
   pickupEnabled: true,
   codEnabled: true,
   razorpayEnabled: false,
@@ -62,11 +67,32 @@ const DEFAULT_CONFIG: StoreConfigPayload = {
   coupons: [],
 };
 
+function loadInitialStoreConfig(): StoreConfigPayload {
+  if (typeof window === 'undefined') return DEFAULT_CONFIG;
+  try {
+    const raw = window.localStorage.getItem(STORE_BRANDING_CACHE_KEY);
+    if (!raw) return DEFAULT_CONFIG;
+    const cached = JSON.parse(raw) as Partial<StoreConfigPayload>;
+    return {
+      ...DEFAULT_CONFIG,
+      storeName: typeof cached.storeName === 'string' ? cached.storeName : '',
+      phone: typeof cached.phone === 'string' ? cached.phone : null,
+      email: typeof cached.email === 'string' ? cached.email : null,
+      address: typeof cached.address === 'string' ? cached.address : null,
+      logoUrl: typeof cached.logoUrl === 'string' ? cached.logoUrl : null,
+      gstRegistered: Boolean(cached.gstRegistered),
+    };
+  } catch {
+    return DEFAULT_CONFIG;
+  }
+}
+
 export default function StorefrontApp() {
   const [route, setRoute] = useState<StoreRoute>(() =>
     typeof window !== 'undefined' ? parseStorePath(window.location.pathname) : { view: 'home' }
   );
-  const [config, setConfig] = useState<StoreConfigPayload>(DEFAULT_CONFIG);
+  const [config, setConfig] = useState<StoreConfigPayload>(loadInitialStoreConfig);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [items, setItems] = useState<PublishedStoreItemRecord[]>([]);
   const [loadingCatalogue, setLoadingCatalogue] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -197,9 +223,26 @@ export default function StorefrontApp() {
       if (cfgRes.ok) {
         const cfgData = (await cfgRes.json()) as StoreConfigPayload;
         setConfig(cfgData);
+        try {
+          window.localStorage.setItem(
+            STORE_BRANDING_CACHE_KEY,
+            JSON.stringify({
+              storeName: cfgData.storeName || '',
+              phone: cfgData.phone || null,
+              email: cfgData.email || null,
+              address: cfgData.address || null,
+              logoUrl: cfgData.logoUrl || null,
+              gstRegistered: Boolean(cfgData.gstRegistered),
+            })
+          );
+        } catch {
+          // ignore storage quota errors
+        }
         if (typeof document !== 'undefined' && cfgData.storeName) {
           document.title = `${cfgData.storeName} — Tiles, Sanitaryware & Bath Fittings`;
         }
+      } else {
+        setConfig((prev) => ({ ...prev, storeName: prev.storeName || 'RV Tiles & Decor' }));
       }
       if (!catRes.ok) {
         throw new Error(`Catalogue request failed (${catRes.status})`);
@@ -211,8 +254,10 @@ export default function StorefrontApp() {
       setItems(catData.items || []);
     } catch (err) {
       console.warn('Failed to load storefront data:', err);
+      setConfig((prev) => ({ ...prev, storeName: prev.storeName || 'RV Tiles & Decor' }));
       setLoadError('Unable to load the showroom catalogue right now. Please try again.');
     } finally {
+      setConfigLoaded(true);
       setLoadingCatalogue(false);
     }
   }, []);
@@ -223,7 +268,8 @@ export default function StorefrontApp() {
 
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const baseName = config.storeName || 'DecorBiz Architectural Showroom';
+    if (!configLoaded && !config.storeName) return;
+    const baseName = config.storeName || 'RV Tiles & Decor';
     let pageTitle = `${baseName} — Tiles, Sanitaryware & Bath Fittings`;
     let pageDesc = `Shop curated architectural tiles, slabs, sanitaryware, and solid brass faucets from ${baseName}.`;
 
@@ -245,7 +291,7 @@ export default function StorefrontApp() {
       const metaDesc = document.querySelector('meta[name="description"]');
       if (metaDesc) metaDesc.setAttribute('content', pageDesc);
     }
-  }, [route, config.storeName, config.pages]);
+  }, [route, configLoaded, config.storeName, config.pages]);
 
   useEffect(() => {
     if (!customerSession?.access_token) {
@@ -266,6 +312,25 @@ export default function StorefrontApp() {
   }, [customerSession?.access_token]);
 
   const facets = useMemo(() => extractStoreFilterFacets(items), [items]);
+  const lineCounts = useMemo(() => {
+    const counts: Record<string, number> = {
+      all: items.length,
+      tiles_slabs: 0,
+      sanitaryware: 0,
+      faucets_cp: 0,
+      bathware: 0,
+      adhesives_grout: 0,
+      accessories_services: 0,
+    };
+    for (const item of items) {
+      counts[item.product_line] = (counts[item.product_line] || 0) + 1;
+      if (item.product_line === 'sanitaryware' || item.product_line === 'faucets_cp') {
+        counts.bathware += 1;
+      }
+    }
+    return counts;
+  }, [items]);
+
   const filteredItems = useMemo(
     () =>
       filterStoreProducts(items, {
@@ -280,6 +345,11 @@ export default function StorefrontApp() {
         sort: sortBy,
       }),
     [items, lineFilter, sizeFilter, finishFilter, shadeFilter, minPrice, maxPrice, inStockOnly, searchQuery, sortBy]
+  );
+
+  const allCollectionsSearchCount = useMemo(
+    () => (searchQuery.trim() ? filterStoreProducts(items, { query: searchQuery }).length : items.length),
+    [items, searchQuery]
   );
 
   const handleToggleWishlist = async (itemId: string) => {
@@ -325,19 +395,7 @@ export default function StorefrontApp() {
   };
 
   const handleAddToCart = (line: StoreCartItem) => {
-    setCart((prev) => {
-      const idx = prev.findIndex((x) => x.key === line.key);
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = {
-          ...next[idx],
-          baseQty: next[idx].baseQty + line.baseQty,
-          qty: next[idx].qty + line.qty,
-        };
-        return next;
-      }
-      return [...prev, line];
-    });
+    setCart((prev) => mergeStoreCartItems(prev, line));
   };
 
   const handleOrderComplete = (order: StoreOrderRecord) => {
@@ -357,14 +415,14 @@ export default function StorefrontApp() {
     <div className="min-h-screen bg-[#FAF9F6] text-stone-900 flex flex-col">
       {/* 3-Zone Top Header Bar (Clean single-line navigation; zero ERP references) */}
       <header className="sticky top-0 z-40 border-b border-stone-200/80 bg-[#FAF9F6]/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto h-16 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center gap-2 sm:gap-6 min-w-0">
+        <div className="max-w-7xl mx-auto h-16 px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-6 min-w-0 flex-1 md:flex-initial">
             <button
               type="button"
               onClick={() => setMobileMenuOpen((v) => !v)}
               aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={mobileMenuOpen}
-              className="md:hidden min-h-11 min-w-11 rounded-lg border border-stone-200 bg-white text-stone-800 inline-flex items-center justify-center shrink-0"
+              className="md:hidden h-10 w-10 rounded-lg border border-stone-200 bg-white text-stone-800 inline-flex items-center justify-center shrink-0"
             >
               {mobileMenuOpen ? <IconX size={18} /> : <IconMenu2 size={18} />}
             </button>
@@ -372,35 +430,48 @@ export default function StorefrontApp() {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="flex items-center gap-2.5 text-left shrink-0 min-h-11 py-1.5"
+              className="flex items-center gap-2 text-left min-w-0 min-h-10 py-1"
             >
               {config.logoUrl ? (
                 <img
                   src={config.logoUrl}
-                  alt={config.storeName}
+                  alt={config.storeName || 'Showroom'}
                   width={32}
                   height={32}
                   decoding="async"
                   referrerPolicy="no-referrer"
-                  className="h-8 w-8 rounded-lg object-cover border border-stone-200"
+                  className="h-8 w-8 rounded-lg object-cover border border-stone-200 shrink-0"
                 />
+              ) : !configLoaded && !config.storeName ? (
+                <div className="w-8 h-8 rounded-lg bg-stone-200 animate-pulse shrink-0" aria-hidden="true" />
               ) : (
-                <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-stone-900 text-white flex items-center justify-center shrink-0">
                   <IconBuildingStore size={18} />
                 </div>
               )}
-              <span className="text-sm sm:text-base font-bold tracking-tight text-stone-900 truncate max-w-[140px] sm:max-w-none">
-                {config.storeName}
-              </span>
+              {config.storeName ? (
+                <span className="text-sm sm:text-base font-bold tracking-tight text-stone-900 truncate max-w-[125px] sm:max-w-[220px] md:max-w-none">
+                  {config.storeName}
+                </span>
+              ) : !configLoaded ? (
+                <span className="h-4 w-24 sm:w-32 rounded bg-stone-200 animate-pulse inline-block" aria-label="Loading showroom" />
+              ) : (
+                <span className="text-sm sm:text-base font-bold tracking-tight text-stone-900 truncate">
+                  RV Tiles &amp; Decor
+                </span>
+              )}
             </button>
 
             <nav aria-label="Primary navigation" className="hidden md:flex items-center gap-4 text-xs font-medium text-stone-600">
               <button
                 type="button"
-                onClick={() => navigate('/catalogue')}
-                aria-current={route.view === 'catalogue' ? 'page' : undefined}
+                onClick={() => {
+                  setLineFilter('all');
+                  navigate('/catalogue');
+                }}
+                aria-current={route.view === 'catalogue' && lineFilter === 'all' ? 'page' : undefined}
                 className={`min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors ${
-                  route.view === 'catalogue' ? 'text-stone-900 font-semibold' : ''
+                  route.view === 'catalogue' && lineFilter === 'all' ? 'text-stone-900 font-semibold' : ''
                 }`}
               >
                 Catalogue
@@ -411,17 +482,29 @@ export default function StorefrontApp() {
                   setLineFilter('tiles_slabs');
                   navigate('/catalogue');
                 }}
-                className="min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors"
+                aria-current={route.view === 'catalogue' && lineFilter === 'tiles_slabs' ? 'page' : undefined}
+                className={`min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors ${
+                  route.view === 'catalogue' && lineFilter === 'tiles_slabs' ? 'text-stone-900 font-semibold' : ''
+                }`}
               >
-                Tiles & Slabs
+                Tiles &amp; Slabs
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setLineFilter('sanitaryware');
+                  setLineFilter('bathware');
                   navigate('/catalogue');
                 }}
-                className="min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors"
+                aria-current={
+                  route.view === 'catalogue' && (lineFilter === 'bathware' || lineFilter === 'sanitaryware')
+                    ? 'page'
+                    : undefined
+                }
+                className={`min-h-11 lg:min-h-0 py-2.5 px-1 inline-flex items-center hover:text-stone-900 transition-colors ${
+                  route.view === 'catalogue' && (lineFilter === 'bathware' || lineFilter === 'sanitaryware')
+                    ? 'text-stone-900 font-semibold'
+                    : ''
+                }`}
               >
                 Bathware
               </button>
@@ -438,8 +521,8 @@ export default function StorefrontApp() {
             </nav>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden sm:block relative w-52">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <div className="hidden sm:block relative w-44 lg:w-52">
               <IconSearch size={14} className="absolute left-3 top-3.5 lg:top-2.5 text-stone-400" />
               <input
                 type="search"
@@ -459,7 +542,7 @@ export default function StorefrontApp() {
               onClick={() => navigate('/wishlist')}
               aria-label="Wishlist"
               aria-current={route.view === 'wishlist' ? 'page' : undefined}
-              className="min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 lg:h-9 px-2.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-700 inline-flex items-center justify-center gap-1 text-xs font-medium"
+              className="h-10 w-10 sm:min-h-11 sm:min-w-11 lg:min-h-0 lg:min-w-0 lg:h-9 lg:w-auto lg:px-2.5 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-700 inline-flex items-center justify-center gap-1 text-xs font-medium shrink-0"
             >
               <IconHeart size={16} />
               <span className="hidden lg:inline">{wishlistIds.length}</span>
@@ -469,7 +552,7 @@ export default function StorefrontApp() {
               type="button"
               onClick={() => (customerSession ? navigate('/orders') : setAuthModalOpen(true))}
               aria-label={customerSession ? 'Customer account and orders' : 'Sign In'}
-              className="min-h-11 min-w-11 lg:min-h-0 lg:min-w-0 lg:h-9 px-3 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-800 inline-flex items-center justify-center gap-1.5 text-xs font-medium"
+              className="h-10 w-10 sm:w-auto sm:min-h-11 sm:px-3 lg:min-h-0 lg:h-9 rounded-lg border border-stone-200 bg-white hover:bg-stone-100 text-stone-800 inline-flex items-center justify-center gap-1.5 text-xs font-medium shrink-0"
             >
               {customerSession ? <IconPackage size={15} /> : <IconUser size={15} />}
               <span className="hidden sm:inline">
@@ -480,7 +563,7 @@ export default function StorefrontApp() {
             <button
               type="button"
               onClick={() => setCartOpen(true)}
-              className="min-h-11 lg:min-h-0 lg:h-9 px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white inline-flex items-center gap-2 text-xs font-semibold"
+              className="h-10 sm:min-h-11 lg:min-h-0 lg:h-9 px-2.5 sm:px-3.5 rounded-lg bg-stone-900 hover:bg-stone-800 text-white inline-flex items-center gap-1.5 sm:gap-2 text-xs font-semibold whitespace-nowrap shrink-0"
             >
               <IconShoppingBag size={15} />
               <span className="tabular-nums">Bag ({bagCount})</span>
@@ -508,10 +591,13 @@ export default function StorefrontApp() {
             <nav aria-label="Mobile navigation" className="grid grid-cols-2 gap-2 text-xs font-medium text-stone-700">
               <button
                 type="button"
-                onClick={() => navigate('/catalogue')}
-                aria-current={route.view === 'catalogue' ? 'page' : undefined}
+                onClick={() => {
+                  setLineFilter('all');
+                  navigate('/catalogue');
+                }}
+                aria-current={route.view === 'catalogue' && lineFilter === 'all' ? 'page' : undefined}
                 className={`min-h-11 px-3 rounded-lg border text-left ${
-                  route.view === 'catalogue'
+                  route.view === 'catalogue' && lineFilter === 'all'
                     ? 'border-stone-900 bg-stone-900 text-white font-semibold'
                     : 'border-stone-200 bg-white'
                 }`}
@@ -524,17 +610,25 @@ export default function StorefrontApp() {
                   setLineFilter('tiles_slabs');
                   navigate('/catalogue');
                 }}
-                className="min-h-11 px-3 rounded-lg border border-stone-200 bg-white text-left"
+                className={`min-h-11 px-3 rounded-lg border text-left ${
+                  route.view === 'catalogue' && lineFilter === 'tiles_slabs'
+                    ? 'border-stone-900 bg-stone-900 text-white font-semibold'
+                    : 'border-stone-200 bg-white'
+                }`}
               >
-                Tiles & Slabs
+                Tiles &amp; Slabs
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setLineFilter('sanitaryware');
+                  setLineFilter('bathware');
                   navigate('/catalogue');
                 }}
-                className="min-h-11 px-3 rounded-lg border border-stone-200 bg-white text-left"
+                className={`min-h-11 px-3 rounded-lg border text-left ${
+                  route.view === 'catalogue' && (lineFilter === 'bathware' || lineFilter === 'sanitaryware')
+                    ? 'border-stone-900 bg-stone-900 text-white font-semibold'
+                    : 'border-stone-200 bg-white'
+                }`}
               >
                 Bathware
               </button>
@@ -623,13 +717,14 @@ export default function StorefrontApp() {
               {route.view === 'home' && (
                 <>
                   <section className="relative bg-stone-900 overflow-hidden">
-                    <img
+                    <StoreImage
                       src={heroImageUrl}
+                      fallbackSrc={STORE_HERO_DEFAULT_IMAGE}
                       alt={primaryBanner?.title || 'Architectural Tiles & Bathware Showroom'}
                       width={1600}
                       height={640}
-                      decoding="async"
-                      referrerPolicy="no-referrer"
+                      eager
+                      skeletonClassName="bg-stone-800"
                       className="w-full h-[380px] sm:h-[480px] object-cover opacity-75"
                     />
                     <div className="absolute inset-0 bg-gradient-to-r from-stone-950/80 via-stone-950/40 to-transparent flex items-center">
@@ -669,52 +764,74 @@ export default function StorefrontApp() {
 
                   {/* Category Bento Strip */}
                   <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-                      {(
-                        [
-                          {
-                            key: 'tiles_slabs',
-                            title: 'Tiles & Marble Slabs',
-                            sub: 'Order by box or room area sq.ft',
-                          },
-                          {
-                            key: 'sanitaryware',
-                            title: 'Sanitaryware & Basins',
-                            sub: 'Rimless wall-hung & counter pieces',
-                          },
-                          {
-                            key: 'faucets_cp',
-                            title: 'Solid Brass Faucets',
-                            sub: 'PVD brushed gold, matte & chrome',
-                          },
-                        ] as const
-                      ).map((cat) => (
-                        <button
-                          key={cat.key}
-                          type="button"
-                          onClick={() => {
-                            setLineFilter(cat.key);
-                            navigate('/catalogue');
-                          }}
-                          className="group relative aspect-[4/3] rounded-2xl overflow-hidden border border-stone-200 text-left"
-                        >
-                          <img
-                            src={LINE_FALLBACK_IMAGES[cat.key]}
-                            alt={cat.title}
-                            width={600}
-                            height={450}
-                            loading="lazy"
-                            decoding="async"
-                            referrerPolicy="no-referrer"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-stone-950/20 to-transparent p-5 flex flex-col justify-end text-white">
-                            <h2 className="text-lg font-bold">{cat.title}</h2>
-                            <p className="text-xs text-stone-200">{cat.sub}</p>
+                    {!configLoaded && loadingCatalogue ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5" aria-label="Loading collections">
+                        {[1, 2, 3].map((n) => (
+                          <div
+                            key={n}
+                            className="aspect-[4/3] rounded-2xl border border-stone-200 bg-stone-200 animate-pulse p-5 flex flex-col justify-end gap-2"
+                          >
+                            <div className="h-5 w-40 rounded bg-stone-300" />
+                            <div className="h-3.5 w-52 rounded bg-stone-300" />
                           </div>
-                        </button>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                        {(
+                          [
+                            {
+                              key: 'tiles_slabs',
+                              title: 'Tiles & Marble Slabs',
+                              sub: 'Order by box or room area sq.ft',
+                            },
+                            {
+                              key: 'sanitaryware',
+                              title: 'Sanitaryware & Basins',
+                              sub: 'Rimless wall-hung & counter pieces',
+                            },
+                            {
+                              key: 'faucets_cp',
+                              title: 'Solid Brass Faucets',
+                              sub: 'PVD brushed gold, matte & chrome',
+                            },
+                          ] as const
+                        ).map((cat) => {
+                          const catCount = lineCounts[cat.key] || 0;
+                          return (
+                            <button
+                              key={cat.key}
+                              type="button"
+                              onClick={() => {
+                                setLineFilter(cat.key);
+                                navigate('/catalogue');
+                              }}
+                              className="group relative aspect-[4/3] rounded-2xl overflow-hidden border border-stone-200 text-left bg-stone-100"
+                            >
+                              <StoreImage
+                                src={LINE_FALLBACK_IMAGES[cat.key]}
+                                fallbackSrc={LINE_FALLBACK_IMAGES.tiles_slabs}
+                                alt={cat.title}
+                                width={600}
+                                height={450}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-stone-950/20 to-transparent p-5 flex flex-col justify-end text-white">
+                                <div className="flex items-center justify-between gap-2">
+                                  <h2 className="text-lg font-bold">{cat.title}</h2>
+                                  {items.length > 0 && (
+                                    <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-white/15 text-white tabular-nums">
+                                      {catCount} {catCount === 1 ? 'item' : 'items'}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-stone-200">{cat.sub}</p>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </section>
                 </>
               )}
@@ -801,7 +918,7 @@ export default function StorefrontApp() {
                         >
                           {Object.entries(STORE_PRODUCT_LINE_LABELS).map(([k, lbl]) => (
                             <option key={k} value={k}>
-                              {lbl}
+                              {items.length > 0 ? `${lbl} (${lineCounts[k] ?? 0})` : lbl}
                             </option>
                           ))}
                         </select>
@@ -899,12 +1016,28 @@ export default function StorefrontApp() {
                   {/* Product Card Grid */}
                   <div className="lg:col-span-9">
                     {loadingCatalogue ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" aria-label="Loading products">
                         {[1, 2, 3, 4, 5, 6].map((n) => (
                           <div
                             key={n}
-                            className="h-80 rounded-2xl border border-stone-200 bg-white animate-pulse"
-                          />
+                            className="rounded-2xl border border-stone-200 bg-white overflow-hidden animate-pulse flex flex-col"
+                          >
+                            <div className="aspect-[4/3] bg-stone-200" />
+                            <div className="p-4 space-y-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="h-3 w-20 rounded bg-stone-200" />
+                                <div className="h-3 w-14 rounded bg-stone-200" />
+                              </div>
+                              <div className="h-4 w-4/5 rounded bg-stone-200" />
+                              <div className="pt-2.5 border-t border-stone-100 flex items-center justify-between">
+                                <div className="space-y-1.5">
+                                  <div className="h-4 w-24 rounded bg-stone-200" />
+                                  <div className="h-3 w-16 rounded bg-stone-200" />
+                                </div>
+                                <div className="h-9 w-16 rounded-xl bg-stone-200" />
+                              </div>
+                            </div>
+                          </div>
                         ))}
                       </div>
                     ) : loadError ? (
@@ -920,17 +1053,77 @@ export default function StorefrontApp() {
                         </button>
                       </div>
                     ) : filteredItems.length === 0 ? (
-                      <div className="rounded-2xl border border-stone-200 bg-white p-12 text-center space-y-2">
-                        <p className="text-sm font-semibold text-stone-800">No matching products found</p>
-                        <p className="text-xs text-stone-500">
-                          Try clearing your size, finish, or price filters to view more showroom pieces.
-                        </p>
-                      </div>
+                      (() => {
+                        const hasSubFilters =
+                          lineFilter !== 'all' ||
+                          sizeFilter !== 'all' ||
+                          finishFilter !== 'all' ||
+                          shadeFilter !== 'all' ||
+                          Boolean(minPrice) ||
+                          Boolean(maxPrice) ||
+                          inStockOnly;
+                        const activeLineLabel = STORE_PRODUCT_LINE_LABELS[lineFilter] || 'this collection';
+                        return (
+                          <div className="rounded-2xl border border-stone-200 bg-white p-10 sm:p-12 text-center space-y-3">
+                            <p className="text-sm font-semibold text-stone-900">
+                              {lineFilter !== 'all' && !searchQuery.trim()
+                                ? `No ${activeLineLabel} published online right now`
+                                : 'No matching products found'}
+                            </p>
+                            <p className="text-xs text-stone-600 max-w-md mx-auto">
+                              {searchQuery.trim() && hasSubFilters
+                                ? `No matches found for "${searchQuery.trim()}" within your active filters.`
+                                : lineFilter !== 'all' && !searchQuery.trim()
+                                  ? 'New arrivals for this collection are added regularly. Browse all available showroom items or contact us for catalogue requests.'
+                                  : 'Try clearing your search query, size, finish, or price filters to view more showroom pieces.'}
+                            </p>
+                            <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                              {searchQuery.trim() && hasSubFilters && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setLineFilter('all');
+                                    setSizeFilter('all');
+                                    setFinishFilter('all');
+                                    setShadeFilter('all');
+                                    setMinPrice('');
+                                    setMaxPrice('');
+                                    setInStockOnly(false);
+                                  }}
+                                  className="h-10 px-4 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs font-semibold"
+                                >
+                                  Search all collections{allCollectionsSearchCount > 0 ? ` (${allCollectionsSearchCount})` : ''}
+                                </button>
+                              )}
+                              {(hasSubFilters || Boolean(searchQuery.trim())) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setLineFilter('all');
+                                    setSizeFilter('all');
+                                    setFinishFilter('all');
+                                    setShadeFilter('all');
+                                    setMinPrice('');
+                                    setMaxPrice('');
+                                    setInStockOnly(false);
+                                    setSearchQuery('');
+                                  }}
+                                  className="h-10 px-4 rounded-xl border border-stone-300 bg-white hover:bg-stone-50 text-stone-800 text-xs font-semibold"
+                                >
+                                  View All Published Products ({items.length})
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                         {filteredItems.map((item) => {
                           const sizeLabel = getItemSizeLabel(item);
                           const wished = wishlistIds.includes(item.id);
+                          const fallbackSrc =
+                            LINE_FALLBACK_IMAGES[item.product_line] || LINE_FALLBACK_IMAGES.tiles_slabs;
                           return (
                             <article
                               key={item.id}
@@ -944,14 +1137,12 @@ export default function StorefrontApp() {
                                   }
                                   className="w-full h-full block"
                                 >
-                                  <img
+                                  <StoreImage
                                     src={getProductImageSrc(item)}
+                                    fallbackSrc={fallbackSrc}
                                     alt={item.name}
                                     width={600}
                                     height={450}
-                                    loading="lazy"
-                                    decoding="async"
-                                    referrerPolicy="no-referrer"
                                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                   />
                                 </button>
@@ -1034,7 +1225,13 @@ export default function StorefrontApp() {
       <footer className="border-t border-stone-200 bg-white mt-12 pb-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 grid grid-cols-1 md:grid-cols-3 gap-8 text-xs text-stone-600">
           <div className="space-y-2">
-            <p className="text-sm font-bold text-stone-900">{config.storeName}</p>
+            {config.storeName ? (
+              <p className="text-sm font-bold text-stone-900">{config.storeName}</p>
+            ) : !configLoaded ? (
+              <span className="h-4 w-32 rounded bg-stone-200 animate-pulse inline-block" aria-hidden="true" />
+            ) : (
+              <p className="text-sm font-bold text-stone-900">RV Tiles &amp; Decor</p>
+            )}
             {config.address && (
               <p className="inline-flex items-start gap-1.5">
                 <IconMapPin size={14} className="shrink-0 mt-0.5 text-stone-400" />
@@ -1123,32 +1320,7 @@ export default function StorefrontApp() {
         cart={cart}
         customerSession={customerSession}
         onUpdateQty={(key, nextBaseQty) =>
-          setCart((prev) =>
-            prev.map((c) => {
-              if (c.key !== key) return c;
-              const specsObj =
-                c.item.specs && typeof c.item.specs === 'object'
-                  ? (c.item.specs as Record<string, unknown>)
-                  : null;
-              const rawSqft = Number(specsObj?.sqft_per_box ?? 0);
-              const sqftPerBox =
-                Number.isFinite(rawSqft) && rawSqft > 0
-                  ? rawSqft
-                  : c.sqftCovered && c.baseQty > 0
-                    ? c.sqftCovered / c.baseQty
-                    : null;
-              const nextSqftCovered = sqftPerBox
-                ? Math.round(nextBaseQty * sqftPerBox * 100) / 100
-                : c.sqftCovered;
-              return {
-                ...c,
-                mode: c.mode === 'sqft' ? 'boxes' : c.mode,
-                baseQty: nextBaseQty,
-                qty: nextBaseQty,
-                sqftCovered: nextSqftCovered,
-              };
-            })
-          )
+          setCart((prev) => updateStoreCartItemQty(prev, key, nextBaseQty))
         }
         onRemoveItem={(key) => setCart((prev) => prev.filter((c) => c.key !== key))}
         onClearCart={() => setCart([])}
@@ -1158,8 +1330,9 @@ export default function StorefrontApp() {
 
       {config.onlineStoreEnabled && config.aiAssistantEnabled && (
         <StoreAiAssistant
-          storeName={config.storeName}
+          storeName={config.storeName || 'RV Tiles & Decor'}
           items={items}
+          hidden={cartOpen || authModalOpen || mobileMenuOpen}
           onOpenProductSlug={(slug) => navigate(`/product/${encodeURIComponent(slug)}`)}
           onOpenPageSlug={(slug) => navigate(`/page/${encodeURIComponent(slug)}`)}
           onAddToCart={handleAddToCart}

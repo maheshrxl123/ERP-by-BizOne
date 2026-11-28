@@ -97,11 +97,14 @@ export function matchDeliveryZone(
 export interface OrderPricingLineInput {
   unitPrice: number;
   baseQty: number;
+  gstRate?: number;
+  taxInclusive?: boolean;
 }
 
 export interface OrderPricingResult {
   subtotal: number;
   discountAmount: number;
+  taxAmount: number;
   deliveryCharge: number;
   grandTotal: number;
   couponApplied: string | null;
@@ -113,11 +116,13 @@ export function computeStoreOrderTotals(params: {
   fulfillmentType: 'delivery' | 'pickup';
   zone: StoreDeliveryZoneRecord | null;
   coupon: StoreCouponRecord | null;
+  gstRegistered?: boolean;
   nowIso?: string;
 }): OrderPricingResult {
   const errors: string[] = [];
+  const lineTotals = params.lines.map((l) => roundHalfUp(l.unitPrice * l.baseQty, 2));
   const subtotal = roundHalfUp(
-    params.lines.reduce((sum, l) => sum + roundHalfUp(l.unitPrice * l.baseQty, 2), 0),
+    lineTotals.reduce((sum, lt) => sum + lt, 0),
     2
   );
 
@@ -151,6 +156,21 @@ export function computeStoreOrderTotals(params: {
     }
   }
 
+  let taxAmount = 0;
+  if (params.gstRegistered !== false && subtotal > 0) {
+    const netFactor = Math.max(0, (subtotal - discountAmount) / subtotal);
+    taxAmount = roundHalfUp(
+      params.lines.reduce((sum, l, idx) => {
+        const rate = Number(l.gstRate ?? 0);
+        if (!Number.isFinite(rate) || rate <= 0) return sum;
+        const netLine = lineTotals[idx] * netFactor;
+        const gstPart = (netLine * rate) / (100 + rate);
+        return sum + roundHalfUp(gstPart, 2);
+      }, 0),
+      2
+    );
+  }
+
   let deliveryCharge = 0;
   if (params.fulfillmentType === 'delivery') {
     if (!params.zone) {
@@ -170,11 +190,128 @@ export function computeStoreOrderTotals(params: {
   return {
     subtotal,
     discountAmount,
+    taxAmount,
     deliveryCharge,
     grandTotal,
     couponApplied,
     errors,
   };
+}
+
+export interface StoreCartLineLike {
+  key: string;
+  item: PublishedStoreItemRecord;
+  variantId: string | null;
+  variantName: string | null;
+  unitPrice: number;
+  mode: 'boxes' | 'sqft' | 'base';
+  qty: number;
+  baseQty: number;
+  wastagePct: number;
+  sqftCovered: number | null;
+}
+
+export function resolveItemSqftPerBox(
+  specs: unknown,
+  fallbackSqftCovered?: number | null,
+  fallbackBaseQty?: number
+): number | null {
+  if (specs && typeof specs === 'object') {
+    const raw = Number((specs as Record<string, unknown>).sqft_per_box ?? 0);
+    if (Number.isFinite(raw) && raw > 0) {
+      return raw;
+    }
+  }
+  if (
+    typeof fallbackSqftCovered === 'number' &&
+    Number.isFinite(fallbackSqftCovered) &&
+    fallbackSqftCovered > 0 &&
+    typeof fallbackBaseQty === 'number' &&
+    fallbackBaseQty > 0
+  ) {
+    return fallbackSqftCovered / fallbackBaseQty;
+  }
+  return null;
+}
+
+export function mergeStoreCartItems<T extends StoreCartLineLike>(cart: T[], incoming: T): T[] {
+  const incomingIdentity = `${incoming.item.id}:${incoming.variantId || 'default'}`;
+  const idx = cart.findIndex(
+    (x) =>
+      x.key === incoming.key ||
+      `${x.item.id}:${x.variantId || 'default'}` === incomingIdentity
+  );
+  if (idx < 0) {
+    const sqftPerBox = resolveItemSqftPerBox(
+      incoming.item.specs,
+      incoming.sqftCovered,
+      incoming.baseQty
+    );
+    const normalizedSqft = sqftPerBox
+      ? roundHalfUp(incoming.baseQty * sqftPerBox, 2)
+      : incoming.sqftCovered;
+    return [
+      ...cart,
+      {
+        ...incoming,
+        sqftCovered: normalizedSqft,
+      },
+    ];
+  }
+
+  const next = [...cart];
+  const existing = next[idx];
+  const nextBaseQty = roundHalfUp(existing.baseQty + incoming.baseQty, 3);
+  const sqftPerBox =
+    resolveItemSqftPerBox(incoming.item.specs, incoming.sqftCovered, incoming.baseQty) ??
+    resolveItemSqftPerBox(existing.item.specs, existing.sqftCovered, existing.baseQty);
+  const nextSqftCovered = sqftPerBox
+    ? roundHalfUp(nextBaseQty * sqftPerBox, 2)
+    : existing.sqftCovered !== null && incoming.sqftCovered !== null
+      ? roundHalfUp(existing.sqftCovered + incoming.sqftCovered, 2)
+      : existing.sqftCovered ?? incoming.sqftCovered;
+
+  const isTileMode =
+    existing.mode === 'boxes' ||
+    existing.mode === 'sqft' ||
+    incoming.mode === 'boxes' ||
+    incoming.mode === 'sqft' ||
+    incoming.item.product_line === 'tiles_slabs';
+
+  next[idx] = {
+    ...existing,
+    item: incoming.item,
+    unitPrice: incoming.unitPrice,
+    mode: isTileMode ? 'boxes' : 'base',
+    baseQty: nextBaseQty,
+    qty: nextBaseQty,
+    wastagePct: 0,
+    sqftCovered: nextSqftCovered,
+  };
+  return next;
+}
+
+export function updateStoreCartItemQty<T extends StoreCartLineLike>(
+  cart: T[],
+  key: string,
+  nextBaseQty: number
+): T[] {
+  const safeBaseQty = Math.max(1, roundHalfUp(nextBaseQty, 3));
+  return cart.map((c) => {
+    if (c.key !== key) return c;
+    const sqftPerBox = resolveItemSqftPerBox(c.item.specs, c.sqftCovered, c.baseQty);
+    const nextSqftCovered = sqftPerBox
+      ? roundHalfUp(safeBaseQty * sqftPerBox, 2)
+      : c.sqftCovered;
+    return {
+      ...c,
+      mode: c.mode === 'sqft' ? 'boxes' : c.mode,
+      baseQty: safeBaseQty,
+      qty: safeBaseQty,
+      wastagePct: 0,
+      sqftCovered: nextSqftCovered,
+    };
+  });
 }
 
 export interface StoreProductFilters {
@@ -270,8 +407,14 @@ export function filterStoreProducts(
       : null;
 
   const filtered = items.filter((item) => {
-    if (filters.productLine && filters.productLine !== 'all' && item.product_line !== filters.productLine) {
-      return false;
+    if (filters.productLine && filters.productLine !== 'all') {
+      if (filters.productLine === 'bathware') {
+        if (item.product_line !== 'sanitaryware' && item.product_line !== 'faucets_cp') {
+          return false;
+        }
+      } else if (item.product_line !== filters.productLine) {
+        return false;
+      }
     }
     if (filters.inStockOnly && !item.in_stock) {
       return false;

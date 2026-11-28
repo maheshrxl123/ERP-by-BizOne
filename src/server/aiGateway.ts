@@ -273,6 +273,7 @@ const SENSITIVE_PROFIT_KEYS = new Set([
   'margin_pct',
   'stock_value',
   'stock_cost_value',
+  'total_stock_value',
 ]);
 
 const ALWAYS_STRIPPED_KEYS = new Set([
@@ -426,13 +427,25 @@ export async function callConfiguredAiProvider(params: {
       apiKey,
       httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
     });
-    const response = await ai.models.generateContent({
-      model: chosenModel,
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.2,
-      },
+    const timeoutMs = 20_000;
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: chosenModel,
+        contents: userPrompt,
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.2,
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('AI provider timed out after 20s. Please retry.')), timeoutMs)
+      ),
+    ]).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (msg.includes('503') || msg.toUpperCase().includes('UNAVAILABLE') || msg.toLowerCase().includes('high demand')) {
+        throw new Error('AI service is temporarily busy (503). Please try again in a moment.');
+      }
+      throw err instanceof Error ? err : new Error('AI request failed.');
     });
     const text = response.text || '';
     const tokensUsed = Number(response.usageMetadata?.totalTokenCount || 0);
@@ -563,15 +576,27 @@ export async function callAiStructuredJson<T>(params: {
     }
     parts.push({ text: userPrompt });
 
-    const response = await ai.models.generateContent({
-      model: chosenModel,
-      contents: [{ role: 'user', parts }],
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.1,
-        responseMimeType: 'application/json',
-        responseSchema,
-      },
+    const timeoutMs = 20_000;
+    const response = await Promise.race([
+      ai.models.generateContent({
+        model: chosenModel,
+        contents: [{ role: 'user', parts }],
+        config: {
+          systemInstruction: systemPrompt,
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+          responseSchema,
+        },
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('AI provider timed out after 20s. Please retry.')), timeoutMs)
+      ),
+    ]).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      if (msg.includes('503') || msg.toUpperCase().includes('UNAVAILABLE') || msg.toLowerCase().includes('high demand')) {
+        throw new Error('AI service is temporarily busy (503). Please try again in a moment.');
+      }
+      throw err instanceof Error ? err : new Error('AI structured request failed.');
     });
 
     const text = stripJsonCodeFences(response.text || '{}');

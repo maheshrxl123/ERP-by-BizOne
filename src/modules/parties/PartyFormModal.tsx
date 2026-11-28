@@ -263,6 +263,50 @@ export function PartyFormModal({
 
     setSaving(true);
     try {
+      const normalizedPhone = phone.replace(/\D/g, '');
+      const checkPhoneKey = normalizedPhone.length >= 10 ? normalizedPhone.slice(-10) : normalizedPhone;
+      if (checkPhoneKey || cleanGstin) {
+        const { data: existingParties, error: dupErr } = await supabase
+          .from('parties')
+          .select('id, name, phone, gstin')
+          .eq('is_active', true)
+          .limit(500);
+        if (!dupErr && Array.isArray(existingParties)) {
+          const selfId = editingParty?.party_id || null;
+          if (checkPhoneKey) {
+            const phoneDup = existingParties.find((p) => {
+              if (p.id === selfId || !p.phone) return false;
+              const digits = String(p.phone).replace(/\D/g, '');
+              const pKey = digits.length >= 10 ? digits.slice(-10) : digits;
+              return pKey === checkPhoneKey;
+            });
+            if (phoneDup) {
+              setErrorMsg(
+                language === 'hi'
+                  ? `फ़ोन नंबर पहले से "${phoneDup.name}" के पास दर्ज है।`
+                  : `Phone number already belongs to active party "${phoneDup.name}".`
+              );
+              setSaving(false);
+              return;
+            }
+          }
+          if (cleanGstin) {
+            const gstinDup = existingParties.find(
+              (p) => p.id !== selfId && p.gstin && String(p.gstin).trim().toUpperCase() === cleanGstin
+            );
+            if (gstinDup) {
+              setErrorMsg(
+                language === 'hi'
+                  ? `GSTIN "${cleanGstin}" पहले से "${gstinDup.name}" के पास दर्ज है।`
+                  : `GSTIN "${cleanGstin}" already belongs to active party "${gstinDup.name}".`
+              );
+              setSaving(false);
+              return;
+            }
+          }
+        }
+      }
+
       const { data, error } = await supabase.rpc('save_party', {
         p_party_id: editingParty ? editingParty.party_id : null,
         p_name: trimmedName,

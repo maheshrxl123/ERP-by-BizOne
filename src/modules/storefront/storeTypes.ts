@@ -24,6 +24,7 @@ export const LINE_FALLBACK_IMAGES: Record<string, string> = {
 export const STORE_PRODUCT_LINE_LABELS: Record<string, string> = {
   all: 'All Collections',
   tiles_slabs: 'Tiles & Slabs',
+  bathware: 'Bathware & Faucets',
   sanitaryware: 'Sanitaryware',
   faucets_cp: 'Faucets & CP',
   tile_adhesive: 'Tile Adhesives',
@@ -33,6 +34,7 @@ export const STORE_PRODUCT_LINE_LABELS: Record<string, string> = {
 export interface StoreConfigPayload {
   onlineStoreEnabled: boolean;
   aiAssistantEnabled?: boolean;
+  gstRegistered?: boolean;
   storeName: string;
   phone: string | null;
   email: string | null;

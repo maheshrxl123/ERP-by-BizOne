@@ -135,6 +135,7 @@ export function NewBillScreen({
   const [aiParsing, setAiParsing] = useState(false);
   const [loadingMaster, setLoadingMaster] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState('');
 
@@ -333,8 +334,10 @@ export function NewBillScreen({
         setAutoRoundOff(editingDraft.auto_round_off ?? true);
         setNotes(editingDraft.notes || '');
         setTerms(editingDraft.terms ?? business?.invoice_terms ?? '');
-        setPaidTouched(false);
-        setPaidAmount('');
+        setPaymentMode(editingDraft.payment_mode || 'cash');
+        setPaymentReference(editingDraft.payment_reference || '');
+        setPaidTouched(true);
+        setPaidAmount(String(Number(editingDraft.paid_amount ?? 0)));
 
         const { data: draftLines, error: dlErr } = await supabase
           .from('bill_lines')
@@ -941,6 +944,7 @@ export function NewBillScreen({
     }));
 
   const handleSubmit = async (actionMode: 'draft' | 'issued') => {
+    if (submittingRef.current) return;
     setErrorMsg(null);
     if (lines.length === 0) {
       setErrorMsg(
@@ -963,11 +967,18 @@ export function NewBillScreen({
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const rpcLines = buildRpcLines();
       if (actionMode === 'draft') {
-        const { data, error } = await supabase.rpc('save_bill_draft', {
+        const draftPaid =
+          docType === 'quotation'
+            ? 0
+            : partyId
+              ? effectivePaidNumber
+              : calc.grandTotal;
+        const baseDraftArgs = {
           p_id: editingDraft?.id ?? null,
           p_doc_type: docType,
           p_party_id: partyId || null,
@@ -981,13 +992,27 @@ export function NewBillScreen({
           p_terms: terms.trim() || null,
           p_lines: rpcLines,
           p_site_id: siteId || null,
+        };
+        let draftRes = await supabase.rpc('save_bill_draft', {
+          ...baseDraftArgs,
+          p_paid_amount: draftPaid,
+          p_payment_mode: paymentMode,
+          p_payment_reference: paymentReference.trim() || null,
         });
-        if (error) throw error;
+        if (
+          draftRes.error &&
+          /Could not find the function|PGRST202|function public\.save_bill_draft/i.test(
+            draftRes.error.message || ''
+          )
+        ) {
+          draftRes = await supabase.rpc('save_bill_draft', baseDraftArgs);
+        }
+        if (draftRes.error) throw draftRes.error;
         showToast(
           language === 'hi' ? 'ड्राफ्ट सहेजा गया।' : 'Bill draft saved.',
           'success'
         );
-        onSaved(data as BillRecord, 'draft');
+        onSaved(draftRes.data as BillRecord, 'draft');
       } else {
         const paid =
           docType === 'quotation'
@@ -1022,19 +1047,26 @@ export function NewBillScreen({
           commissionPartnerName.trim() &&
           Number(commissionPct) > 0
         ) {
-          const pct = Math.min(100, Math.max(0, Number(commissionPct)));
-          const commAmt = roundHalfUp((Number(issued.grand_total) * pct) / 100, 2);
-          await supabase.from('commission_entries').insert({
-            party_id: commissionPartnerId || null,
-            party_name: commissionPartnerName.trim(),
-            bill_id: issued.id,
-            bill_number: issued.bill_number,
-            bill_date: issued.bill_date,
-            base_amount: Number(issued.grand_total),
-            commission_pct: pct,
-            commission_amount: commAmt,
-            status: 'pending',
-          });
+          const { data: existingComm } = await supabase
+            .from('commission_entries')
+            .select('id')
+            .eq('bill_id', issued.id)
+            .limit(1);
+          if (!existingComm || existingComm.length === 0) {
+            const pct = Math.min(100, Math.max(0, Number(commissionPct)));
+            const commAmt = roundHalfUp((Number(issued.grand_total) * pct) / 100, 2);
+            await supabase.from('commission_entries').insert({
+              party_id: commissionPartnerId || null,
+              party_name: commissionPartnerName.trim(),
+              bill_id: issued.id,
+              bill_number: issued.bill_number,
+              bill_date: issued.bill_date,
+              base_amount: Number(issued.grand_total),
+              commission_pct: pct,
+              commission_amount: commAmt,
+              status: 'pending',
+            });
+          }
         }
         showToast(
           language === 'hi'
@@ -1049,6 +1081,7 @@ export function NewBillScreen({
         err instanceof Error ? err.message : 'Unable to save or issue document.'
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

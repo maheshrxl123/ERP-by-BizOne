@@ -1,6 +1,9 @@
 import {
   IconAdjustments,
   IconAlertTriangle,
+  IconArrowDown,
+  IconArrowUp,
+  IconArrowsSort,
   IconBarcode,
   IconCategory,
   IconChevronRight,
@@ -82,6 +85,9 @@ export function ItemsScreen({
   const [categoryFilter, setCategoryFilter] = useState('');
   const [specFilters, setSpecFilters] = useState<Record<string, string>>({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<
+    'name_asc' | 'name_desc' | 'price_asc' | 'price_desc' | 'stock_asc' | 'stock_desc' | 'cost_desc' | 'cost_asc'
+  >('name_asc');
 
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [taxonomyOpen, setTaxonomyOpen] = useState(false);
@@ -171,20 +177,28 @@ export function ItemsScreen({
   }, [initialAction, canEdit, onActionConsumed]);
 
   const openQuickAdjust = async (item: ItemCatalogRecord) => {
+    setQuickAdjustConvs([]);
+    setQuickAdjustItem(item);
     try {
       const { data, error } = await supabase
         .from('unit_conversions')
-        .select('*, item_units(*)')
+        .select('*')
         .eq('item_id', item.id);
-      if (error) throw error;
-      setQuickAdjustConvs((data as UnitConversionRecord[] | null) ?? []);
-      setQuickAdjustItem(item);
-    } catch (err) {
-      showToast(
-        err instanceof Error ? err.message : 'Unable to load item units.',
-        'error'
-      );
+      if (!error && Array.isArray(data)) {
+        setQuickAdjustConvs(data as UnitConversionRecord[]);
+      }
+    } catch {
+      // Base unit stock adjustment works even without alternate conversions
     }
+  };
+
+  const toggleSortColumn = (col: 'name' | 'price' | 'cost' | 'stock') => {
+    setSortBy((prev) => {
+      if (col === 'name') return prev === 'name_asc' ? 'name_desc' : 'name_asc';
+      if (col === 'price') return prev === 'price_desc' ? 'price_asc' : 'price_desc';
+      if (col === 'cost') return prev === 'cost_desc' ? 'cost_asc' : 'cost_desc';
+      return prev === 'stock_asc' ? 'stock_desc' : 'stock_asc';
+    });
   };
 
   const visibleCategories = useMemo(
@@ -194,7 +208,7 @@ export function ItemsScreen({
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return items.filter((item) => {
+    const list = items.filter((item) => {
       if (filterTab === 'archived') {
         if (item.is_active) return false;
       } else {
@@ -225,7 +239,31 @@ export function ItemsScreen({
         specSummary.includes(q)
       );
     });
-  }, [items, filterTab, productLineFilter, specFilters, categoryFilter, searchQuery]);
+
+    const sorted = [...list];
+    sorted.sort((a, b) => {
+      switch (sortBy) {
+        case 'name_desc':
+          return b.name.localeCompare(a.name);
+        case 'price_asc':
+          return Number(a.selling_price || 0) - Number(b.selling_price || 0);
+        case 'price_desc':
+          return Number(b.selling_price || 0) - Number(a.selling_price || 0);
+        case 'cost_asc':
+          return Number(a.purchase_price || 0) - Number(b.purchase_price || 0);
+        case 'cost_desc':
+          return Number(b.purchase_price || 0) - Number(a.purchase_price || 0);
+        case 'stock_asc':
+          return Number(a.qty_on_hand || 0) - Number(b.qty_on_hand || 0);
+        case 'stock_desc':
+          return Number(b.qty_on_hand || 0) - Number(a.qty_on_hand || 0);
+        case 'name_asc':
+        default:
+          return a.name.localeCompare(b.name);
+      }
+    });
+    return sorted;
+  }, [items, filterTab, productLineFilter, specFilters, categoryFilter, searchQuery, sortBy]);
 
   if (selectedItemId) {
     return (
@@ -473,7 +511,7 @@ export function ItemsScreen({
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           aria-label="Filter by category"
-          className="h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm md:w-48"
+          className="h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm md:w-44"
         >
           <option value="">All Categories</option>
           {visibleCategories.map((c) => (
@@ -481,6 +519,26 @@ export function ItemsScreen({
               {c.name}
             </option>
           ))}
+        </select>
+
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+          aria-label="Sort items"
+          className="h-11 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm md:w-44"
+        >
+          <option value="name_asc">Sort: Name (A–Z)</option>
+          <option value="name_desc">Sort: Name (Z–A)</option>
+          <option value="price_desc">Sort: Price (High–Low)</option>
+          <option value="price_asc">Sort: Price (Low–High)</option>
+          {canViewCost && (
+            <>
+              <option value="cost_desc">Sort: Cost (High–Low)</option>
+              <option value="cost_asc">Sort: Cost (Low–High)</option>
+            </>
+          )}
+          <option value="stock_asc">Sort: Stock (Low–High)</option>
+          <option value="stock_desc">Sort: Stock (High–Low)</option>
         </select>
 
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
@@ -554,17 +612,73 @@ export function ItemsScreen({
               <table className="w-full text-left text-sm">
                 <thead className="bg-[var(--surface-muted)] text-[var(--text-muted)] text-xs">
                   <tr>
-                    <th className="px-4 py-3 font-medium">Item</th>
+                    <th className="px-4 py-3 font-medium">
+                      <button
+                        type="button"
+                        onClick={() => toggleSortColumn('name')}
+                        className="inline-flex items-center gap-1 hover:text-[var(--text)]"
+                      >
+                        <span>Item</span>
+                        {sortBy === 'name_asc' ? (
+                          <IconArrowUp size={13} />
+                        ) : sortBy === 'name_desc' ? (
+                          <IconArrowDown size={13} />
+                        ) : (
+                          <IconArrowsSort size={13} className="opacity-50" />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-4 py-3 font-medium">Category · Brand</th>
                     <th className="px-4 py-3 font-medium text-right">
-                      Selling Price
+                      <button
+                        type="button"
+                        onClick={() => toggleSortColumn('price')}
+                        className="inline-flex items-center justify-end gap-1 hover:text-[var(--text)] ml-auto"
+                      >
+                        <span>Selling Price</span>
+                        {sortBy === 'price_asc' ? (
+                          <IconArrowUp size={13} />
+                        ) : sortBy === 'price_desc' ? (
+                          <IconArrowDown size={13} />
+                        ) : (
+                          <IconArrowsSort size={13} className="opacity-50" />
+                        )}
+                      </button>
                     </th>
                     {canViewCost && (
                       <th className="px-4 py-3 font-medium text-right">
-                        Cost Price
+                        <button
+                          type="button"
+                          onClick={() => toggleSortColumn('cost')}
+                          className="inline-flex items-center justify-end gap-1 hover:text-[var(--text)] ml-auto"
+                        >
+                          <span>Cost Price</span>
+                          {sortBy === 'cost_asc' ? (
+                            <IconArrowUp size={13} />
+                          ) : sortBy === 'cost_desc' ? (
+                            <IconArrowDown size={13} />
+                          ) : (
+                            <IconArrowsSort size={13} className="opacity-50" />
+                          )}
+                        </button>
                       </th>
                     )}
-                    <th className="px-4 py-3 font-medium text-right">Stock</th>
+                    <th className="px-4 py-3 font-medium text-right">
+                      <button
+                        type="button"
+                        onClick={() => toggleSortColumn('stock')}
+                        className="inline-flex items-center justify-end gap-1 hover:text-[var(--text)] ml-auto"
+                      >
+                        <span>Stock</span>
+                        {sortBy === 'stock_asc' ? (
+                          <IconArrowUp size={13} />
+                        ) : sortBy === 'stock_desc' ? (
+                          <IconArrowDown size={13} />
+                        ) : (
+                          <IconArrowsSort size={13} className="opacity-50" />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-4 py-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
@@ -711,11 +825,18 @@ export function ItemsScreen({
                   ? signedUrlCache[item.primary_image_file_id]
                   : undefined;
                 return (
-                  <button
+                  <div
                     key={item.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedItemId(item.id)}
-                    className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-[var(--surface-muted)]/50"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setSelectedItemId(item.id);
+                      }
+                    }}
+                    className="w-full p-4 flex items-center justify-between gap-3 text-left hover:bg-[var(--surface-muted)]/50 cursor-pointer"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div className="w-11 h-11 rounded-lg border border-[var(--border)] bg-[var(--surface-muted)] overflow-hidden flex items-center justify-center shrink-0">
@@ -747,27 +868,43 @@ export function ItemsScreen({
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0 tabular-nums">
-                      <p className="text-sm font-semibold">
-                        {formatINR(Number(item.selling_price))}
-                      </p>
-                      <p
-                        className={`text-xs font-medium ${
-                          item.item_type === 'service'
-                            ? 'text-[var(--text-muted)]'
-                            : item.is_out_of_stock
-                              ? 'text-[var(--give)]'
-                              : item.is_low_stock
-                                ? 'text-amber-600'
-                                : 'text-[var(--text-muted)]'
-                        }`}
-                      >
-                        {item.item_type === 'service'
-                          ? 'Non-Stock'
-                          : formatStockQty(item.qty_on_hand, item.base_unit_code)}
-                      </p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right tabular-nums">
+                        <p className="text-sm font-semibold">
+                          {formatINR(Number(item.selling_price))}
+                        </p>
+                        <p
+                          className={`text-xs font-medium ${
+                            item.item_type === 'service'
+                              ? 'text-[var(--text-muted)]'
+                              : item.is_out_of_stock
+                                ? 'text-[var(--give)]'
+                                : item.is_low_stock
+                                  ? 'text-amber-600'
+                                  : 'text-[var(--text-muted)]'
+                          }`}
+                        >
+                          {item.item_type === 'service'
+                            ? 'Non-Stock'
+                            : formatStockQty(item.qty_on_hand, item.base_unit_code)}
+                        </p>
+                      </div>
+                      {canAdjust && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openQuickAdjust(item);
+                          }}
+                          aria-label={`Adjust stock for ${item.name}`}
+                          className="h-8 px-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-xs font-medium hover:bg-[var(--surface-muted)] inline-flex items-center gap-1"
+                        >
+                          <IconAdjustments size={14} stroke={2} />
+                          <span>Adjust</span>
+                        </button>
+                      )}
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>

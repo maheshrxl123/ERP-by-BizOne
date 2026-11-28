@@ -199,6 +199,7 @@ async function applyMigrationsIfToken() {
     '0026_decorbiz_fix_reset_and_restore.sql',
     '0027_seed_all_product_lines.sql',
     '0028_remove_demo_data.sql',
+    '0029_phase1_6_fixes.sql',
   ]);
 
   for (const file of migrationFiles) {

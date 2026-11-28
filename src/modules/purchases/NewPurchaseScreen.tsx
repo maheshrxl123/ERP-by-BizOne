@@ -168,6 +168,7 @@ export function NewPurchaseScreen({
   const [itemSearch, setItemSearch] = useState('');
   const [loadingMaster, setLoadingMaster] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState('');
 
@@ -946,6 +947,7 @@ export function NewPurchaseScreen({
     }));
 
   const handleSubmit = async (actionMode: 'draft' | 'posted') => {
+    if (submittingRef.current) return;
     setErrorMsg(null);
     if (lines.length === 0) {
       setErrorMsg(
@@ -964,6 +966,7 @@ export function NewPurchaseScreen({
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const rpcLines = buildRpcLines();
@@ -1026,6 +1029,7 @@ export function NewPurchaseScreen({
         err instanceof Error ? err.message : 'Unable to save or post purchase.'
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };
@@ -1063,7 +1067,7 @@ export function NewPurchaseScreen({
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            disabled={submitting || lines.length === 0}
+            disabled={submitting}
             onClick={() => void handleSubmit('draft')}
             className="h-10 px-3.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-muted)] text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 disabled:opacity-50"
           >
@@ -1072,7 +1076,7 @@ export function NewPurchaseScreen({
           </button>
           <button
             type="button"
-            disabled={submitting || lines.length === 0}
+            disabled={submitting}
             onClick={() => void handleSubmit('posted')}
             className="h-10 px-4 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-xs sm:text-sm font-semibold inline-flex items-center gap-1.5 hover:opacity-95 disabled:opacity-50"
           >
@@ -2036,9 +2040,15 @@ export function NewPurchaseScreen({
             </div>
 
             <div className="pt-2 space-y-2">
+              {errorMsg && (
+                <div role="alert" className="p-2.5 rounded-lg border border-[var(--give)]/40 bg-[var(--give-soft)] text-xs text-[var(--give)] flex items-start gap-1.5">
+                  <IconAlertCircle size={15} stroke={2} className="shrink-0 mt-0.5" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
               <button
                 type="button"
-                disabled={submitting || lines.length === 0}
+                disabled={submitting}
                 onClick={() => void handleSubmit('posted')}
                 className="w-full h-11 rounded-lg bg-[var(--primary)] text-[var(--on-primary)] text-sm font-semibold inline-flex items-center justify-center gap-2 hover:opacity-95 disabled:opacity-50"
               >
@@ -2052,7 +2062,7 @@ export function NewPurchaseScreen({
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  disabled={submitting || lines.length === 0}
+                  disabled={submitting}
                   onClick={() => void handleSubmit('draft')}
                   className="h-10 rounded-lg border border-[var(--border)] text-xs font-medium inline-flex items-center justify-center gap-1.5 hover:bg-[var(--surface-muted)] disabled:opacity-50"
                 >

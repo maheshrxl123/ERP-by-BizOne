@@ -250,7 +250,8 @@ export function registerStorefrontRoutes(app: Express): void {
       sendWithEtag(req, res, {
         onlineStoreEnabled: false,
         aiAssistantEnabled: false,
-        storeName: 'DecorBiz Showroom',
+        gstRegistered: false,
+        storeName: 'RV Tiles & Decor',
         pickupEnabled: true,
         codEnabled: true,
         razorpayEnabled: false,
@@ -288,7 +289,7 @@ export function registerStorefrontRoutes(app: Express): void {
         { data: coupons },
       ] = await Promise.all([
         aiAssistantPromise,
-        admin.from('business').select('name, phone, email, address, logo_file_id').eq('id', 1).maybeSingle(),
+        admin.from('business').select('name, phone, email, address, logo_file_id, gst_registered').eq('id', 1).maybeSingle(),
         admin.from('integration_settings').select('enabled, config_public').eq('integration_key', 'online_store').maybeSingle(),
         getStoreRazorpayConfig(admin),
         onlineStoreEnabled
@@ -303,7 +304,7 @@ export function registerStorefrontRoutes(app: Express): void {
         onlineStoreEnabled
           ? admin
               .from('store_coupons')
-              .select('id, code, description, discount_type, discount_value, min_order_amount, max_discount, valid_until, usage_limit, used_count')
+              .select('id, code, description, discount_type, discount_value, min_order_amount, max_discount, valid_until, usage_limit, used_count, is_active')
               .eq('is_active', true)
           : Promise.resolve({ data: [] }),
       ]);
@@ -330,7 +331,8 @@ export function registerStorefrontRoutes(app: Express): void {
         {
           onlineStoreEnabled,
           aiAssistantEnabled,
-          storeName: biz?.name || 'DecorBiz Showroom',
+          gstRegistered: Boolean(biz?.gst_registered),
+          storeName: biz?.name || 'RV Tiles & Decor',
           phone: biz?.phone || null,
           email: biz?.email || null,
           address: biz?.address || null,
@@ -1066,10 +1068,11 @@ export function registerStorefrontRoutes(app: Express): void {
           return;
         }
 
+        const rawSqftPerBox = Number(
+          (pubItem.specs as Record<string, unknown> | null)?.sqft_per_box ?? 0
+        );
         const sqftPerBox =
-          pubItem.specs && typeof (pubItem.specs as Record<string, unknown>).sqft_per_box === 'number'
-            ? Number((pubItem.specs as Record<string, unknown>).sqft_per_box)
-            : null;
+          Number.isFinite(rawSqftPerBox) && rawSqftPerBox > 0 ? rawSqftPerBox : null;
 
         const qtyCalc = computeTileOrderQty({
           mode: l.mode,
@@ -1481,6 +1484,59 @@ export function registerStorefrontRoutes(app: Express): void {
     res.json({ order: updated });
   }));
 
+  const guestLookupLimiter = createRateLimiter({
+    name: 'store-order-lookup',
+    windowMs: 5 * 60 * 1000,
+    maxRequests: 20,
+    message: 'Too many order lookup attempts. Please wait a few minutes.',
+  });
+
+  app.post('/api/store/orders/lookup', guestLookupLimiter, requireOnlineStoreEnabled, asyncHandler(async (req: Request, res: Response) => {
+    const admin = getSupabaseAdmin();
+    if (!admin) {
+      res.status(503).json({ error: 'Store database not configured.' });
+      return;
+    }
+    const orderNumber = typeof req.body?.orderNumber === 'string' ? req.body.orderNumber.trim().toUpperCase() : '';
+    const phoneDigits = typeof req.body?.phone === 'string' ? req.body.phone.replace(/\D/g, '') : '';
+    if (!orderNumber || phoneDigits.length < 6) {
+      res.status(400).json({ error: 'Enter your Order # and at least the last 6 digits of your mobile number.' });
+      return;
+    }
+
+    const { data: order, error } = await admin
+      .from('store_orders')
+      .select('order_number, status, fulfillment_type, delivery_area, delivery_pincode, payment_method, payment_status, subtotal, discount_amount, delivery_charge, grand_total, created_at, customer_id, customer_phone, store_order_lines(id, item_name, variant_name, base_qty, ordered_unit, ordered_qty, line_total)')
+      .ilike('order_number', orderNumber)
+      .maybeSingle();
+
+    if (error) {
+      res.status(500).json({ error: 'Unable to look up order right now.' });
+      return;
+    }
+    let storedDigits = String(order?.customer_phone || '').replace(/\D/g, '');
+    if (order && !storedDigits && order.customer_id) {
+      const { data: custRow } = await admin
+        .from('customers')
+        .select('phone')
+        .eq('id', order.customer_id)
+        .maybeSingle();
+      storedDigits = String(custRow?.phone || '').replace(/\D/g, '');
+    }
+    if (!order || !storedDigits || (storedDigits !== phoneDigits && !storedDigits.endsWith(phoneDigits.slice(-10)))) {
+      res.status(404).json({ error: 'No matching order found for that Order # and phone number.' });
+      return;
+    }
+
+    const { customer_phone: _phone, store_order_lines, ...safeOrder } = order as Record<string, unknown>;
+    res.json({
+      order: {
+        ...safeOrder,
+        lines: store_order_lines || [],
+      },
+    });
+  }));
+
   // --------------------------------------------------------------------------
   // 8. Customer-Facing Online Store AI Shopping Assistant (Public Safe Read)
   // --------------------------------------------------------------------------
@@ -1613,7 +1669,7 @@ export function registerStorefrontRoutes(app: Express): void {
       });
 
       const storeContext = {
-        store_name: sanitizeUntrustedText(String(biz?.name || 'DecorBiz Showroom')),
+        store_name: sanitizeUntrustedText(String(biz?.name || 'RV Tiles & Decor')),
         phone: biz?.phone || null,
         address: sanitizeUntrustedText(String(biz?.address || '')),
         detected_user_area_sqft: detectedAreaSqFt,
@@ -1771,9 +1827,28 @@ export function registerStorefrontRoutes(app: Express): void {
           : null,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unable to answer right now.';
-      const status = msg.toLowerCase().includes('budget') ? 429 : 400;
-      res.status(status).json({ error: redactSecretsFromText(msg) });
+      const raw = err instanceof Error ? err.message : 'Unable to answer right now.';
+      const lower = raw.toLowerCase();
+      if (lower.includes('budget') || lower.includes('quota')) {
+        res.status(429).json({ error: redactSecretsFromText(raw) });
+        return;
+      }
+      if (
+        lower.includes('not configured') ||
+        lower.includes('api key') ||
+        lower.includes('timed out') ||
+        lower.includes('503') ||
+        lower.includes('unavailable') ||
+        lower.includes('no active ai')
+      ) {
+        res.status(503).json({
+          error: 'Showroom AI is currently unavailable. Please contact our showroom or browse the catalogue.',
+        });
+        return;
+      }
+      res.status(503).json({
+        error: 'Showroom AI could not complete your request right now. Please browse the catalogue or contact our showroom.',
+      });
     }
   }));
 }

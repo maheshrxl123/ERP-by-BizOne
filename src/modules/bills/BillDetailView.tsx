@@ -12,7 +12,7 @@ import {
   IconRotate2,
   IconTrash,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { copyToClipboard, formatDate, formatINR } from '../../core/format';
 import { amountInWordsINR } from '../../core/money';
@@ -63,7 +63,10 @@ export function BillDetailView({
   const [voidModalOpen, setVoidModalOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [voiding, setVoiding] = useState(false);
+  const voidingRef = useRef(false);
   const [converting, setConverting] = useState(false);
+  const convertingRef = useRef(false);
+  const convertIdempKeyRef = useRef<{ billId: string; key: string } | null>(null);
   const [deletingDraft, setDeletingDraft] = useState(false);
   const [creatingPayLink, setCreatingPayLink] = useState(false);
 
@@ -158,12 +161,19 @@ export function BillDetailView({
   }, [loadDetail]);
 
   const handleConvertQuotation = async () => {
-    if (!bill) return;
+    if (!bill || convertingRef.current) return;
+    convertingRef.current = true;
     setConverting(true);
     try {
+      if (!convertIdempKeyRef.current || convertIdempKeyRef.current.billId !== bill.id) {
+        convertIdempKeyRef.current = {
+          billId: bill.id,
+          key: `conv_${bill.id}_${crypto.randomUUID()}`,
+        };
+      }
       const { data, error } = await supabase.rpc('convert_quotation_to_bill', {
         p_quotation_id: bill.id,
-        p_idempotency_key: `conv_${bill.id}_${crypto.randomUUID()}`,
+        p_idempotency_key: convertIdempKeyRef.current.key,
       });
       if (error) throw error;
       const converted = data as BillRecord;
@@ -181,17 +191,19 @@ export function BillDetailView({
         'error'
       );
     } finally {
+      convertingRef.current = false;
       setConverting(false);
     }
   };
 
   const handleVoidSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bill) return;
+    if (!bill || voidingRef.current) return;
     if (voidReason.trim().length < 3) {
       showToast('Please enter a reason (min 3 chars).', 'error');
       return;
     }
+    voidingRef.current = true;
     setVoiding(true);
     try {
       const { error } = await supabase.rpc('void_bill', {
@@ -212,6 +224,7 @@ export function BillDetailView({
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Unable to void bill.', 'error');
     } finally {
+      voidingRef.current = false;
       setVoiding(false);
     }
   };

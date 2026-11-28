@@ -1294,7 +1294,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
 
       {/* Horizontal in-page tabs (PRD Section 7.2: no second sidebar) */}
       <div className="border-b border-[var(--border)] overflow-x-auto">
-        <div className="flex items-center gap-6 min-w-max">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
           {visibleTabs.map((tab) => {
             const active = activeTab === tab.key;
             return (
@@ -1302,7 +1302,7 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
                 key={tab.key}
                 type="button"
                 onClick={() => setActiveTab(tab.key)}
-                className={`relative py-3 text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
+                className={`relative py-2.5 text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${
                   active
                     ? 'text-[var(--primary-dark)]'
                     : 'text-[var(--text-muted)] hover:text-[var(--text)]'
@@ -2716,30 +2716,33 @@ export function SettingsScreen({ initialTab = 'business' }: SettingsScreenProps)
             </div>
           </div>
 
-          {hindiModuleEnabled && (
-            <div className="pt-4 border-t border-[var(--border)]">
-              <h2 className="text-base font-semibold">Language</h2>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                Switch interface labels between English and Hindi.
-              </p>
-              <div className="mt-3 grid grid-cols-2 gap-3 max-w-sm">
-                {(['en', 'hi'] as const).map((lang) => (
-                  <button
-                    key={lang}
-                    type="button"
-                    onClick={() => setLanguage(lang)}
-                    className={`h-11 px-4 rounded-lg border text-sm font-medium ${
-                      language === lang
-                        ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)]'
-                        : 'border-[var(--border)] hover:bg-[var(--surface-muted)]'
-                    }`}
-                  >
-                    {lang === 'en' ? t('common.english') : t('common.hindi')}
-                  </button>
-                ))}
-              </div>
+          <div className="pt-4 border-t border-[var(--border)]">
+            <h2 className="text-base font-semibold">Language</h2>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">
+              Switch interface labels between English and Hindi.
+              {!hindiModuleEnabled && (
+                <span className="ml-1 text-[var(--primary-dark)]">
+                  (Enabling Hindi from Modules unlocks bilingual invoice &amp; template translations too.)
+                </span>
+              )}
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-3 max-w-sm">
+              {(['en', 'hi'] as const).map((lang) => (
+                <button
+                  key={lang}
+                  type="button"
+                  onClick={() => setLanguage(lang)}
+                  className={`h-11 px-4 rounded-lg border text-sm font-medium ${
+                    language === lang
+                      ? 'border-[var(--primary-dark)] bg-[var(--primary-soft)]'
+                      : 'border-[var(--border)] hover:bg-[var(--surface-muted)]'
+                  }`}
+                >
+                  {lang === 'en' ? t('common.english') : t('common.hindi')}
+                </button>
+              ))}
             </div>
-          )}
+          </div>
         </section>
       )}
 

@@ -10,11 +10,13 @@ import {
   IconStarFilled,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { computeTileOrderQty, getItemSizeLabel } from '../../core/storeCatalog';
+import { computeTileOrderQty, getItemSizeLabel, resolveItemSqftPerBox } from '../../core/storeCatalog';
 import type { ProductReviewRecord, PublishedStoreItemRecord } from '../../types/decorbiz';
+import { StoreImage } from './StoreImage';
 import {
   formatInr,
   getProductImageSrc,
+  LINE_FALLBACK_IMAGES,
   STORE_PRODUCT_LINE_LABELS,
   type StoreCartItem,
   type StoreCustomerSession,
@@ -192,10 +194,7 @@ export function StoreProductDetail({
   const canOrder = item.item_type === 'service' || item.allow_negative_stock || activeAvailable > 0;
   const specsObj = (item.specs || {}) as Record<string, unknown>;
   const isTile = item.product_line === 'tiles_slabs';
-  const sqftPerBox =
-    typeof specsObj.sqft_per_box === 'number' && specsObj.sqft_per_box > 0
-      ? specsObj.sqft_per_box
-      : null;
+  const sqftPerBox = resolveItemSqftPerBox(specsObj);
 
   let calcSummary = {
     orderedUnit: qtyMode as 'boxes' | 'sqft' | 'base' | 'box',
@@ -220,7 +219,7 @@ export function StoreProductDetail({
 
   const handleAdd = () => {
     onAddToCart({
-      key: `${item.id}:${selectedVariant?.id || 'default'}:${calcSummary.orderedUnit}`,
+      key: `${item.id}:${selectedVariant?.id || 'default'}`,
       item,
       variantId: selectedVariant?.id || null,
       variantName: selectedVariant?.variant_name || null,
@@ -289,13 +288,13 @@ export function StoreProductDetail({
         {/* Left: Multi-Image Gallery & Video */}
         <div className="lg:col-span-6 space-y-4">
           <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-stone-100 border border-stone-200 relative">
-            <img
+            <StoreImage
               src={gallerySources[activeImageIdx] || gallerySources[0]}
+              fallbackSrc={LINE_FALLBACK_IMAGES[item.product_line] || LINE_FALLBACK_IMAGES.tiles_slabs}
               alt={item.name}
               width={800}
               height={600}
-              decoding="async"
-              referrerPolicy="no-referrer"
+              loading="eager"
               className="w-full h-full object-cover"
             />
           </div>
@@ -314,14 +313,12 @@ export function StoreProductDetail({
                       : 'border-stone-200 opacity-75 hover:opacity-100'
                   }`}
                 >
-                  <img
+                  <StoreImage
                     src={src}
+                    fallbackSrc={LINE_FALLBACK_IMAGES[item.product_line] || LINE_FALLBACK_IMAGES.tiles_slabs}
                     alt={`${item.name} view ${idx + 1}`}
                     width={160}
                     height={160}
-                    loading="lazy"
-                    decoding="async"
-                    referrerPolicy="no-referrer"
                     className="w-full h-full object-cover"
                   />
                 </button>

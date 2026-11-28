@@ -82,13 +82,28 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
   const [proposals, setProposals] = useState<AiActionProposalRecord[]>([]);
   const [decidingId, setDecidingId] = useState<string | null>(null);
 
+  const [providerCheckError, setProviderCheckError] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
+
   const loadAiStatusAndData = useCallback(async () => {
     if (!session?.access_token) return;
     setCheckingProvider(true);
+    setProviderCheckError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
     try {
       const [provRes, convRes, pbRes, propRes, partyRes] = await Promise.all([
-        erpFetch('/api/erp/ai/providers', session.access_token).then((r) =>
-          r.ok ? r.json() : { hasConfiguredProvider: false, hasBuiltInGemini: false }
+        erpFetch('/api/erp/ai/providers', session.access_token, { signal: controller.signal }).then(
+          async (r) => {
+            const payload = await r.json().catch(() => ({}));
+            if (!r.ok) {
+              setProviderCheckError(
+                String(payload?.error || 'Could not verify AI provider status.')
+              );
+              return { hasConfiguredProvider: false, hasBuiltInGemini: false };
+            }
+            return payload;
+          }
         ),
         supabase
           .from('ai_conversations')
@@ -128,9 +143,14 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
       if (convRows.length > 0) {
         setActiveConvId((prev) => prev || convRows[0].id);
       }
-    } catch {
-      // keep safe defaults
+    } catch (err) {
+      setProviderCheckError(
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Timed out while checking AI provider configuration.'
+          : 'Unable to check AI provider configuration.'
+      );
     } finally {
+      clearTimeout(timer);
       setCheckingProvider(false);
     }
   }, [session?.access_token]);
@@ -158,9 +178,13 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
     e.preventDefault();
     if (!session?.access_token || !promptInput.trim()) return;
     setSending(true);
+    setChatError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const res = await erpFetch('/api/erp/ai/chat', session.access_token, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: promptInput.trim(),
@@ -168,7 +192,7 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           conversationId: activeConvId,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'AI request failed.');
       setPromptInput('');
       setActiveConvId(data.conversationId);
@@ -186,8 +210,16 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
         );
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Unable to send message.', 'error');
+      const msg =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'DecorBiz AI request timed out after 20 seconds. Please check your AI integration key or try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Unable to send message.';
+      setChatError(msg);
+      showToast(msg, 'error');
     } finally {
+      clearTimeout(timer);
       setSending(false);
     }
   };
@@ -208,17 +240,29 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
   const handleRunAnalytics = async () => {
     if (!session?.access_token) return;
     setRunningAnalytics(true);
+    setChatError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const res = await erpFetch('/api/erp/ai/analytics', session.access_token, {
         method: 'POST',
+        signal: controller.signal,
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Analytics failed.');
       setAnalyticsText(data.summary || '');
       setAnalyticsMetrics(data.metrics || null);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Analytics failed.', 'error');
+      const msg =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'AI insights request timed out after 20 seconds. Please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Analytics failed.';
+      setChatError(msg);
+      showToast(msg, 'error');
     } finally {
+      clearTimeout(timer);
       setRunningAnalytics(false);
     }
   };
@@ -230,9 +274,13 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
       return;
     }
     setGeneratingDraft(true);
+    setChatError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const res = await erpFetch('/api/erp/ai/smart-draft-message', session.access_token, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           kind: draftKind,
@@ -240,12 +288,20 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
           partyId: draftKind === 'payment_reminder' ? draftPartyId : null,
         }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.error || 'Unable to generate draft.');
       setDraftText(String(json.draftText || ''));
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Unable to generate draft.', 'error');
+      const msg =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Smart draft request timed out after 20 seconds. Please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Unable to generate draft.';
+      setChatError(msg);
+      showToast(msg, 'error');
     } finally {
+      clearTimeout(timer);
       setGeneratingDraft(false);
     }
   };
@@ -253,13 +309,17 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
   const handleRunPlaybook = async (playbookKey: string) => {
     if (!session?.access_token) return;
     setRunningPlaybook(playbookKey);
+    setChatError(null);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       const res = await erpFetch('/api/erp/ai/playbooks/run', session.access_token, {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playbookKey }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Playbook run failed.');
       const count = Array.isArray(data.proposalsCreated) ? data.proposalsCreated.length : 0;
       await loadAiStatusAndData();
@@ -271,8 +331,16 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
       );
       if (count > 0) setTab('approvals');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Playbook failed.', 'error');
+      const msg =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Playbook request timed out after 20 seconds. Please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Playbook failed.';
+      setChatError(msg);
+      showToast(msg, 'error');
     } finally {
+      clearTimeout(timer);
       setRunningPlaybook(null);
     }
   };
@@ -365,10 +433,11 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
             <IconAlertTriangle size={20} stroke={2} className="text-amber-600 shrink-0 mt-0.5" />
             <div className="text-xs sm:text-sm">
               <p className="font-semibold text-[var(--text)]">
-                Optional AI Provider Key Not Configured
+                {providerCheckError ? 'AI Provider Status Unavailable' : 'Optional AI Provider Key Not Configured'}
               </p>
               <p className="text-[var(--text-muted)] mt-0.5">
-                Core billing, Khata, stock, and GST work without AI. To enable AI Chat & Insights, the Owner can configure OpenAI, Anthropic Claude, Gemini, OpenRouter, Grok, or a custom HTTPS endpoint in Settings → Integrations.
+                {providerCheckError ||
+                  'Core billing, Khata, stock, and GST work without AI. To enable AI Chat & Insights, the Owner can configure OpenAI, Anthropic Claude, Gemini, OpenRouter, Grok, or a custom HTTPS endpoint in Settings → Integrations.'}
               </p>
             </div>
           </div>
@@ -382,6 +451,26 @@ export function AiAssistantScreen({ onOpenSettings }: AiAssistantScreenProps) {
               <span>Configure AI Key</span>
             </button>
           )}
+        </div>
+      )}
+
+      {chatError && (
+        <div
+          role="alert"
+          className="rounded-xl border border-[var(--give)]/40 bg-[var(--give-soft)] px-4 py-3 text-xs sm:text-sm text-[var(--give)] flex items-center justify-between gap-3"
+        >
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <IconAlertTriangle size={16} stroke={2} className="shrink-0" />
+            <span>{chatError}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setChatError(null)}
+            aria-label="Dismiss AI error"
+            className="p-1 rounded hover:bg-black/5 shrink-0"
+          >
+            <IconX size={15} stroke={2} />
+          </button>
         </div>
       )}
 

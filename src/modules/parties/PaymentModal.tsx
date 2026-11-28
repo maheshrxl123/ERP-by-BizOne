@@ -4,7 +4,7 @@ import {
   IconCheck,
   IconX,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatDate, formatINR, todayLocalIso } from '../../core/format';
 import { supabase } from '../../core/supabase';
@@ -58,11 +58,13 @@ export function PaymentModal({
   const [idempotencyKey, setIdempotencyKey] = useState('');
 
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
     let active = true;
+    savingRef.current = false;
     setErrorMsg(null);
     setDirection(initialDirection);
     setMode('cash');
@@ -203,6 +205,7 @@ export function PaymentModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current) return;
     setErrorMsg(null);
 
     if (!selectedPartyId) {
@@ -254,6 +257,7 @@ export function PaymentModal({
       }
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const { data, error } = await supabase.rpc('post_payment', {
@@ -288,6 +292,7 @@ export function PaymentModal({
             : 'Unable to record payment.'
       );
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };

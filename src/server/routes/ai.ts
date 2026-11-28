@@ -66,11 +66,11 @@ export async function resolveActiveAiCredential(
 
   const { data: intRow } = await admin
     .from('integration_settings')
-    .select('enabled, config_public, has_secret, encrypted_secret')
+    .select('enabled, config_public, has_secret, encrypted_secret, status')
     .eq('integration_key', 'ai_provider')
     .maybeSingle();
 
-  if (intRow?.enabled && intRow.has_secret && intRow.encrypted_secret) {
+  if (intRow?.has_secret && intRow.encrypted_secret && (intRow.enabled || intRow.status === 'configured')) {
     const pub = (intRow.config_public || {}) as Record<string, unknown>;
     const provider = String(pub.provider || 'gemini') as AiProviderKind;
     return {
@@ -163,14 +163,18 @@ async function buildAuthorizedBusinessContext(
         }))
       );
     } else if (toolName === 'get_stock_alerts') {
-      const { data: stockItems } = await admin
-        .from('item_catalog_view')
-        .select(
-          'id, name, sku, qty_on_hand, low_stock_alert, base_unit_code, selling_price, purchase_price, is_low_stock, is_out_of_stock'
-        )
-        .eq('is_active', true)
-        .or('is_low_stock.eq.true,is_out_of_stock.eq.true')
-        .limit(20);
+      const [{ data: stockItems }, { data: invSummary }] = await Promise.all([
+        userClient
+          .from('item_catalog_view')
+          .select(
+            'id, name, sku, qty_on_hand, low_stock_alert, base_unit_code, selling_price, purchase_price, is_low_stock, is_out_of_stock'
+          )
+          .eq('is_active', true)
+          .or('is_low_stock.eq.true,is_out_of_stock.eq.true')
+          .limit(20),
+        userClient.from('inventory_summary_view').select('*').maybeSingle(),
+      ]);
+      contextData.inventory_summary = maskRecordForRole(role, invSummary || {});
       contextData.stock_alerts = maskRecordForRole(
         role,
         (stockItems || []).map((it) => ({
@@ -209,7 +213,7 @@ async function buildAuthorizedBusinessContext(
       const { data: fin } = await userClient.rpc('get_financial_statements', {});
       contextData.accounting = maskRecordForRole(role, fin || {});
     } else if (toolName === 'get_dead_slow_stock') {
-      const { data: slow } = await admin
+      const { data: slow } = await userClient
         .from('item_catalog_view')
         .select('id, name, sku, qty_on_hand, selling_price, purchase_price, last_movement_at, stock_value')
         .eq('is_active', true)
@@ -218,7 +222,7 @@ async function buildAuthorizedBusinessContext(
         .limit(15);
       contextData.slow_stock = maskRecordForRole(role, slow || []);
     } else if (toolName === 'get_store_catalogue_summary') {
-      const { data: storeItems } = await admin
+      const { data: storeItems } = await userClient
         .from('item_catalog_view')
         .select(
           'id, name, sku, item_type, product_line, category_name, selling_price, online_price, online_slug, is_published_online, available_qty, qty_on_hand, base_unit_code'
@@ -402,7 +406,7 @@ export function registerAiRoutes(app: Express): void {
         const hasConfiguredProvider = Boolean(
           hasBuiltInGemini ||
             (profiles || []).some((p) => p.is_active && p.has_key) ||
-            (slot?.enabled && slot?.has_secret)
+            (slot?.has_secret && (slot?.enabled || slot?.status === 'configured'))
         );
 
         res.json({
@@ -1131,7 +1135,7 @@ export function registerAiRoutes(app: Express): void {
             res.status(403).json({ error: 'Your role cannot propose reorder POs.' });
             return;
           }
-          const { data: low } = await supabaseAdmin
+          const { data: low } = await userClient
             .from('item_catalog_view')
             .select('id, name, qty_on_hand, low_stock_alert')
             .eq('is_active', true)
@@ -1485,6 +1489,7 @@ export function registerAiRoutes(app: Express): void {
         const cred = await resolveActiveAiCredential(supabaseAdmin, 'automation');
         await enforceDailyAiBudget(supabaseAdmin, cred.dailyTokenLimit);
 
+        const userClient = createUserScopedClient(req.headers.authorization!);
         const [{ data: partyRows }, { data: itemRows }, { data: unitRows }] = await Promise.all([
           supabaseAdmin
             .from('parties')
@@ -1492,7 +1497,7 @@ export function registerAiRoutes(app: Express): void {
             .eq('is_active', true)
             .in('party_type', ['supplier', 'both'])
             .limit(300),
-          supabaseAdmin
+          userClient
             .from('item_catalog_view')
             .select(
               'id, name, sku, barcode, hsn_code, gst_rate, base_unit_id, base_unit_code, purchase_price, selling_price, mrp'
@@ -1740,13 +1745,14 @@ export function registerAiRoutes(app: Express): void {
         const cred = await resolveActiveAiCredential(supabaseAdmin, 'automation');
         await enforceDailyAiBudget(supabaseAdmin, cred.dailyTokenLimit);
 
+        const userClient = createUserScopedClient(req.headers.authorization!);
         const [{ data: partyRows }, { data: itemRows }] = await Promise.all([
           supabaseAdmin
             .from('parties')
             .select('id, name, phone, party_type')
             .eq('is_active', true)
             .limit(250),
-          supabaseAdmin
+          userClient
             .from('item_catalog_view')
             .select(
               'id, name, sku, barcode, base_unit_code, selling_price, purchase_price, gst_rate'

@@ -928,14 +928,24 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
                 <tr>
                   <th className="py-2.5 px-4 font-semibold">Item</th>
                   <th className="py-2.5 px-3 font-semibold">Pool (On Hand / Resv / Avail)</th>
-                  <th className="py-2.5 px-3 font-semibold">ERP Price</th>
-                  <th className="py-2.5 px-3 font-semibold">Online Price</th>
+                  <th className="py-2.5 px-3 font-semibold">MRP</th>
+                  <th className="py-2.5 px-3 font-semibold">ERP Selling</th>
+                  <th className="py-2.5 px-3 font-semibold">Storefront Price</th>
                   <th className="py-2.5 px-3 font-semibold">Published</th>
                   <th className="py-2.5 px-4 font-semibold text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)]">
-                {filteredItems.map((it) => (
+                {filteredItems.map((it) => {
+                  const hasChannelOverride =
+                    it.online_price !== null &&
+                    it.online_price !== undefined &&
+                    Number(it.online_price) !== Number(it.selling_price);
+                  const effectiveOnline =
+                    it.online_price !== null && it.online_price !== undefined
+                      ? Number(it.online_price)
+                      : Number(it.selling_price);
+                  return (
                   <tr key={it.id} className="hover:bg-[var(--surface-muted)]/40">
                     <td className="py-2.5 px-4">
                       <div className="font-semibold">{it.name}</div>
@@ -948,11 +958,19 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
                       <strong className="text-[var(--receive-text)]">{it.available_qty ?? it.qty_on_hand}</strong>{' '}
                       {it.base_unit_code}
                     </td>
+                    <td className="py-2.5 px-3 tabular-nums text-[var(--text-muted)]">
+                      {it.mrp !== null && it.mrp !== undefined ? formatINR(it.mrp) : '—'}
+                    </td>
                     <td className="py-2.5 px-3 tabular-nums">{formatINR(it.selling_price)}</td>
-                    <td className="py-2.5 px-3 tabular-nums font-semibold">
-                      {it.online_price !== null && it.online_price !== undefined
-                        ? formatINR(it.online_price)
-                        : 'Same as ERP'}
+                    <td className="py-2.5 px-3 tabular-nums">
+                      <div className="font-semibold">{formatINR(effectiveOnline)}</div>
+                      {hasChannelOverride ? (
+                        <span className="text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                          Online override
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--text-muted)]">Synced with ERP</span>
+                      )}
                     </td>
                     <td className="py-2.5 px-3">
                       <button
@@ -984,7 +1002,8 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1996,13 +2015,28 @@ export function OnlineStoreAdminScreen({ onOpenIntegrations }: OnlineStoreAdminS
               <span>Publish item on retail storefront</span>
             </label>
             <div>
-              <label className="block font-medium mb-1">Online Price (leave blank to use ERP selling price {formatINR(editingItem.selling_price)})</label>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label className="font-medium">
+                  Online Price Override (ERP: {formatINR(editingItem.selling_price)}
+                  {editingItem.mrp != null ? ` · MRP: ${formatINR(editingItem.mrp)}` : ''})
+                </label>
+                {editPrice.trim() !== '' && (
+                  <button
+                    type="button"
+                    onClick={() => setEditPrice('')}
+                    className="text-[11px] font-medium text-[var(--primary-dark)] hover:underline"
+                  >
+                    Sync with ERP Price
+                  </button>
+                )}
+              </div>
               <input
                 type="number"
                 min={0}
                 step="0.01"
                 value={editPrice}
                 onChange={(e) => setEditPrice(e.target.value)}
+                placeholder={`Leave blank to use ERP ${formatINR(editingItem.selling_price)}`}
                 className="w-full h-9 px-3 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
               />
             </div>

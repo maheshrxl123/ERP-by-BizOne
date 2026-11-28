@@ -8,7 +8,13 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import type { PublishedStoreItemRecord, StoreOrderRecord, StoreOrderStatus } from '../../types/decorbiz';
-import { formatInr, getProductImageSrc, type StoreCustomerSession } from './storeTypes';
+import { StoreImage } from './StoreImage';
+import {
+  formatInr,
+  getProductImageSrc,
+  LINE_FALLBACK_IMAGES,
+  type StoreCustomerSession,
+} from './storeTypes';
 
 const STATUS_LABELS: Record<StoreOrderStatus, string> = {
   pending: 'Order Placed',
@@ -118,23 +124,151 @@ export function StoreOrdersView({
     }
   };
 
+  const [guestOrderNumber, setGuestOrderNumber] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestSearching, setGuestSearching] = useState(false);
+  const [guestError, setGuestError] = useState<string | null>(null);
+  const [guestOrder, setGuestOrder] = useState<StoreOrderRecord | null>(null);
+
+  const handleGuestLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guestOrderNumber.trim() || !guestPhone.trim()) {
+      setGuestError('Enter both your Order Number and mobile phone.');
+      return;
+    }
+    setGuestSearching(true);
+    setGuestError(null);
+    setGuestOrder(null);
+    try {
+      const res = await fetch('/api/store/orders/lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderNumber: guestOrderNumber.trim(),
+          phone: guestPhone.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Could not locate matching order.');
+      setGuestOrder(data.order as StoreOrderRecord);
+    } catch (err) {
+      setGuestError(err instanceof Error ? err.message : 'Order lookup failed.');
+    } finally {
+      setGuestSearching(false);
+    }
+  };
+
   if (!customerSession) {
     return (
-      <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-stone-100 text-stone-700 flex items-center justify-center mx-auto">
-          <IconPackage size={24} />
+      <div className="max-w-3xl mx-auto px-4 py-10 space-y-6">
+        <div className="rounded-2xl border border-stone-200 bg-white p-6 sm:p-7 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-100 pb-4">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-xl bg-stone-900 text-white flex items-center justify-center shrink-0">
+                <IconPackage size={22} />
+              </div>
+              <div>
+                <h1 className="text-xl sm:text-2xl font-bold text-stone-900">Track Order or Sign In</h1>
+                <p className="text-xs sm:text-sm text-stone-600 mt-0.5">
+                  Track any order instantly with your Order ID &amp; Phone, or sign in to manage your full order history.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onRequireAuth}
+              className="h-10 px-5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-xs sm:text-sm font-semibold shrink-0"
+            >
+              Customer Sign In / Register
+            </button>
+          </div>
+
+          <div className="rounded-xl bg-stone-50 border border-stone-200/80 px-4 py-3 text-xs text-stone-600">
+            <strong className="text-stone-900">Account Sign-In Required for Checkout &amp; Cancellation:</strong>{' '}
+            Full order history, online payment retries, saved addresses, and self-service cancellations require signing in with your customer email.
+          </div>
+
+          <div className="space-y-3 pt-1">
+            <div>
+              <h2 className="text-base font-semibold text-stone-900">Guest Order Tracking (Order ID + Phone)</h2>
+              <p className="text-xs text-stone-500 mt-0.5">
+                Enter your showroom Order ID (e.g. <span className="font-mono">WEB-261127-1234</span>) and registered mobile number to check dispatch status without signing in.
+              </p>
+            </div>
+            <form onSubmit={handleGuestLookup} className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <input
+                type="text"
+                value={guestOrderNumber}
+                onChange={(e) => setGuestOrderNumber(e.target.value)}
+                placeholder="Order ID (e.g. WEB-...)"
+                aria-label="Order Number"
+                className="h-10 px-3 rounded-lg border border-stone-300 bg-white font-mono"
+              />
+              <input
+                type="tel"
+                value={guestPhone}
+                onChange={(e) => setGuestPhone(e.target.value)}
+                placeholder="Mobile Phone (10 digits)"
+                aria-label="Mobile Phone"
+                className="h-10 px-3 rounded-lg border border-stone-300 bg-white"
+              />
+              <button
+                type="submit"
+                disabled={guestSearching}
+                className="h-10 px-4 rounded-lg bg-stone-900 hover:bg-stone-800 text-white font-semibold disabled:opacity-60"
+              >
+                {guestSearching ? 'Checking...' : 'Track Order'}
+              </button>
+            </form>
+
+            {guestError && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {guestError}
+              </div>
+            )}
+
+            {guestOrder && (
+              <div className="rounded-xl border border-stone-200 bg-stone-50 p-4 space-y-3 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-2">
+                  <div>
+                    <span className="font-mono text-sm font-bold text-stone-900">{guestOrder.order_number}</span>
+                    <span className="text-stone-500 ml-2">
+                      {new Date(guestOrder.created_at).toLocaleDateString('en-IN', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                  <span className="font-semibold text-sky-800">
+                    {STATUS_LABELS[guestOrder.status] || guestOrder.status}
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {(guestOrder.lines || []).map((line) => (
+                    <div key={line.id} className="flex justify-between gap-2 text-stone-700">
+                      <span>
+                        {line.item_name}
+                        {line.variant_name ? ` (${line.variant_name})` : ''} × {line.base_qty}
+                      </span>
+                      <span className="font-semibold tabular-nums">{formatInr(line.line_total)}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-stone-200 pt-2">
+                  <span className="text-stone-600">
+                    {guestOrder.fulfillment_type === 'pickup'
+                      ? 'Showroom Pickup'
+                      : `Delivery${guestOrder.delivery_pincode ? ` (${guestOrder.delivery_pincode})` : ''}`}
+                  </span>
+                  <span className="text-sm font-bold text-stone-900 tabular-nums">
+                    Total: {formatInr(guestOrder.grand_total)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-        <h1 className="text-2xl font-bold text-stone-900">Your Orders & Account</h1>
-        <p className="text-sm text-stone-600">
-          Sign in to view your order status, delivery vehicle tracking, and saved addresses.
-        </p>
-        <button
-          type="button"
-          onClick={onRequireAuth}
-          className="h-11 px-6 rounded-xl bg-stone-900 text-white text-sm font-semibold"
-        >
-          Customer Sign In / Register
-        </button>
       </div>
     );
   }
@@ -352,14 +486,12 @@ export function StoreWishlistView({
                 onClick={() => onOpenProduct(item.online_slug)}
                 className="aspect-[4/3] bg-stone-100 overflow-hidden"
               >
-                <img
+                <StoreImage
                   src={getProductImageSrc(item)}
+                  fallbackSrc={LINE_FALLBACK_IMAGES[item.product_line] || LINE_FALLBACK_IMAGES.tiles_slabs}
                   alt={item.name}
                   width={400}
                   height={300}
-                  loading="lazy"
-                  decoding="async"
-                  referrerPolicy="no-referrer"
                   className="w-full h-full object-cover hover:scale-105 transition-transform"
                 />
               </button>

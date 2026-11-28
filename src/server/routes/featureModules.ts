@@ -1,4 +1,5 @@
 import type { Express, Response } from 'express';
+import { createUserScopedClient } from '../config.ts';
 import { redactSecretsFromText } from '../aiGateway.ts';
 import { sendSmtpOrWebhookEmail } from '../mailer.ts';
 import {
@@ -103,9 +104,10 @@ export function registerFeatureModuleRoutes(app: Express): void {
     requireModuleEnabled('pos', 'billing'),
     async (req: AuthenticatedRequest, res: Response) => {
       const supabaseAdmin = req.supabaseAdmin!;
+      const userClient = createUserScopedClient(req.headers.authorization!);
       try {
         const [{ count: itemCount }, { count: openRegisters }] = await Promise.all([
-          supabaseAdmin
+          userClient
             .from('item_catalog_view')
             .select('id', { count: 'exact', head: true })
             .eq('is_active', true),

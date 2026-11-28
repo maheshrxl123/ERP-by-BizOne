@@ -143,6 +143,7 @@ export function registerStoreAdminRoutes(app: Express): void {
 
   app.get('/api/store-admin/overview', ...guard, asyncHandler(async (req: AuthenticatedRequest, res: Response) => {
     const admin = req.supabaseAdmin!;
+    const userClient = createUserScopedClient(req.headers.authorization!);
     try {
       const [
         { data: items, error: itemsErr },
@@ -158,7 +159,7 @@ export function registerStoreAdminRoutes(app: Express): void {
         { data: units },
         razorpaySlot,
       ] = await Promise.all([
-        admin.from('item_catalog_view').select('*').eq('is_active', true).order('name'),
+        userClient.from('item_catalog_view').select('*').eq('is_active', true).order('name'),
         admin.from('store_orders').select('*, store_order_lines(*)').order('created_at', { ascending: false }).limit(200),
         admin.from('store_delivery_trips').select('*').order('trip_date', { ascending: false }).limit(100),
         admin.from('store_delivery_zones').select('*').order('zone_name'),

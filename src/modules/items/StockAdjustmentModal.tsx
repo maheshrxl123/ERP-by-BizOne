@@ -4,7 +4,7 @@ import {
   IconLoader2,
   IconX,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { todayLocalIso } from '../../core/format';
 import { supabase } from '../../core/supabase';
@@ -45,10 +45,12 @@ export function StockAdjustmentModal({
   const [shade, setShade] = useState('');
   const [batchLot, setBatchLot] = useState('');
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !item) return;
+    savingRef.current = false;
     setDirection('in');
     setQtyStr('1');
     setUnitId(item.base_unit_id);
@@ -114,6 +116,7 @@ export function StockAdjustmentModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (savingRef.current) return;
     setError(null);
     const qty = Number(qtyStr);
     if (!Number.isFinite(qty) || qty <= 0) {
@@ -134,6 +137,7 @@ export function StockAdjustmentModal({
       return;
     }
 
+    savingRef.current = true;
     setSaving(true);
     try {
       const { error: rpcErr } = await supabase.rpc('adjust_stock', {
@@ -164,6 +168,7 @@ export function StockAdjustmentModal({
       setError(msg);
       showToast(msg, 'error');
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };

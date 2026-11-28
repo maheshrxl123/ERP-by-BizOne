@@ -1,5 +1,5 @@
 import { IconAlertCircle, IconCheck, IconRotate2, IconX } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatINR, todayLocalIso } from '../../core/format';
 import { calculateBillPreview, roundHalfUp } from '../../core/money';
@@ -34,10 +34,12 @@ export function SalesReturnModal({
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [loadingPrev, setLoadingPrev] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    submittingRef.current = false;
     setErrorMsg(null);
     setReason('');
     setRefundAmount('0');
@@ -126,6 +128,7 @@ export function SalesReturnModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setErrorMsg(null);
 
     if (selectedReturnLines.length === 0) {
@@ -163,6 +166,7 @@ export function SalesReturnModal({
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const { data, error } = await supabase.rpc('create_sales_return', {
@@ -192,6 +196,7 @@ export function SalesReturnModal({
         err instanceof Error ? err.message : 'Unable to record sales return.'
       );
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

@@ -1,5 +1,5 @@
 import { IconAlertCircle, IconArrowBackUp, IconX } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useApp } from '../../app/AppProvider';
 import { formatINR, todayLocalIso } from '../../core/format';
 import { calculateBillPreview, roundHalfUp } from '../../core/money';
@@ -37,10 +37,12 @@ export function PurchaseReturnModal({
   const [alreadyReturnedByLineId, setAlreadyReturnedByLineId] = useState<Record<string, number>>({});
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !sourcePurchase) return;
+    submittingRef.current = false;
     setReturnDate(todayLocalIso());
     setReason('');
     setRefundAmount('0');
@@ -112,7 +114,7 @@ export function PurchaseReturnModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sourcePurchase || !preview) return;
+    if (submittingRef.current || !sourcePurchase || !preview) return;
     setErrorMsg(null);
 
     if (reason.trim().length < 3) {
@@ -137,6 +139,7 @@ export function PurchaseReturnModal({
         ? 0
         : Math.min(preview.grandTotal, Math.max(0, roundHalfUp(Number(refundAmount || 0), 2)));
 
+    submittingRef.current = true;
     setSubmitting(true);
     try {
       const { data, error } = await supabase.rpc('create_purchase_return', {
@@ -161,6 +164,7 @@ export function PurchaseReturnModal({
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Unable to post purchase return.');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   };

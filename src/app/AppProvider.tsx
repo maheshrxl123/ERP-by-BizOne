@@ -157,7 +157,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return found ? found.enabled : true;
   }, [modules]);
 
-  const effectiveLanguage: Language = hindiEnabled ? language : 'en';
+  const effectiveLanguage: Language = language;
 
   useEffect(() => {
     localStorage.setItem('decorbiz_lang', language);
@@ -190,13 +190,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setCheckingSetup(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
     try {
-      const res = await fetch('/api/erp/setup/status');
+      const res = await fetch('/api/erp/setup/status', { signal: controller.signal });
       const data = await res.json();
       setNeedsSetup(Boolean(data?.needsSetup));
     } catch {
       setNeedsSetup(false);
     } finally {
+      clearTimeout(timer);
       setCheckingSetup(false);
     }
   }, []);
@@ -233,8 +236,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     setTotpChecking(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
     try {
-      const res = await erpFetch('/api/erp/auth/totp-status', accessToken);
+      const res = await erpFetch('/api/erp/auth/totp-status', accessToken, {
+        signal: controller.signal,
+      });
       if (res.ok) {
         const data = await res.json();
         const enabled = Boolean(data?.enabled);
@@ -263,6 +270,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setTotpRequired(true);
       setTotpVerified(false);
     } finally {
+      clearTimeout(timer);
       setTotpChecking(false);
     }
   }, [userId, accessToken]);
@@ -433,13 +441,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     refreshSetupStatus();
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        setTotpChecking(true);
-      }
-      setSession(data.session ?? null);
-      setAuthLoading(false);
-    });
+    Promise.race([
+      supabase.auth.getSession(),
+      new Promise<{ data: { session: null } }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null } }), 2500)
+      ),
+    ])
+      .then(({ data }) => {
+        if (data.session) {
+          setTotpChecking(true);
+        }
+        setSession(data.session ?? null);
+        setAuthLoading(false);
+      })
+      .catch(() => {
+        setSession(null);
+        setAuthLoading(false);
+      });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (event, nextSession) => {
@@ -487,10 +505,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setLanguage = useCallback(
     (lang: Language) => {
-      if (!hindiEnabled && lang === 'hi') {
-        setLanguageState('en');
-        return;
-      }
       setLanguageState(lang);
       if (userId && profile?.is_active) {
         void supabase
@@ -499,7 +513,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           .eq('id', userId);
       }
     },
-    [hindiEnabled, userId, profile?.is_active]
+    [userId, profile?.is_active]
   );
 
   const setTheme = useCallback(

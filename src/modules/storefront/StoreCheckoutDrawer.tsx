@@ -11,13 +11,22 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { computeStoreOrderTotals, matchDeliveryZone } from '../../core/storeCatalog';
 import type { StoreOrderRecord } from '../../types/decorbiz';
+import { StoreImage } from './StoreImage';
 import {
   formatInr,
   getProductImageSrc,
+  LINE_FALLBACK_IMAGES,
   type StoreCartItem,
   type StoreConfigPayload,
   type StoreCustomerSession,
 } from './storeTypes';
+
+function formatTaxAmount(val: number): string {
+  return `₹${Number(val || 0).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
 
 declare global {
   interface Window {
@@ -147,16 +156,34 @@ export function StoreCheckoutDrawer({
       ? matchDeliveryZone(config.zones || [], { pincode, area: area || address })
       : null;
 
+  const hasEnteredDeliveryLocation = Boolean(pincode.trim() || area.trim());
   const matchedCoupon =
     couponInput.trim()
       ? (config.coupons || []).find((c) => c.code.toUpperCase() === couponInput.trim().toUpperCase()) || null
       : null;
 
   const pricing = computeStoreOrderTotals({
-    lines: cart.map((c) => ({ unitPrice: c.unitPrice, baseQty: c.baseQty })),
+    lines: cart.map((c) => ({
+      unitPrice: c.unitPrice,
+      baseQty: c.baseQty,
+      gstRate: Number(c.item.gst_rate ?? 0),
+      taxInclusive: Boolean(c.item.tax_inclusive ?? true),
+    })),
     fulfillmentType,
     zone: matchedZone,
     coupon: matchedCoupon,
+    gstRegistered: config.gstRegistered,
+  });
+
+  const visiblePricingErrors = pricing.errors.filter((msg) => {
+    if (
+      fulfillmentType === 'delivery' &&
+      !hasEnteredDeliveryLocation &&
+      msg.toLowerCase().includes('delivery is not available')
+    ) {
+      return false;
+    }
+    return true;
   });
 
   const handlePlaceOrder = async () => {
@@ -324,15 +351,14 @@ export function StoreCheckoutDrawer({
                     key={c.key}
                     className="flex gap-3 p-3 rounded-xl border border-stone-200 bg-stone-50/70"
                   >
-                    <img
+                    <StoreImage
                       src={getProductImageSrc(c.item)}
+                      fallbackSrc={LINE_FALLBACK_IMAGES[c.item.product_line] || LINE_FALLBACK_IMAGES.tiles_slabs}
                       alt={c.item.name}
                       width={64}
                       height={64}
-                      loading="lazy"
-                      decoding="async"
-                      referrerPolicy="no-referrer"
-                      className="w-16 h-16 rounded-lg object-cover border border-stone-200 shrink-0"
+                      wrapperClassName="relative w-16 h-16 rounded-lg overflow-hidden border border-stone-200 shrink-0"
+                      className="w-full h-full object-cover"
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
@@ -425,7 +451,7 @@ export function StoreCheckoutDrawer({
 
                 {fulfillmentType === 'delivery' && (
                   <div className="space-y-2.5 rounded-xl border border-stone-200 bg-stone-50 p-3.5 text-xs">
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div>
                         <input
                           type="text"
@@ -437,10 +463,10 @@ export function StoreCheckoutDrawer({
                               setDeliveryFieldErrors((prev) => ({ ...prev, pincode: undefined }));
                             }
                           }}
-                          placeholder="Pincode (e.g. 302001)"
+                          placeholder="Pincode (302001)"
                           aria-label="Delivery pincode"
                           aria-invalid={Boolean(deliveryFieldErrors.pincode)}
-                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white focus:outline-none focus:ring-2 focus:ring-stone-900"
                         />
                         {deliveryFieldErrors.pincode && (
                           <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.pincode}</p>
@@ -460,7 +486,7 @@ export function StoreCheckoutDrawer({
                           placeholder="Locality / Area"
                           aria-label="Delivery locality or area"
                           aria-invalid={Boolean(deliveryFieldErrors.area)}
-                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white"
+                          className="w-full h-9 px-3 rounded-lg border border-stone-300 bg-white focus:outline-none focus:ring-2 focus:ring-stone-900"
                         />
                         {deliveryFieldErrors.area && (
                           <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.area}</p>
@@ -481,7 +507,7 @@ export function StoreCheckoutDrawer({
                         placeholder="Full delivery address & landmark"
                         aria-label="Full delivery address"
                         aria-invalid={Boolean(deliveryFieldErrors.address)}
-                        className="w-full p-2.5 rounded-lg border border-stone-300 bg-white"
+                        className="w-full p-2.5 rounded-lg border border-stone-300 bg-white focus:outline-none focus:ring-2 focus:ring-stone-900"
                       />
                       {deliveryFieldErrors.address && (
                         <p className="text-[11px] text-red-600 mt-1">{deliveryFieldErrors.address}</p>
@@ -492,9 +518,13 @@ export function StoreCheckoutDrawer({
                         Zone matched: {matchedZone.zone_name} · Delivery {formatInr(matchedZone.delivery_charge)} · Est.{' '}
                         {matchedZone.estimated_days} day(s)
                       </p>
-                    ) : (
+                    ) : hasEnteredDeliveryLocation ? (
                       <p className="text-[11px] text-amber-700">
-                        Enter a serviceable pincode or locality, or switch to Free Shop Pickup.
+                        No matching local delivery zone for "{pincode.trim() || area.trim()}". Try another pincode/area or switch to Free Shop Pickup.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-stone-500">
+                        Enter your delivery pincode &amp; locality to calculate delivery charges.
                       </p>
                     )}
                   </div>
@@ -605,14 +635,18 @@ export function StoreCheckoutDrawer({
 
         {cart.length > 0 && (
           <div className="p-6 border-t border-stone-200 bg-stone-50 space-y-3">
-            {(error || pricing.errors.length > 0) && (
+            {(error || visiblePricingErrors.length > 0) && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {error || pricing.errors[0]}
+                {error || visiblePricingErrors[0]}
               </div>
             )}
             <div className="space-y-1 text-xs">
               <div className="flex justify-between text-stone-600">
-                <span>Subtotal</span>
+                <span>
+                  {config.gstRegistered === false || pricing.taxAmount === 0
+                    ? 'Subtotal'
+                    : 'Subtotal (incl. GST)'}
+                </span>
                 <span className="tabular-nums">{formatInr(pricing.subtotal)}</span>
               </div>
               {pricing.discountAmount > 0 && (
@@ -627,6 +661,14 @@ export function StoreCheckoutDrawer({
                   {fulfillmentType === 'pickup' ? 'Free (Pickup)' : formatInr(pricing.deliveryCharge)}
                 </span>
               </div>
+              <div className="flex justify-between text-stone-600">
+                <span>
+                  {config.gstRegistered === false
+                    ? 'Tax / GST (Non-GST)'
+                    : 'Tax / GST (Included in price)'}
+                </span>
+                <span className="tabular-nums font-medium">{formatTaxAmount(pricing.taxAmount)}</span>
+              </div>
               <div className="flex justify-between text-base font-bold text-stone-900 pt-1.5 border-t border-stone-200">
                 <span>Total</span>
                 <span className="tabular-nums">{formatInr(pricing.grandTotal)}</span>
@@ -635,7 +677,7 @@ export function StoreCheckoutDrawer({
 
             <button
               type="button"
-              disabled={submitting || pricing.errors.length > 0}
+              disabled={submitting || visiblePricingErrors.length > 0}
               onClick={() => void handlePlaceOrder()}
               className="w-full h-12 rounded-xl bg-stone-900 hover:bg-stone-800 text-white text-sm font-semibold disabled:opacity-50"
             >
